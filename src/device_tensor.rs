@@ -1,41 +1,50 @@
 use std::fmt::Debug;
-use uhal::error::DeviceResult;
-use uhal::memory::{DeviceBufferTrait};
+use cust_core::DeviceCopy;
+use std::collections::HashMap;
 
+//Import UHAL for common computing interfaces
+use uhal::launch;
+use uhal::error::{DeviceResult};
+use uhal::{DriverLibraryTrait};
+use uhal::module::{ModuleTrait};
+use uhal::memory::{DeviceBufferTrait};
+use uhal::stream::{StreamTrait, StreamFlags};
+
+//Tops backend
 #[cfg(feature = "tops_backend")]
 use tops_backend as tops;
 #[cfg(feature = "tops_backend")]
-use tops::memory::TopsDeviceBuffer;
+use tops::memory::TopsDeviceBuffer as DeviceBuffer;
 #[cfg(feature = "tops_backend")]
 use tops::memory::CopyDestination;
+#[cfg(feature = "tops_backend")]
+use tops::stream::TopsStream as Stream;
+#[cfg(feature = "tops_backend")]
+use tops::module::TopsModule as Module;
+#[cfg(feature = "tops_backend")]
+use tops::TopsApi as Api;
 
+//Cuda backend
 #[cfg(feature = "cuda_backend")]
 use cuda_backend as cuda;
 #[cfg(feature = "cuda_backend")]
-use cuda::memory::CuDeviceBuffer;
+use cuda::memory::CuDeviceBuffer as DeviceBuffer;
 #[cfg(feature = "cuda_backend")]
 use cuda::memory::CopyDestination;
+#[cfg(feature = "cuda_backend")]
+use cuda::stream::CuStream as Stream;
+#[cfg(feature = "cuda_backend")]
+use cuda::module::CuModule as Module;
+#[cfg(feature = "cuda_backend")]
+use cuda::CuApi as Api;
 
 // TODO consider hide TensorKind, and expose a into_raw_vec for BlasTensor
 #[derive(Debug)]
 pub enum DeviceTensorKind {
-    #[cfg(feature = "tops_backend")]
-    FloatTensor(TopsDeviceBuffer<f32>),
-    #[cfg(feature = "tops_backend")]
-    DoubleTensor(TopsDeviceBuffer<f64>),
-    #[cfg(feature = "tops_backend")]
-    Int32Tensor(TopsDeviceBuffer<i32>),
-    #[cfg(feature = "tops_backend")]
-    Int8Tensor(TopsDeviceBuffer<i8>),
-
-    #[cfg(feature = "cuda_backend")]
-    FloatTensor(CuDeviceBuffer<f32>),
-    #[cfg(feature = "cuda_backend")]
-    DoubleTensor(CuDeviceBuffer<f64>),
-    #[cfg(feature = "cuda_backend")]
-    Int32Tensor(CuDeviceBuffer<i32>),
-    #[cfg(feature = "cuda_backend")]
-    Int8Tensor(CuDeviceBuffer<i8>),
+    FloatTensor(DeviceBuffer<f32>),
+    DoubleTensor(DeviceBuffer<f64>),
+    Int32Tensor(DeviceBuffer<i32>),
+    Int8Tensor(DeviceBuffer<i8>),
 }
 
 #[derive(Debug)]
@@ -44,52 +53,26 @@ pub struct DeviceTensor {
     pub shape: Vec<usize>,
 }
 
-#[cfg(feature = "tops_backend")]
-impl From<TopsDeviceBuffer<f32>> for DeviceTensorKind {
-    fn from(who: TopsDeviceBuffer<f32>) -> Self {
+impl From<DeviceBuffer<f32>> for DeviceTensorKind {
+    fn from(who: DeviceBuffer<f32>) -> Self {
         DeviceTensorKind::FloatTensor(who)
-    }
-}
-#[cfg(feature = "tops_backend")]
-impl From<TopsDeviceBuffer<i32>> for DeviceTensorKind {
-    fn from(who: TopsDeviceBuffer<i32>) -> Self {
-        DeviceTensorKind::Int32Tensor(who)
-    }
-}
-#[cfg(feature = "tops_backend")]
-impl From<TopsDeviceBuffer<f64>> for DeviceTensorKind {
-    fn from(who: TopsDeviceBuffer<f64>) -> Self {
-        DeviceTensorKind::DoubleTensor(who)
-    }
-}
-#[cfg(feature = "tops_backend")]
-impl From<TopsDeviceBuffer<i8>> for DeviceTensorKind {
-    fn from(who: TopsDeviceBuffer<i8>) -> Self {
-        DeviceTensorKind::Int8Tensor(who)
     }
 }
 
-#[cfg(feature = "cuda_backend")]
-impl From<CuDeviceBuffer<f32>> for DeviceTensorKind {
-    fn from(who: DeviceResult<CuDeviceBuffer<f32>>) -> Self {
-        DeviceTensorKind::FloatTensor(who)
-    }
-}
-#[cfg(feature = "cuda_backend")]
-impl From<DeviceResult<CuDeviceBuffer<i32>>> for DeviceTensorKind {
-    fn from(who: DeviceResult<CuDeviceBuffer<i32>>) -> Self {
+impl From<DeviceBuffer<i32>> for DeviceTensorKind {
+    fn from(who: DeviceBuffer<i32>) -> Self {
         DeviceTensorKind::Int32Tensor(who)
     }
 }
-#[cfg(feature = "cuda_backend")]
-impl From<DeviceResult<CuDeviceBuffer<f64>>> for DeviceTensorKind {
-    fn from(who: CuDeviceBuffer<f64>) -> Self {
+
+impl From<DeviceBuffer<f64>> for DeviceTensorKind {
+    fn from(who: DeviceBuffer<f64>) -> Self {
         DeviceTensorKind::DoubleTensor(who)
     }
 }
-#[cfg(feature = "cuda_backend")]
-impl From<CuDeviceBuffer<i8>> for DeviceTensorKind {
-    fn from(who: CuDeviceBuffer<i8>) -> Self {
+
+impl From<DeviceBuffer<i8>> for DeviceTensorKind {
+    fn from(who: DeviceBuffer<i8>) -> Self {
         DeviceTensorKind::Int8Tensor(who)
     }
 }
@@ -105,11 +88,7 @@ impl DeviceTensor {
 
     pub fn from_vec(raw_data: Vec<f32>) -> DeviceResult<DeviceTensor> {
         let raw_shape = vec![raw_data.len()];
-        #[cfg(feature = "tops_backend")]
-        let data = TopsDeviceBuffer::from_slice(&raw_data);
-
-        #[cfg(feature = "cuda_backend")]
-        let data = CuDeviceBuffer::from_slice(&raw_data);
+        let data = DeviceBuffer::from_slice(&raw_data);
         
         match data {
             Ok(buf) => {
@@ -127,13 +106,7 @@ impl DeviceTensor {
     }
 
     pub fn from_vec_shape(raw_data: Vec<f32>, shape: Vec<usize>) -> DeviceResult<DeviceTensor> {
-        // let raw_shape = vec![raw_data.len()];
-        #[cfg(feature = "tops_backend")]
-        let data = TopsDeviceBuffer::from_slice(&raw_data);
-
-        #[cfg(feature = "cuda_backend")]
-        let data = CuDeviceBuffer::from_slice(&raw_data);
-
+        let data = DeviceBuffer::from_slice(&raw_data);
         match data {
             Ok(buf) => {
                 Ok(DeviceTensor {
@@ -146,6 +119,12 @@ impl DeviceTensor {
             #[cfg(not(test))]
             Err(_e) => { println!("Failed to alloc device memory!"); Err(_e) }
         }
+    }
+
+    pub fn fill(shape: Vec<usize>, v : f32) -> DeviceResult<DeviceTensor> {
+        let ret: usize = shape.iter().fold(1usize, |mut ret, val| {ret *= *val; ret});
+        // let ret: u32 = shape.iter().product();
+        Self::from_vec_shape(vec![v; ret], shape)
     }
 
     pub fn zeros(shape: Vec<usize>) -> DeviceResult<DeviceTensor> {
@@ -240,12 +219,7 @@ mod tests {
     #[test]
     fn test_zeros_1d() {
         let tensor = DeviceTensor::zeros(vec![64]);
-
-        #[cfg(feature = "tops_backend")]
-        let data = TopsDeviceBuffer::from_slice(&[0.0f32; 64]).unwrap();
-
-        #[cfg(feature = "cuda_backend")]
-        let data = CuDeviceBuffer::from_slice(&[0.0f32; 64]).unwrap();
+        let data = DeviceBuffer::from_slice(&[0.0f32; 64]).unwrap();
 
         match tensor {
             Ok(buf) => {
@@ -262,12 +236,7 @@ mod tests {
     #[test]
     fn test_zeros_2d() {
         let tensor = DeviceTensor::zeros(vec![64, 32]);
-
-        #[cfg(feature = "tops_backend")]
-        let data = TopsDeviceBuffer::from_slice(&[0.0f32; 64*32]).unwrap();
-
-        #[cfg(feature = "cuda_backend")]
-        let data = CuDeviceBuffer::from_slice(&[0.0f32; 64*32]).unwrap();
+        let data = DeviceBuffer::from_slice(&[0.0f32; 64*32]).unwrap();
 
         match tensor {
             Ok(buf) => {
@@ -284,12 +253,7 @@ mod tests {
     #[test]
     fn test_ones_1d() {
         let tensor = DeviceTensor::ones(vec![64]);
-
-        #[cfg(feature = "tops_backend")]
-        let data = TopsDeviceBuffer::from_slice(&[1.0f32; 64]).unwrap();
-
-        #[cfg(feature = "cuda_backend")]
-        let data = CuDeviceBuffer::from_slice(&[1.0f32; 64]).unwrap();
+        let data = DeviceBuffer::from_slice(&[1.0f32; 64]).unwrap();
 
         match tensor {
             Ok(buf) => {
@@ -306,12 +270,7 @@ mod tests {
     #[test]
     fn test_ones_2d() {
         let tensor = DeviceTensor::ones(vec![64, 32]);
-
-        #[cfg(feature = "tops_backend")]
-        let data = TopsDeviceBuffer::from_slice(&[1.0f32; 64*32]).unwrap();
-
-        #[cfg(feature = "cuda_backend")]
-        let data = CuDeviceBuffer::from_slice(&[1.0f32, 64*32]).unwrap();
+        let data = DeviceBuffer::from_slice(&[1.0f32; 64*32]).unwrap();
 
         match tensor {
             Ok(buf) => {
