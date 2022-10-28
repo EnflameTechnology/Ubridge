@@ -391,6 +391,8 @@ impl DeviceExecutor {
 #[cfg(test)]
 
 mod tests {
+    use std::vec;
+
     use super::*;
 
     #[test]
@@ -426,6 +428,57 @@ mod tests {
 
         let exec = DeviceExecutor::new();
         let c = exec.activation_owned(a, true, "relu".to_string()).unwrap();
+        assert_eq!(c.ndims(), 2);
+        assert_eq!(c.shape(), [2, 3]);
+        assert_eq!(c, cref);
+    }
+
+    #[test]
+    fn test_activation_leaky_owned() {
+        let a = DeviceTensor::from_vec_shape(vec![1.0f32, -0.8, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let cref = DeviceTensor::from_vec_shape(vec![1.0f32, -0.080000006, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+
+        let exec = DeviceExecutor::new();
+        let c = exec.activation_owned(a, true, "leaky".to_string()).unwrap();
+        // match &c.data {
+        //     Some(data) => {
+        //         match data {
+        //             DeviceTensorKind::FloatTensor(out) => {
+        //                 let mut out_host = vec![0.0f32; c.shape[0] * c.shape[1]];
+        //                 out.copy_to(&mut out_host);
+        //                 for item in out_host {print!("{} ", item)};
+        //             }
+        //             _ => { println!("Unable to obtain results!");}
+        //         }
+        //     }
+        //     _ => {println!("Unable to obtain results!");}
+        // }
+        assert_eq!(c.ndims(), 2);
+        assert_eq!(c.shape(), [2, 3]);
+        assert_eq!(c, cref);
+    }
+
+    #[test]
+    fn test_activation_tanh_owned() {
+        let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let cref = DeviceTensor::from_vec_shape(vec![0.7615942f32, 0.9640275, 0.9950547, 0.9993293, 0.99990916, 0.9999877], vec![2, 3]).unwrap();
+
+        let exec = DeviceExecutor::new();
+        let c = exec.activation_owned(a, true, "tanh".to_string()).unwrap();
+
+        assert_eq!(c.ndims(), 2);
+        assert_eq!(c.shape(), [2, 3]);
+        assert_eq!(c, cref);
+    }
+
+    #[test]
+    fn test_activation_gelu_owned() {
+        let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let cref = DeviceTensor::from_vec_shape(vec![0.841192f32, 1.9545977, 2.9963627, 3.9999297, 5.0, 6.0], vec![2, 3]).unwrap();
+
+        let exec = DeviceExecutor::new();
+        let c = exec.activation_owned(a, true, "gelu".to_string()).unwrap();
+
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [2, 3]);
         assert_eq!(c, cref);
