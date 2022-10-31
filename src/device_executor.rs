@@ -56,7 +56,7 @@ pub fn init_kernels() -> (Option<Context>, Option<Box<HashMap<String, Module>>>)
     match Api::quick_init() { 
         Ok(context) => { 
             let mut kernel_map = Box::new(HashMap::<String, Module>::new());
-            for kernel in ["matmul", "activation", "convolution"] {
+            for kernel in ["matmul", "activation", "convolution", "transpose"] {
                 let module = load_module(kernel).unwrap();
                 kernel_map.insert(kernel.to_string(), module);
             }
@@ -163,6 +163,7 @@ impl DeviceExecutor {
         self.mock_result(vec![1.0f32; 6], vec![2, 3])
     }
 
+    //Maximum input size 512 x 512 supported!
     pub fn matmul_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "matmul";
         let kernel = match &g_api.1 {Some(kmap) => {kmap["matmul"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
@@ -234,6 +235,7 @@ impl DeviceExecutor {
         // self.mock_result(vec![23.0f32; 17 * 18], vec![17, 18])
     }
 
+    
     pub fn conv2d_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "convolution";
         let kernel = match &g_api.1 {Some(kmap) => {kmap["convolution"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
@@ -331,7 +333,7 @@ impl DeviceExecutor {
                             ));
     
                             #[cfg(feature = "cuda_backend")]
-                            let result = launch!(kernel<<<(1, 1, 1), (layer.input_size.0 as u32, layer.input_size.1 as u32, 1), 0, stream>>>(
+                            let result = launch!(kernel<<<(1, 1, 1), (arg.shape[0] as u32, arg.shape[1] as u32, 1), 0, stream>>>(
                                 matA.as_device_ptr(),
                                 arg.shape[0],
                                 map_act[act_type.as_str()]
@@ -382,8 +384,68 @@ impl DeviceExecutor {
             Err(e) => { println!("Failed to alloc device memory!"); Err(e) }
         }
     }
+
+    //Maximum input size 512 x 512 supported!
     pub fn transpose_owned(&self, arg: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
-        self.mock_result(vec![1.0f32, 4.0, 2.0, 5.0, 3.0, 6.0], vec![3, 2])
+         let function_name = "transpose";
+        let kernel = match &g_api.1 {Some(kmap) => {kmap["transpose"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        #[cfg(feature = "tops_backend")]
+        let mut input_shape = DeviceBuffer::from_slice(&[arg.shape[0] as i32, arg.shape[1] as i32, 1, 1])?;
+        #[cfg(feature = "tops_backend")]
+        let mut matOut = DeviceBuffer::from_slice(&vec![0.0f32; arg.shape[0] * arg.shape[1]])?;
+
+        let result : DeviceResult<()> = match (&arg.data, &self.stream) {
+            (Some(data_left),  Some(stream)) => {
+                match data_left {
+                    DeviceTensorKind::FloatTensor(matA) => {
+                        unsafe {
+                            #[cfg(feature = "tops_backend")]
+                            let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
+                                matA.as_device_ptr(),
+                                matOut.as_device_ptr(),
+                                input_shape.as_device_ptr()
+                            ));
+    
+                            #[cfg(feature = "cuda_backend")]
+                            let result = launch!(kernel<<<(1, 1, 1), (arg.shape[0] as u32, arg.shape[1] as u32, 1), 0, stream>>>(
+                                matA.as_device_ptr(),
+                                matOut.as_device_ptr(),
+                                input_shape.as_device_ptr()
+                            ));
+                
+                            result
+                        }
+                    }
+                    _ => { panic!("Not implemented for other data types!");}
+                }
+            }
+            _ => {panic!("Invalid data format!");}
+        };
+        
+        if eager_mode {
+            match result {
+                Ok(_) => { 
+                    match self.synchronize() {
+                        Ok(_) => { println!("Stream synchronized!");}
+                        Err(_) => {panic!("Unable to synchronize kernels!");}
+                    }
+                }
+                _ => { panic!("Unable to synchronize kernels!");}
+            }
+        }
+
+        match result {
+            Ok(_) => {
+                Ok(DeviceTensor {
+                    data: Some(DeviceTensorKind::from(matOut)),
+                    shape: vec![arg.shape[1], arg.shape[0]],
+                })
+            }
+            #[cfg(test)]
+            Err(_e) => { panic!("Failed to alloc device memory!"); }
+            #[cfg(not(test))]
+            Err(e) => { println!("Failed to alloc device memory!"); Err(e) }
+        }
     }
 }
 
@@ -440,19 +502,7 @@ mod tests {
 
         let exec = DeviceExecutor::new();
         let c = exec.activation_owned(a, true, "leaky".to_string()).unwrap();
-        // match &c.data {
-        //     Some(data) => {
-        //         match data {
-        //             DeviceTensorKind::FloatTensor(out) => {
-        //                 let mut out_host = vec![0.0f32; c.shape[0] * c.shape[1]];
-        //                 out.copy_to(&mut out_host);
-        //                 for item in out_host {print!("{} ", item)};
-        //             }
-        //             _ => { println!("Unable to obtain results!");}
-        //         }
-        //     }
-        //     _ => {println!("Unable to obtain results!");}
-        // }
+
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [2, 3]);
         assert_eq!(c, cref);
@@ -557,6 +607,21 @@ mod tests {
 
         let exec = DeviceExecutor::new();
         let c = exec.transpose_owned(a, true).unwrap();
+
+        // match &c.data {
+        //     Some(data) => {
+        //         match data {
+        //             DeviceTensorKind::FloatTensor(out) => {
+        //                 let mut out_host = vec![0.0f32; c.shape[0] * c.shape[1]];
+        //                 out.copy_to(&mut out_host);
+        //                 for item in out_host {print!("{} ", item)};
+        //             }
+        //             _ => { println!("Unable to obtain results!");}
+        //         }
+        //     }
+        //     _ => {println!("Unable to obtain results!");}
+        // }
+
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [3, 2]);
         assert_eq!(c, cref);
