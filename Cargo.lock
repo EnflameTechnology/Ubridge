@@ -76,6 +76,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "float_eq"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1d53499e94f9a7828e63c574adf62bcade7f358c3738f9ea70d7c2edb61023d"
+
+[[package]]
 name = "glam"
 version = "0.20.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -199,6 +205,7 @@ version = "0.1.0"
 dependencies = [
  "cuda_backend",
  "cust_core",
+ "float_eq",
  "lazy_static",
  "tops_backend",
  "uhal",

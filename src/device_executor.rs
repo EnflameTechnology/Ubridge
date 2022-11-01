@@ -56,7 +56,7 @@ pub fn init_kernels() -> (Option<Context>, Option<Box<HashMap<String, Module>>>)
     match Api::quick_init() { 
         Ok(context) => { 
             let mut kernel_map = Box::new(HashMap::<String, Module>::new());
-            for kernel in ["matmul", "activation", "convolution", "transpose"] {
+            for kernel in ["matmul", "activation", "convolution", "transpose", "element"] {
                 let module = load_module(kernel).unwrap();
                 kernel_map.insert(kernel.to_string(), module);
             }
@@ -112,6 +112,21 @@ impl DeviceExecutor {
             _ => { panic!("Invalid stream!")}
         }
     }
+    
+    pub fn unary_compute_owned(        
+        &self,
+        op: DeviceOpCode,
+        arg: DeviceTensor,
+        eager_mode : bool) -> DeviceResult<DeviceTensor> {
+        match op {
+            DeviceOpCode::RELU => self.activation_owned(arg, eager_mode, "relu".to_string()),
+            DeviceOpCode::GELU => self.activation_owned(arg, eager_mode, "gelu".to_string()),
+            DeviceOpCode::LEAKY => self.activation_owned(arg, eager_mode, "leaky".to_string()),
+            DeviceOpCode::TANH => self.activation_owned(arg, eager_mode, "tanh".to_string()),
+            DeviceOpCode::Transpose => self.transpose_owned(arg, eager_mode),
+            _ => panic!("Not supported operation!"),
+        }
+    }
 
     pub fn binary_compute_owned(
         &self,
@@ -127,7 +142,7 @@ impl DeviceExecutor {
             DeviceOpCode::DivF => self.divf32_owned(lhs, rhs, eager_mode),
             DeviceOpCode::MatMulF => self.matmul_owned(lhs, rhs, eager_mode),
             DeviceOpCode::Conv2DF => self.conv2d_owned(lhs, rhs, eager_mode),
-            _ => panic!("not wired opcode"),
+            _ => panic!("Not supported operation!"),
         }
     }
 
@@ -148,21 +163,93 @@ impl DeviceExecutor {
     }
 
     pub fn addf32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
-        self.mock_result(vec![2.0f32, 4.0, 6.0, 8.0, 10.0, 12.0], vec![2, 3])
+        // self.mock_result(vec![2.0f32, 4.0, 6.0, 8.0, 10.0, 12.0], vec![2, 3])
+        self.elementf32_owned(lhs, rhs, 0i32, eager_mode)
+
     }
 
     pub fn subf32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
-        self.mock_result(vec![0.0f32; 6], vec![2, 3])
+        // self.mock_result(vec![0.0f32; 6], vec![2, 3])
+        self.elementf32_owned(lhs, rhs, 1i32, eager_mode)
+
     }
 
     pub fn mulf32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
-        self.mock_result(vec![1.0f32, 4.0, 9.0, 16.0, 25.0, 36.0], vec![2, 3])
+        // self.mock_result(vec![1.0f32, 4.0, 9.0, 16.0, 25.0, 36.0], vec![2, 3])
+        self.elementf32_owned(lhs, rhs, 2i32, eager_mode)
     }
 
     pub fn divf32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
-        self.mock_result(vec![1.0f32; 6], vec![2, 3])
+        // self.mock_result(vec![1.0f32; 6], vec![2, 3])
+        self.elementf32_owned(lhs, rhs, 3i32, eager_mode)
     }
 
+    pub fn elementf32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, tp : i32, eager_mode : bool) -> DeviceResult<DeviceTensor> {
+        let function_name = "element";
+        let kernel = match &g_api.1 {Some(kmap) => {kmap["element"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        // let kernel = self.kernel_map["matmul"].get_function(&function_name)?;
+        
+        let mut matOut = DeviceBuffer::from_slice(&vec![0.0f32; lhs.shape[0] * lhs.shape[1]])?;
+
+        let result : DeviceResult<()> = match (lhs.data, rhs.data, &self.stream) {
+            (Some(data_left), Some(data_right), Some(stream)) => {
+                match (data_left, data_right) {
+                    (DeviceTensorKind::FloatTensor(matA), DeviceTensorKind::FloatTensor(matB)) => {
+                        unsafe {
+                            #[cfg(feature = "tops_backend")]
+                            let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
+                                matA.as_device_ptr(),
+                                matB.as_device_ptr(),
+                                matOut.as_device_ptr(),
+                                (lhs.shape[0] * lhs.shape[1]) as i32,
+                                tp as i32
+                            ));
+                
+                            #[cfg(feature = "cuda_backend")]
+                            let result = launch!(kernel<<<(1, 1, 1), (lhs.shape[0] as u32, lhs.shape[1] as u32, 1), 0, stream>>>(
+                                matA.as_device_ptr(),
+                                matB.as_device_ptr(),
+                                matOut.as_device_ptr(),
+                                (lhs.shape[0] * lhs.shape[1]) as i32,
+                                tp
+                            ));
+                
+                            result
+                        }
+                    }
+                    _ => { panic!("Not implemented for other data types!");}
+                }
+            }
+            _ => {panic!("Invalid data format!");}
+        };
+        
+        if eager_mode {
+            match result {
+                Ok(_) => { 
+                    match self.synchronize() {
+                        Ok(_) => { println!("Stream synchronized!");}
+                        Err(_) => {panic!("Unable to synchronize kernels!");}
+                    }
+                }
+                _ => { panic!("Unable to synchronize kernels!");}
+            }
+        }
+
+        match result {
+            Ok(_) => {
+                Ok(DeviceTensor {
+                    data: Some(DeviceTensorKind::from(matOut)),
+                    shape: vec![lhs.shape[0], lhs.shape[1]],
+                })
+            }
+            #[cfg(test)]
+            Err(_e) => { panic!("Failed to alloc device memory!"); }
+            #[cfg(not(test))]
+            Err(e) => { println!("Failed to alloc device memory!"); Err(e) }
+        }
+
+        // self.mock_result(vec![23.0f32; 17 * 18], vec![17, 18])
+    }
     //Maximum input size 512 x 512 supported!
     pub fn matmul_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "matmul";
@@ -551,8 +638,8 @@ mod tests {
     #[test]
     fn test_addf32_owned() {
         let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
-        let b = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
-        let cref = DeviceTensor::from_vec_shape(vec![2.0f32, 4.0, 6.0, 8.0, 10.0, 12.0], vec![2, 3]).unwrap();
+        let b = DeviceTensor::from_vec_shape(vec![1.0f32, 9.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let cref = DeviceTensor::from_vec_shape(vec![2.0f32, 11.0, 6.0, 8.0, 10.0, 12.0], vec![2, 3]).unwrap();
 
         let exec = DeviceExecutor::new();
         let c = exec.addf32_owned(a, b, true).unwrap();
@@ -592,9 +679,21 @@ mod tests {
         let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let b = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![1.0f32; 6], vec![2, 3]).unwrap();
-
         let exec = DeviceExecutor::new();
         let c = exec.divf32_owned(a, b, true).unwrap();
+        match &c.data {
+            Some(data) => {
+                match data {
+                    DeviceTensorKind::FloatTensor(out) => {
+                        let mut out_host = vec![0.0f32; c.shape[0] * c.shape[1]];
+                        out.copy_to(&mut out_host);
+                        for item in out_host {print!("{} ", item)};
+                    }
+                    _ => { println!("Unable to obtain results!");}
+                }
+            }
+            _ => {println!("Unable to obtain results!");}
+        }
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [2, 3]);
         assert_eq!(c, cref);
@@ -604,24 +703,8 @@ mod tests {
     fn test_transpose_owned() {
         let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![1.0f32, 4.0, 2.0, 5.0, 3.0, 6.0], vec![3, 2]).unwrap();
-
         let exec = DeviceExecutor::new();
         let c = exec.transpose_owned(a, true).unwrap();
-
-        // match &c.data {
-        //     Some(data) => {
-        //         match data {
-        //             DeviceTensorKind::FloatTensor(out) => {
-        //                 let mut out_host = vec![0.0f32; c.shape[0] * c.shape[1]];
-        //                 out.copy_to(&mut out_host);
-        //                 for item in out_host {print!("{} ", item)};
-        //             }
-        //             _ => { println!("Unable to obtain results!");}
-        //         }
-        //     }
-        //     _ => {println!("Unable to obtain results!");}
-        // }
-
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [3, 2]);
         assert_eq!(c, cref);

@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use cust_core::DeviceCopy;
 use std::collections::HashMap;
+use float_eq::float_eq;
 
 //Import UHAL for common computing interfaces
 use uhal::launch;
@@ -158,7 +159,7 @@ impl PartialEq for DeviceTensor {
                                     DeviceTensorKind::FloatTensor(ret2) => {
                                         let mut out2 = vec![0.0f32; size2];
                                         ret2.copy_to(&mut out2[0..size2]).unwrap();
-                                        return out1 == out2
+                                        return float_eq!(out1, out2, rmax_all<=0.000001f32);
                                     }
                                     _ => { return false }
                                 }

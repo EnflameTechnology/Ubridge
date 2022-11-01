@@ -15,6 +15,7 @@ cuda_backend = { path = "../UHHI/cuda_backend", version = "0.1.0", optional = tr
 tops_backend = { path = "../UHHI/tops_backend", version = "0.1.0", optional = true}
 cust_core = { path = "../UHHI/common_features/cust_core", version = "0.1.0"}
 lazy_static = {version = "1.4.0"}
+float_eq = { version = "0.7.0"}
 
 [features]
 default= ["tops_backend"]

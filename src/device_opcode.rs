@@ -23,4 +23,9 @@ pub enum DeviceOpCode {
     Conv2DD,
 
     Transpose,
+
+    RELU,
+    GELU,
+    LEAKY,
+    TANH
 }
