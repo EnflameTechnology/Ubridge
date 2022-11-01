@@ -16,16 +16,14 @@ use uhal::module::{ModuleTrait};
 use uhal::memory::{DeviceBufferTrait};
 use uhal::stream::{StreamTrait, StreamFlags};
 
-use lazy_static::{lazy_static, __Deref};
-use std::sync::{Mutex, Arc};
+use lazy_static::{lazy_static};
+use std::sync::{Mutex};
 
 //Tops backend
 #[cfg(feature = "tops_backend")]
 use tops_backend as tops;
 #[cfg(feature = "tops_backend")]
 use tops::memory::TopsDeviceBuffer as DeviceBuffer;
-#[cfg(feature = "tops_backend")]
-use tops::memory::CopyDestination;
 #[cfg(feature = "tops_backend")]
 use tops::stream::TopsStream as Stream;
 #[cfg(feature = "tops_backend")]
@@ -40,8 +38,6 @@ use tops::TopsApi as Api;
 use cuda_backend as cuda;
 #[cfg(feature = "cuda_backend")]
 use cuda::memory::CuDeviceBuffer as DeviceBuffer;
-#[cfg(feature = "cuda_backend")]
-use cuda::memory::CopyDestination;
 #[cfg(feature = "cuda_backend")]
 use cuda::stream::CuStream as Stream;
 #[cfg(feature = "cuda_backend")]
@@ -68,10 +64,11 @@ pub fn init_kernels() -> (Option<Context>, Option<Box<HashMap<String, Module>>>)
 
 }
 
-lazy_static! {
-    static ref g_mutex: Mutex<()> = Mutex::new(());
 
-    static ref g_api: (Option<Context>, Option<Box<HashMap<String, Module>>>) = match init_kernels() 
+lazy_static! {
+    static ref G_MUTEX: Mutex<()> = Mutex::new(());
+
+    static ref G_API: (Option<Context>, Option<Box<HashMap<String, Module>>>) = match init_kernels() 
     { 
         (Some(context), Some(kmap)) => { (Some(context), Some(kmap)) } 
         _ => { (None, None) 
@@ -183,13 +180,13 @@ impl DeviceExecutor {
         // self.mock_result(vec![1.0f32; 6], vec![2, 3])
         self.elementf32_owned(lhs, rhs, 3i32, eager_mode)
     }
-
+    #[allow(non_snake_case)]
     pub fn elementf32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, tp : i32, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "element";
-        let kernel = match &g_api.1 {Some(kmap) => {kmap["element"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &G_API.1 {Some(kmap) => {kmap["element"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         // let kernel = self.kernel_map["matmul"].get_function(&function_name)?;
         
-        let mut matOut = DeviceBuffer::from_slice(&vec![0.0f32; lhs.shape[0] * lhs.shape[1]])?;
+        let matOut = DeviceBuffer::from_slice(&vec![0.0f32; lhs.shape[0] * lhs.shape[1]])?;
 
         let result : DeviceResult<()> = match (lhs.data, rhs.data, &self.stream) {
             (Some(data_left), Some(data_right), Some(stream)) => {
@@ -250,18 +247,20 @@ impl DeviceExecutor {
 
         // self.mock_result(vec![23.0f32; 17 * 18], vec![17, 18])
     }
+
     //Maximum input size 512 x 512 supported!
+    #[allow(non_snake_case)]
     pub fn matmul_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "matmul";
-        let kernel = match &g_api.1 {Some(kmap) => {kmap["matmul"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &G_API.1 {Some(kmap) => {kmap["matmul"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         // let kernel = self.kernel_map["matmul"].get_function(&function_name)?;
         
         #[cfg(feature = "tops_backend")]
-        let mut inputShapeA = DeviceBuffer::from_slice(&[lhs.shape[0] as i32, lhs.shape[1] as i32, 1i32, 1i32])?;
+        let inputShapeA = DeviceBuffer::from_slice(&[lhs.shape[0] as i32, lhs.shape[1] as i32, 1i32, 1i32])?;
         #[cfg(feature = "tops_backend")]
-        let mut inputShapeB = DeviceBuffer::from_slice(&[rhs.shape[0] as i32, rhs.shape[1]  as i32, 1i32, 1i32])?;
+        let inputShapeB = DeviceBuffer::from_slice(&[rhs.shape[0] as i32, rhs.shape[1]  as i32, 1i32, 1i32])?;
 
-        let mut matOut = DeviceBuffer::from_slice(&vec![0.0f32 ;lhs.shape[0] *rhs.shape[1]])?;
+        let matOut = DeviceBuffer::from_slice(&vec![0.0f32 ;lhs.shape[0] *rhs.shape[1]])?;
 
         let result : DeviceResult<()> = match (lhs.data, rhs.data, &self.stream) {
             (Some(data_left), Some(data_right), Some(stream)) => {
@@ -322,20 +321,20 @@ impl DeviceExecutor {
         // self.mock_result(vec![23.0f32; 17 * 18], vec![17, 18])
     }
 
-    
+    #[allow(non_snake_case)]
     pub fn conv2d_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "convolution";
-        let kernel = match &g_api.1 {Some(kmap) => {kmap["convolution"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &G_API.1 {Some(kmap) => {kmap["convolution"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         // let kernel = self.kernel_map["matmul"].get_function(&function_name)?;
         
         #[cfg(feature = "tops_backend")]
-        let mut inputShapeA = DeviceBuffer::from_slice(&[lhs.shape[0] as i32, lhs.shape[1] as i32, 1i32, 1i32])?;
+        let inputShapeA = DeviceBuffer::from_slice(&[lhs.shape[0] as i32, lhs.shape[1] as i32, 1i32, 1i32])?;
         #[cfg(feature = "tops_backend")]
-        let mut inputShapeB = DeviceBuffer::from_slice(&[rhs.shape[0] as i32, rhs.shape[1] as i32, 1i32, 1i32])?;
+        let inputShapeB = DeviceBuffer::from_slice(&[rhs.shape[0] as i32, rhs.shape[1] as i32, 1i32, 1i32])?;
         #[cfg(feature = "tops_backend")]
-        let mut channelInfo = DeviceBuffer::from_slice(&[1i32, 1i32, 1i32, 1i32])?;
+        let channelInfo = DeviceBuffer::from_slice(&[1i32, 1i32, 1i32, 1i32])?;
 
-        let mut matOut = DeviceBuffer::from_slice(&vec![0.0f32 ;(lhs.shape[0] - rhs.shape[0] + 1) * (lhs.shape[1] - rhs.shape[1] + 1)])?;
+        let matOut = DeviceBuffer::from_slice(&vec![0.0f32 ;(lhs.shape[0] - rhs.shape[0] + 1) * (lhs.shape[1] - rhs.shape[1] + 1)])?;
 
         let result : DeviceResult<()> = match (lhs.data, rhs.data, &self.stream) {
             (Some(data_left), Some(data_right), Some(stream)) => {
@@ -399,14 +398,15 @@ impl DeviceExecutor {
         // self.mock_result(vec![1.0f32; 6], vec![2, 3])
     }
 
+    #[allow(non_snake_case)]
     pub fn activation_owned(&self, arg: DeviceTensor, eager_mode : bool, act_type : String) -> DeviceResult<DeviceTensor> {
         let map_act = HashMap::from([("relu", 0), ("gelu", 1), ("leaky", 2), ("tanh", 3)]);
         if !["relu", "gelu", "leaky", "tanh"].contains(&act_type.as_str()) { panic!("Activation type not supported!");}
 
         let function_name = "activation";
-        let kernel = match &g_api.1 {Some(kmap) => {kmap["activation"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &G_API.1 {Some(kmap) => {kmap["activation"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         #[cfg(feature = "tops_backend")]
-        let mut inputType = DeviceBuffer::from_slice(&[arg.shape[0] as i32, arg.shape[1] as i32, map_act[act_type.as_str()] as i32])?;
+        let inputType = DeviceBuffer::from_slice(&[arg.shape[0] as i32, arg.shape[1] as i32, map_act[act_type.as_str()] as i32])?;
 
         let result : DeviceResult<()> = match (&arg.data, &self.stream) {
             (Some(data_left),  Some(stream)) => {
@@ -473,13 +473,14 @@ impl DeviceExecutor {
     }
 
     //Maximum input size 512 x 512 supported!
+    #[allow(non_snake_case)]
     pub fn transpose_owned(&self, arg: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
          let function_name = "transpose";
-        let kernel = match &g_api.1 {Some(kmap) => {kmap["transpose"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &G_API.1 {Some(kmap) => {kmap["transpose"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         #[cfg(feature = "tops_backend")]
-        let mut input_shape = DeviceBuffer::from_slice(&[arg.shape[0] as i32, arg.shape[1] as i32, 1, 1])?;
+        let input_shape = DeviceBuffer::from_slice(&[arg.shape[0] as i32, arg.shape[1] as i32, 1, 1])?;
         #[cfg(feature = "tops_backend")]
-        let mut matOut = DeviceBuffer::from_slice(&vec![0.0f32; arg.shape[0] * arg.shape[1]])?;
+        let matOut = DeviceBuffer::from_slice(&vec![0.0f32; arg.shape[0] * arg.shape[1]])?;
 
         let result : DeviceResult<()> = match (&arg.data, &self.stream) {
             (Some(data_left),  Some(stream)) => {
@@ -610,14 +611,28 @@ mod tests {
 
     #[test]
     fn test_activation_gelu_owned() {
-        let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
-        let cref = DeviceTensor::from_vec_shape(vec![0.841192f32, 1.9545977, 2.9963627, 3.9999297, 5.0, 6.0], vec![2, 3]).unwrap();
+        // let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 1.0, 1.0], vec![2, 4]).unwrap();
+        // let cref = DeviceTensor::from_vec_shape(vec![0.841192f32, 1.9545977, 2.9963627, 3.9999297, 5.0, 6.0, 0.841192f32, 0.841192f32], vec![2, 4]).unwrap();
+        let a = DeviceTensor::from_vec_shape(vec![1.0f32; 50*50], vec![50, 50]).unwrap();
+        let cref = DeviceTensor::from_vec_shape(vec![0.841192f32; 50*50], vec![50, 50]).unwrap();
 
         let exec = DeviceExecutor::new();
         let c = exec.activation_owned(a, true, "gelu".to_string()).unwrap();
-
+        // match &c.data {
+        //     Some(data) => {
+        //         match data {
+        //             DeviceTensorKind::FloatTensor(out) => {
+        //                 let mut out_host = vec![0.0f32; c.shape[0] * c.shape[1]];
+        //                 out.copy_to(&mut out_host);
+        //                 for item in out_host {print!("{} ", item)};
+        //             }
+        //             _ => { println!("Unable to obtain results!");}
+        //         }
+        //     }
+        //     _ => {println!("Unable to obtain results!");}
+        // }
         assert_eq!(c.ndims(), 2);
-        assert_eq!(c.shape(), [2, 3]);
+        assert_eq!(c.shape(), [50, 50]);
         assert_eq!(c, cref);
     }
 
@@ -637,14 +652,15 @@ mod tests {
 
     #[test]
     fn test_addf32_owned() {
-        let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
-        let b = DeviceTensor::from_vec_shape(vec![1.0f32, 9.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
-        let cref = DeviceTensor::from_vec_shape(vec![2.0f32, 11.0, 6.0, 8.0, 10.0, 12.0], vec![2, 3]).unwrap();
+        // let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let a = DeviceTensor::from_vec_shape(vec![1.2f32; 50*50], vec![50, 50]).unwrap();
+        let b = DeviceTensor::from_vec_shape(vec![2.8f32; 50*50], vec![50, 50]).unwrap();
+        let cref = DeviceTensor::from_vec_shape(vec![4.0f32; 50*50], vec![50, 50]).unwrap();
 
         let exec = DeviceExecutor::new();
         let c = exec.addf32_owned(a, b, true).unwrap();
         assert_eq!(c.ndims(), 2);
-        assert_eq!(c.shape(), [2, 3]);
+        assert_eq!(c.shape(), [50, 50]);
         assert_eq!(c, cref);
     }
 
@@ -681,19 +697,6 @@ mod tests {
         let cref = DeviceTensor::from_vec_shape(vec![1.0f32; 6], vec![2, 3]).unwrap();
         let exec = DeviceExecutor::new();
         let c = exec.divf32_owned(a, b, true).unwrap();
-        match &c.data {
-            Some(data) => {
-                match data {
-                    DeviceTensorKind::FloatTensor(out) => {
-                        let mut out_host = vec![0.0f32; c.shape[0] * c.shape[1]];
-                        out.copy_to(&mut out_host);
-                        for item in out_host {print!("{} ", item)};
-                    }
-                    _ => { println!("Unable to obtain results!");}
-                }
-            }
-            _ => {println!("Unable to obtain results!");}
-        }
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [2, 3]);
         assert_eq!(c, cref);

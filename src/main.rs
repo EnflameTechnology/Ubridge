@@ -57,7 +57,7 @@ struct Layer<'a, T: DeviceCopy> {
 }
 //A 6-layer neural network forward pass
 //Unified interface (UHAL) for CUDA and Tops backend
-
+#[allow(non_snake_case)]
 fn network_test() -> DeviceResult<()> {
     let _ctx = Api::quick_init()?;
 
@@ -101,7 +101,7 @@ fn network_test() -> DeviceResult<()> {
             let function_name = "activation";
 
             #[cfg(feature = "tops_backend")]
-            let mut inputType = DeviceBuffer::from_slice(&[layer.input_size.0 as i32, layer.input_size.1 as i32, map_act[layer.op] as i32])?;
+            let inputType = DeviceBuffer::from_slice(&[layer.input_size.0 as i32, layer.input_size.1 as i32, map_act[layer.op] as i32])?;
 
             match load_module(function_name) {
                 Ok(module) => {
@@ -133,9 +133,9 @@ fn network_test() -> DeviceResult<()> {
                     let kernel = module.get_function(&layer.op)?;
 
                     #[cfg(feature = "tops_backend")]
-                    let mut inputShapeA = DeviceBuffer::from_slice(&[layer.input_size.0 as i32, layer.input_size.1 as i32, 1i32, 1i32])?;
+                    let inputShapeA = DeviceBuffer::from_slice(&[layer.input_size.0 as i32, layer.input_size.1 as i32, 1i32, 1i32])?;
                     #[cfg(feature = "tops_backend")]
-                    let mut inputShapeB = DeviceBuffer::from_slice(&[layer.input_size.0 as i32, layer.input_size.1 as i32, 1i32, 1i32])?;
+                    let inputShapeB = DeviceBuffer::from_slice(&[layer.input_size.0 as i32, layer.input_size.1 as i32, 1i32, 1i32])?;
 
                     unsafe {
                         #[cfg(feature = "tops_backend")]
@@ -175,11 +175,11 @@ fn network_test() -> DeviceResult<()> {
                     let kernel = module.get_function(&layer.op)?;
 
                     #[cfg(feature = "tops_backend")]
-                    let mut inputShapeA = DeviceBuffer::from_slice(&[layer.input_size.0 as i32, layer.input_size.1 as i32, 1i32, 1i32])?;
+                    let inputShapeA = DeviceBuffer::from_slice(&[layer.input_size.0 as i32, layer.input_size.1 as i32, 1i32, 1i32])?;
                     #[cfg(feature = "tops_backend")]
-                    let mut inputShapeB = DeviceBuffer::from_slice(&[K as i32, K as i32, 1i32, 1i32])?;
+                    let inputShapeB = DeviceBuffer::from_slice(&[K as i32, K as i32, 1i32, 1i32])?;
                     #[cfg(feature = "tops_backend")]
-                    let mut channelInfo = DeviceBuffer::from_slice(&[1i32, 1i32, 1i32, 1i32])?;
+                    let channelInfo = DeviceBuffer::from_slice(&[1i32, 1i32, 1i32, 1i32])?;
 
                     unsafe {
                         

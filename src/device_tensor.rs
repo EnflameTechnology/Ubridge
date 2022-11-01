@@ -1,15 +1,9 @@
 use std::fmt::Debug;
-use cust_core::DeviceCopy;
-use std::collections::HashMap;
 use float_eq::float_eq;
 
 //Import UHAL for common computing interfaces
-use uhal::launch;
 use uhal::error::{DeviceResult};
-use uhal::{DriverLibraryTrait};
-use uhal::module::{ModuleTrait};
 use uhal::memory::{DeviceBufferTrait};
-use uhal::stream::{StreamTrait, StreamFlags};
 
 //Tops backend
 #[cfg(feature = "tops_backend")]
@@ -18,12 +12,6 @@ use tops_backend as tops;
 use tops::memory::TopsDeviceBuffer as DeviceBuffer;
 #[cfg(feature = "tops_backend")]
 use tops::memory::CopyDestination;
-#[cfg(feature = "tops_backend")]
-use tops::stream::TopsStream as Stream;
-#[cfg(feature = "tops_backend")]
-use tops::module::TopsModule as Module;
-#[cfg(feature = "tops_backend")]
-use tops::TopsApi as Api;
 
 //Cuda backend
 #[cfg(feature = "cuda_backend")]
@@ -32,12 +20,7 @@ use cuda_backend as cuda;
 use cuda::memory::CuDeviceBuffer as DeviceBuffer;
 #[cfg(feature = "cuda_backend")]
 use cuda::memory::CopyDestination;
-#[cfg(feature = "cuda_backend")]
-use cuda::stream::CuStream as Stream;
-#[cfg(feature = "cuda_backend")]
-use cuda::module::CuModule as Module;
-#[cfg(feature = "cuda_backend")]
-use cuda::CuApi as Api;
+
 
 // TODO consider hide TensorKind, and expose a into_raw_vec for BlasTensor
 #[derive(Debug)]
