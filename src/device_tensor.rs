@@ -105,6 +105,22 @@ impl DeviceTensor {
         }
     }
 
+    pub fn from_vec_shape_i32(raw_data: Vec<i32>, shape: Vec<usize>) -> DeviceResult<DeviceTensor> {
+        let data = DeviceBuffer::from_slice(&raw_data);
+        match data {
+            Ok(buf) => {
+                Ok(DeviceTensor {
+                    data: Some(DeviceTensorKind::from(buf)),
+                    shape: shape,
+                })
+            }
+            #[cfg(test)]
+            Err(_e) => { panic!("Failed to alloc device memory!"); }
+            #[cfg(not(test))]
+            Err(_e) => { println!("Failed to alloc device memory!"); Err(_e) }
+        }
+    }
+
     pub fn fill(shape: Vec<usize>, v : f32) -> DeviceResult<DeviceTensor> {
         let ret: usize = shape.iter().fold(1usize, |mut ret, val| {ret *= *val; ret});
         // let ret: u32 = shape.iter().product();

@@ -56,7 +56,7 @@ pub fn init_kernels() -> (Option<Context>, Option<Box<HashMap<String, Module>>>)
     match Api::quick_init() { 
         Ok(context) => { 
             let mut kernel_map = Box::new(HashMap::<String, Module>::new());
-            for kernel in ["matmul", "activation", "convolution", "transpose", "element"] {
+            for kernel in ["matmul", "activation", "convolution", "transpose", "element", "elementi32"] {
                 let module = load_module(kernel).unwrap();
                 kernel_map.insert(kernel.to_string(), module);
             }
@@ -186,6 +186,30 @@ impl DeviceExecutor {
         // self.mock_result(vec![1.0f32; 6], vec![2, 3])
         self.elementf32_owned(lhs, rhs, 3i32, eager_mode)
     }
+
+    
+    pub fn addi32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
+        // self.mock_result(vec![2.0f32, 4.0, 6.0, 8.0, 10.0, 12.0], vec![2, 3])
+        self.elementi32_owned(lhs, rhs, 0i32, eager_mode)
+
+    }
+
+    pub fn subi32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
+        // self.mock_result(vec![0.0f32; 6], vec![2, 3])
+        self.elementi32_owned(lhs, rhs, 1i32, eager_mode)
+
+    }
+
+    pub fn muli32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
+        // self.mock_result(vec![1.0f32, 4.0, 9.0, 16.0, 25.0, 36.0], vec![2, 3])
+        self.elementi32_owned(lhs, rhs, 2i32, eager_mode)
+    }
+
+    pub fn divi32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
+        // self.mock_result(vec![1.0f32; 6], vec![2, 3])
+        self.elementi32_owned(lhs, rhs, 3i32, eager_mode)
+    }
+
     #[allow(non_snake_case)]
     pub fn elementf32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, tp : i32, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "element";
@@ -250,8 +274,71 @@ impl DeviceExecutor {
             #[cfg(not(test))]
             Err(e) => { println!("Failed to alloc device memory!"); Err(e) }
         }
+    }
 
-        // self.mock_result(vec![23.0f32; 17 * 18], vec![17, 18])
+    #[allow(non_snake_case)]
+    pub fn elementi32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, tp : i32, eager_mode : bool) -> DeviceResult<DeviceTensor> {
+        let function_name = "elementi32";
+        let kernel = match &G_API.1 {Some(kmap) => {kmap["elementi32"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let size : usize = lhs.shape.iter().product();
+        let matOut = DeviceBuffer::from_slice(&vec![0i32; size])?;
+
+        let result : DeviceResult<()> = match (lhs.data, rhs.data, &self.stream) {
+            (Some(data_left), Some(data_right), Some(stream)) => {
+                match (data_left, data_right) {
+                    (DeviceTensorKind::Int32Tensor(matA), DeviceTensorKind::Int32Tensor(matB)) => {
+                        unsafe {
+                            #[cfg(feature = "tops_backend")]
+                            let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
+                                matA.as_device_ptr(),
+                                matB.as_device_ptr(),
+                                matOut.as_device_ptr(),
+                                size as i32,
+                                tp as i32
+                            ));
+                
+                            #[cfg(feature = "cuda_backend")]
+                            let result = launch!(kernel<<<(1, 1, 1), (lhs.shape[0] as u32, lhs.shape[1] as u32, 1), 0, stream>>>(
+                                matA.as_device_ptr(),
+                                matB.as_device_ptr(),
+                                matOut.as_device_ptr(),
+                                size as i32,
+                                tp
+                            ));
+                
+                            result
+                        }
+                    }
+                    _ => { panic!("Not implemented for other data types!");}
+                }
+            }
+            _ => {panic!("Invalid data format!");}
+        };
+        
+        if eager_mode {
+            match result {
+                Ok(_) => { 
+                    match self.synchronize() {
+                        Ok(_) => { println!("Stream synchronized!");}
+                        Err(_) => {panic!("Unable to synchronize kernels!");}
+                    }
+                }
+                _ => { panic!("Unable to synchronize kernels!");}
+            }
+        }
+
+        match result {
+            Ok(_) => {
+                Ok(DeviceTensor {
+                    data: Some(DeviceTensorKind::from(matOut)),
+                    shape: lhs.shape,
+                })
+            }
+            #[cfg(test)]
+            Err(_e) => { panic!("Failed to alloc device memory!"); }
+            #[cfg(not(test))]
+            Err(e) => { println!("Failed to alloc device memory!"); Err(e) }
+        }
     }
 
     //Maximum input size 512 x 512 supported!
@@ -624,19 +711,7 @@ mod tests {
 
         let exec = DeviceExecutor::new();
         let c = exec.activation_owned(a, true, "gelu".to_string()).unwrap();
-        // match &c.data {
-        //     Some(data) => {
-        //         match data {
-        //             DeviceTensorKind::FloatTensor(out) => {
-        //                 let mut out_host = vec![0.0f32; c.shape[0] * c.shape[1]];
-        //                 out.copy_to(&mut out_host);
-        //                 for item in out_host {print!("{} ", item)};
-        //             }
-        //             _ => { println!("Unable to obtain results!");}
-        //         }
-        //     }
-        //     _ => {println!("Unable to obtain results!");}
-        // }
+        
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [5, 5]);
         assert_eq!(c, cref);
@@ -718,4 +793,67 @@ mod tests {
         assert_eq!(c, cref);
     }
 
+    #[test]
+    fn test_addi32_owned() {
+        // let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let a = DeviceTensor::from_vec_shape_i32(vec![1i32; 50*50], vec![50, 50]).unwrap();
+        let b = DeviceTensor::from_vec_shape_i32(vec![2i32; 50*50], vec![50, 50]).unwrap();
+        let cref = DeviceTensor::from_vec_shape_i32(vec![3i32; 50*50], vec![50, 50]).unwrap();
+        let exec = DeviceExecutor::new();
+        let c = exec.addi32_owned(a, b, true).unwrap();
+        match &c.data {
+            Some(data) => {
+                match data {
+                    DeviceTensorKind::Int32Tensor(out) => {
+                        let mut out_host = vec![0i32; c.shape[0] * c.shape[1]];
+                        out.copy_to(&mut out_host);
+                        for item in out_host {print!("{} ", item)};
+                    }
+                    _ => { println!("Unable to obtain results!");}
+                }
+            }
+            _ => {println!("Unable to obtain results!");}
+        }
+        assert_eq!(c.ndims(), 2);
+        assert_eq!(c.shape(), [50, 50]);
+        assert_eq!(c, cref);
+    }
+
+    #[test]
+    fn test_subi32_owned() {
+        let a = DeviceTensor::from_vec_shape_i32(vec![3i32, 2, 3, 4, 5, 6], vec![2, 3]).unwrap();
+        let b = DeviceTensor::from_vec_shape_i32(vec![1i32, 2, 2, 2, 1, 5], vec![2, 3]).unwrap();
+        let cref = DeviceTensor::from_vec_shape_i32(vec![2i32, 0, 1, 2, 4, 1], vec![2, 3]).unwrap();
+
+        let exec = DeviceExecutor::new();
+        let c = exec.subi32_owned(a, b, true).unwrap();
+        assert_eq!(c.ndims(), 2);
+        assert_eq!(c.shape(), [2, 3]);
+        assert_eq!(c, cref);
+    }
+
+    #[test]
+    fn test_muli32_owned() {
+        let a = DeviceTensor::from_vec_shape_i32(vec![1i32, 2, 3, 4, 5, 6], vec![2, 3]).unwrap();
+        let b = DeviceTensor::from_vec_shape_i32(vec![1i32, 3, 0, 3, 5, 8], vec![2, 3]).unwrap();
+        let cref = DeviceTensor::from_vec_shape_i32(vec![1i32, 6, 0, 12, 25, 48], vec![2, 3]).unwrap();
+
+        let exec = DeviceExecutor::new();
+        let c = exec.muli32_owned(a, b, true).unwrap();
+        assert_eq!(c.ndims(), 2);
+        assert_eq!(c.shape(), [2, 3]);
+        assert_eq!(c, cref);
+    }
+
+    #[test]
+    fn test_divi32_owned() {
+        let a = DeviceTensor::from_vec_shape_i32(vec![1i32, 4, 3, 4, 5, 6], vec![2, 3]).unwrap();
+        let b = DeviceTensor::from_vec_shape_i32(vec![1i32, 2, 3, 4, 1, 3], vec![2, 3]).unwrap();
+        let cref = DeviceTensor::from_vec_shape_i32(vec![1i32, 2, 1, 1, 5, 2], vec![2, 3]).unwrap();
+        let exec = DeviceExecutor::new();
+        let c = exec.divi32_owned(a, b, true).unwrap();
+        assert_eq!(c.ndims(), 2);
+        assert_eq!(c.shape(), [2, 3]);
+        assert_eq!(c, cref);
+    }
 }
