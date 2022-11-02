@@ -32,6 +32,8 @@ use tops::context::TopsContext as Context;
 use tops::module::TopsModule as Module;
 #[cfg(feature = "tops_backend")]
 use tops::TopsApi as Api;
+#[cfg(feature = "tops_backend")]
+use tops::memory::CopyDestination;
 
 //Cuda backend
 #[cfg(feature = "cuda_backend")]
@@ -46,6 +48,8 @@ use cuda::context::CuContext as Context;
 use cuda::module::CuModule as Module;
 #[cfg(feature = "cuda_backend")]
 use cuda::CuApi as Api;
+#[cfg(feature = "cuda_backend")]
+use cuda::memory::CopyDestination;
 
 pub fn init_kernels() -> (Option<Context>, Option<Box<HashMap<String, Module>>>){
     
@@ -80,10 +84,12 @@ lazy_static! {
 
 fn load_module<'a>(name : &str) -> DeviceResult<Module>{
     #[cfg(feature = "tops_backend")]
-    let ptx = format!("./resources/{}.o",name).to_string();
+    let ptx = format!("{}/resources/{}.o", env!("CARGO_MANIFEST_DIR"), name).to_string();
 
     #[cfg(feature = "cuda_backend")]
-    let ptx = format!("./resources/{}.ptx",name).to_string();
+    let ptx = format!("{}/resources/{}.ptx", env!("CARGO_MANIFEST_DIR"), name).to_string();
+
+    println!("{}", ptx);
 
     Module::from_file(&ptx)
 }
@@ -185,8 +191,8 @@ impl DeviceExecutor {
         let function_name = "element";
         let kernel = match &G_API.1 {Some(kmap) => {kmap["element"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         // let kernel = self.kernel_map["matmul"].get_function(&function_name)?;
-        
-        let matOut = DeviceBuffer::from_slice(&vec![0.0f32; lhs.shape[0] * lhs.shape[1]])?;
+        let size : usize = lhs.shape.iter().product();
+        let matOut = DeviceBuffer::from_slice(&vec![0.0f32; size])?;
 
         let result : DeviceResult<()> = match (lhs.data, rhs.data, &self.stream) {
             (Some(data_left), Some(data_right), Some(stream)) => {
@@ -198,7 +204,7 @@ impl DeviceExecutor {
                                 matA.as_device_ptr(),
                                 matB.as_device_ptr(),
                                 matOut.as_device_ptr(),
-                                (lhs.shape[0] * lhs.shape[1]) as i32,
+                                size as i32,
                                 tp as i32
                             ));
                 
@@ -207,7 +213,7 @@ impl DeviceExecutor {
                                 matA.as_device_ptr(),
                                 matB.as_device_ptr(),
                                 matOut.as_device_ptr(),
-                                (lhs.shape[0] * lhs.shape[1]) as i32,
+                                size as i32,
                                 tp
                             ));
                 
@@ -236,7 +242,7 @@ impl DeviceExecutor {
             Ok(_) => {
                 Ok(DeviceTensor {
                     data: Some(DeviceTensorKind::from(matOut)),
-                    shape: vec![lhs.shape[0], lhs.shape[1]],
+                    shape: lhs.shape,
                 })
             }
             #[cfg(test)]
@@ -405,8 +411,7 @@ impl DeviceExecutor {
 
         let function_name = "activation";
         let kernel = match &G_API.1 {Some(kmap) => {kmap["activation"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
-        #[cfg(feature = "tops_backend")]
-        let inputType = DeviceBuffer::from_slice(&[arg.shape[0] as i32, arg.shape[1] as i32, map_act[act_type.as_str()] as i32])?;
+        let size : usize = arg.shape.iter().product();
 
         let result : DeviceResult<()> = match (&arg.data, &self.stream) {
             (Some(data_left),  Some(stream)) => {
@@ -416,14 +421,15 @@ impl DeviceExecutor {
                             #[cfg(feature = "tops_backend")]
                             let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
                                 matA.as_device_ptr(),
-                                inputType.as_device_ptr()
+                                size as i32,
+                                map_act[act_type.as_str()] as i32
                             ));
     
                             #[cfg(feature = "cuda_backend")]
                             let result = launch!(kernel<<<(1, 1, 1), (arg.shape[0] as u32, arg.shape[1] as u32, 1), 0, stream>>>(
                                 matA.as_device_ptr(),
-                                arg.shape[0],
-                                map_act[act_type.as_str()]
+                                size as i32,
+                                map_act[act_type.as_str()] as i32
                             ));
                 
                             result
@@ -613,8 +619,8 @@ mod tests {
     fn test_activation_gelu_owned() {
         // let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 1.0, 1.0], vec![2, 4]).unwrap();
         // let cref = DeviceTensor::from_vec_shape(vec![0.841192f32, 1.9545977, 2.9963627, 3.9999297, 5.0, 6.0, 0.841192f32, 0.841192f32], vec![2, 4]).unwrap();
-        let a = DeviceTensor::from_vec_shape(vec![1.0f32; 50*50], vec![50, 50]).unwrap();
-        let cref = DeviceTensor::from_vec_shape(vec![0.841192f32; 50*50], vec![50, 50]).unwrap();
+        let a = DeviceTensor::from_vec_shape(vec![1.0f32; 5*5], vec![5, 5]).unwrap();
+        let cref = DeviceTensor::from_vec_shape(vec![0.841192f32; 5*5], vec![5, 5]).unwrap();
 
         let exec = DeviceExecutor::new();
         let c = exec.activation_owned(a, true, "gelu".to_string()).unwrap();
@@ -632,7 +638,7 @@ mod tests {
         //     _ => {println!("Unable to obtain results!");}
         // }
         assert_eq!(c.ndims(), 2);
-        assert_eq!(c.shape(), [50, 50]);
+        assert_eq!(c.shape(), [5, 5]);
         assert_eq!(c, cref);
     }
 
@@ -656,7 +662,6 @@ mod tests {
         let a = DeviceTensor::from_vec_shape(vec![1.2f32; 50*50], vec![50, 50]).unwrap();
         let b = DeviceTensor::from_vec_shape(vec![2.8f32; 50*50], vec![50, 50]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![4.0f32; 50*50], vec![50, 50]).unwrap();
-
         let exec = DeviceExecutor::new();
         let c = exec.addf32_owned(a, b, true).unwrap();
         assert_eq!(c.ndims(), 2);

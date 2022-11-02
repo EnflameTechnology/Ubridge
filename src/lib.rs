@@ -11,4 +11,10 @@ pub mod prelude {
     // prelude
     pub use crate::device_executor::*;
     pub use crate::device_tensor::*;
+    pub use crate::device_opcode::*;
+    #[cfg(feature = "tops_backend")]
+    pub use tops_backend::memory::CopyDestination;
+
+    #[cfg(feature = "cuda_backend")]
+    pub use cuda_backend::memory::CopyDestination;
 }

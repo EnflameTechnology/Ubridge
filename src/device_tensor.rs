@@ -23,7 +23,7 @@ use cuda::memory::CopyDestination;
 
 
 // TODO consider hide TensorKind, and expose a into_raw_vec for BlasTensor
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DeviceTensorKind {
     FloatTensor(DeviceBuffer<f32>),
     DoubleTensor(DeviceBuffer<f64>),
@@ -31,7 +31,7 @@ pub enum DeviceTensorKind {
     Int8Tensor(DeviceBuffer<i8>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DeviceTensor {
     pub data: Option<DeviceTensorKind>,
     pub shape: Vec<usize>,
