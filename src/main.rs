@@ -40,10 +40,10 @@ use cuda::CuApi as Api;
 
 fn load_module<'a>(name : &str) -> DeviceResult<Module>{
     #[cfg(feature = "tops_backend")]
-    let ptx = format!("./resources/{}.o",name).to_string();
+    let ptx = format!("{}/resources/{}.o", env!("CARGO_MANIFEST_DIR"), name).to_string();
 
     #[cfg(feature = "cuda_backend")]
-    let ptx = format!("./resources/{}.ptx",name).to_string();
+    let ptx = format!("{}/resources/{}.ptx", env!("CARGO_MANIFEST_DIR"), name).to_string();
 
     Module::from_file(&ptx)
 }
@@ -99,10 +99,6 @@ fn network_test() -> DeviceResult<()> {
     for layer in layers {
         if ["relu", "gelu", "leaky", "tanh"].contains(&layer.op) {
             let function_name = "activation";
-
-            #[cfg(feature = "tops_backend")]
-            let inputType = DeviceBuffer::from_slice(&[layer.input_size.0 as i32, layer.input_size.1 as i32, map_act[layer.op] as i32])?;
-
             match load_module(function_name) {
                 Ok(module) => {
                     let kernel = module.get_function(&function_name)?;
@@ -110,7 +106,8 @@ fn network_test() -> DeviceResult<()> {
                         #[cfg(feature = "tops_backend")]
                         let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
                             matA.as_device_ptr(),
-                            inputType.as_device_ptr()
+                            (layer.input_size.0 * layer.input_size.1) as i32,
+                            map_act[layer.op] as i32
                         ));
 
                         #[cfg(feature = "cuda_backend")]
