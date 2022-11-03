@@ -25,7 +25,7 @@ Nvidia GPU/Enflame GCU
 ## Example of UHAL 
 #### A 6-layer neural network forward pass on GPU/GCU
 
-```Rust
+``` rust
 //Import UHAL for common computing interfaces
 use uhal::launch;
 use uhal::error::{DeviceResult};
