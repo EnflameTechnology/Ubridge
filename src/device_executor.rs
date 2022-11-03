@@ -143,6 +143,11 @@ impl DeviceExecutor {
             DeviceOpCode::SubF => self.subf32_owned(lhs, rhs, eager_mode),
             DeviceOpCode::MulF => self.mulf32_owned(lhs, rhs, eager_mode),
             DeviceOpCode::DivF => self.divf32_owned(lhs, rhs, eager_mode),
+
+            DeviceOpCode::AddI => self.addi32_owned(lhs, rhs, eager_mode),
+            DeviceOpCode::SubI => self.subi32_owned(lhs, rhs, eager_mode),
+            DeviceOpCode::MulI => self.muli32_owned(lhs, rhs, eager_mode),
+            DeviceOpCode::DivI => self.divi32_owned(lhs, rhs, eager_mode),
             DeviceOpCode::MatMulF => self.matmul_owned(lhs, rhs, eager_mode),
             DeviceOpCode::Conv2DF => self.conv2d_owned(lhs, rhs, eager_mode),
             _ => panic!("Not supported operation!"),
