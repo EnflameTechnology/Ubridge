@@ -18,6 +18,6 @@ lazy_static = {version = "1.4.0"}
 float_eq = { version = "0.7.0"}
 
 [features]
-default= ["tops_backend"]
+default= ["cuda_backend"]
 cuda = ["cuda_backend"]
 tops = ["tops_backend"]

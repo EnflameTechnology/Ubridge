@@ -51,17 +51,26 @@ use cuda::CuApi as Api;
 #[cfg(feature = "cuda_backend")]
 use cuda::memory::CopyDestination;
 
-pub fn init_kernels() -> (Option<Context>, Option<Box<HashMap<String, Module>>>){
-    
+pub fn init_api() -> Option<Context>{
     match Api::quick_init() { 
         Ok(context) => { 
+            return Some(context)
+        } 
+        _ => { return None }
+    };
+}
+
+pub fn init_kernels() -> (Option<Box<HashMap<String, Module>>>, Option<Context>){
+    
+    match init_api()  { 
+        Some(context) => { 
             let mut kernel_map = Box::new(HashMap::<String, Module>::new());
             for kernel in ["matmul", "activation", "convolution", "transpose", "element", "elementi32"] {
                 let module = load_module(kernel).unwrap();
                 kernel_map.insert(kernel.to_string(), module);
             }
             if kernel_map.len() > 0 { println!("{} kernel(s) loaded!", kernel_map.len()); }
-            return (Some(context), Some(kernel_map)) 
+            return (Some(kernel_map), Some(context))
         } 
         _ => { return (None, None) }
     };
@@ -69,17 +78,15 @@ pub fn init_kernels() -> (Option<Context>, Option<Box<HashMap<String, Module>>>)
 }
 
 
+
 lazy_static! {
     static ref G_MUTEX: Mutex<()> = Mutex::new(());
-
-    static ref G_API: (Option<Context>, Option<Box<HashMap<String, Module>>>) = match init_kernels() 
+    
+    static ref G_KERNEL: (Option<Box<HashMap<String, Module>>>, Option<Context>) = match init_kernels() 
     { 
-        (Some(context), Some(kmap)) => { (Some(context), Some(kmap)) } 
-        _ => { (None, None) 
-    }
-};
-
-
+        (Some(kmap), Some(context)) => { return (Some(kmap), Some(context)) } 
+        _ => { return (None, None) }
+    };
 }
 
 fn load_module<'a>(name : &str) -> DeviceResult<Module>{
@@ -215,13 +222,20 @@ impl DeviceExecutor {
         self.elementi32_owned(lhs, rhs, 3i32, eager_mode)
     }
 
+    pub fn get_block_grid(&self, shape1:usize, shape0:usize) -> (usize, usize, usize) {
+        let grid_a : usize = (shape1 + 16 - 1) / 16;
+        let grid_b : usize = (shape0 + 16 - 1) / 16;
+        return (16, grid_a, grid_b)
+    }
+
     #[allow(non_snake_case)]
     pub fn elementf32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, tp : i32, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "element";
-        let kernel = match &G_API.1 {Some(kmap) => {kmap["element"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &G_KERNEL.0 {Some(kmap) => {kmap["element"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         // let kernel = self.kernel_map["matmul"].get_function(&function_name)?;
         let size : usize = lhs.shape.iter().product();
         let matOut = DeviceBuffer::from_slice(&vec![0.0f32; size])?;
+        let (block_size, grid_a, grid_b) = self.get_block_grid(rhs.shape[1], lhs.shape[0]);
 
         let result : DeviceResult<()> = match (lhs.data, rhs.data, &self.stream) {
             (Some(data_left), Some(data_right), Some(stream)) => {
@@ -238,12 +252,13 @@ impl DeviceExecutor {
                             ));
                 
                             #[cfg(feature = "cuda_backend")]
-                            let result = launch!(kernel<<<(1, 1, 1), (lhs.shape[0] as u32, lhs.shape[1] as u32, 1), 0, stream>>>(
+                            let result = launch!(kernel<<<(grid_a as u32, grid_b as u32), (block_size as u32, block_size as u32), 0, stream>>>(
                                 matA.as_device_ptr(),
                                 matB.as_device_ptr(),
                                 matOut.as_device_ptr(),
-                                size as i32,
-                                tp
+                                lhs.shape[0] as u32,
+                                lhs.shape[1] as u32,
+                                tp as u32
                             ));
                 
                             result
@@ -284,9 +299,10 @@ impl DeviceExecutor {
     #[allow(non_snake_case)]
     pub fn elementi32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, tp : i32, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "elementi32";
-        let kernel = match &G_API.1 {Some(kmap) => {kmap["elementi32"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &G_KERNEL.0 {Some(kmap) => {kmap["elementi32"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         let size : usize = lhs.shape.iter().product();
         let matOut = DeviceBuffer::from_slice(&vec![0i32; size])?;
+        let (block_size, grid_a, grid_b) = self.get_block_grid(rhs.shape[1], lhs.shape[0]);
 
         let result : DeviceResult<()> = match (lhs.data, rhs.data, &self.stream) {
             (Some(data_left), Some(data_right), Some(stream)) => {
@@ -303,12 +319,13 @@ impl DeviceExecutor {
                             ));
                 
                             #[cfg(feature = "cuda_backend")]
-                            let result = launch!(kernel<<<(1, 1, 1), (lhs.shape[0] as u32, lhs.shape[1] as u32, 1), 0, stream>>>(
+                            let result = launch!(kernel<<<(grid_a as u32, grid_b as u32), (block_size as u32, block_size as u32), 0, stream>>>(
                                 matA.as_device_ptr(),
                                 matB.as_device_ptr(),
                                 matOut.as_device_ptr(),
-                                size as i32,
-                                tp
+                                lhs.shape[0] as u32,
+                                lhs.shape[1] as u32,
+                                tp as u32
                             ));
                 
                             result
@@ -350,7 +367,7 @@ impl DeviceExecutor {
     #[allow(non_snake_case)]
     pub fn matmul_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "matmul";
-        let kernel = match &G_API.1 {Some(kmap) => {kmap["matmul"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &G_KERNEL.0 {Some(kmap) => {kmap["matmul"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         // let kernel = self.kernel_map["matmul"].get_function(&function_name)?;
         
         #[cfg(feature = "tops_backend")]
@@ -359,6 +376,7 @@ impl DeviceExecutor {
         let inputShapeB = DeviceBuffer::from_slice(&[rhs.shape[0] as i32, rhs.shape[1]  as i32, 1i32, 1i32])?;
 
         let matOut = DeviceBuffer::from_slice(&vec![0.0f32 ;lhs.shape[0] *rhs.shape[1]])?;
+        let (block_size, grid_a, grid_b) = self.get_block_grid(rhs.shape[1], lhs.shape[0]);
 
         let result : DeviceResult<()> = match (lhs.data, rhs.data, &self.stream) {
             (Some(data_left), Some(data_right), Some(stream)) => {
@@ -375,11 +393,13 @@ impl DeviceExecutor {
                             ));
                 
                             #[cfg(feature = "cuda_backend")]
-                            let result = launch!(kernel<<<(1, 1, 1), (lhs.shape[0] as u32, lhs.shape[1] as u32, 1), 0, stream>>>(
+                            let result = launch!(kernel<<<(grid_a as u32, grid_b as u32), (block_size as u32, block_size as u32), 0, stream>>>(
                                 matA.as_device_ptr(),
                                 matB.as_device_ptr(),
                                 matOut.as_device_ptr(),
-                                rhs.shape[1]
+                                lhs.shape[0] as u32,
+                                lhs.shape[1] as u32,
+                                rhs.shape[1] as u32
                             ));
                 
                             result
@@ -422,7 +442,7 @@ impl DeviceExecutor {
     #[allow(non_snake_case)]
     pub fn conv2d_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "convolution";
-        let kernel = match &G_API.1 {Some(kmap) => {kmap["convolution"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &G_KERNEL.0 {Some(kmap) => {kmap["convolution"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         // let kernel = self.kernel_map["matmul"].get_function(&function_name)?;
         
         #[cfg(feature = "tops_backend")]
@@ -433,6 +453,7 @@ impl DeviceExecutor {
         let channelInfo = DeviceBuffer::from_slice(&[1i32, 1i32, 1i32, 1i32])?;
 
         let matOut = DeviceBuffer::from_slice(&vec![0.0f32 ;(lhs.shape[0] - rhs.shape[0] + 1) * (lhs.shape[1] - rhs.shape[1] + 1)])?;
+        let (block_size, grid_a, grid_b) = self.get_block_grid(rhs.shape[1], lhs.shape[0]);
 
         let result : DeviceResult<()> = match (lhs.data, rhs.data, &self.stream) {
             (Some(data_left), Some(data_right), Some(stream)) => {
@@ -450,11 +471,12 @@ impl DeviceExecutor {
                             ));
     
                             #[cfg(feature = "cuda_backend")]
-                            let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
+                            let result = launch!(kernel<<<(grid_a as u32, grid_b as u32), (block_size as u32, block_size as u32), 0, stream>>>(
                                 matA.as_device_ptr(),
                                 matB.as_device_ptr(),
                                 matOut.as_device_ptr(),
-                                lhs.shape[0] as i32, lhs.shape[1] as i32,
+                                lhs.shape[0] as i32, 
+                                lhs.shape[1] as i32,
                                 rhs.shape[0] as i32,
                                 rhs.shape[1] as i32
                             ));
@@ -502,8 +524,9 @@ impl DeviceExecutor {
         if !["relu", "gelu", "leaky", "tanh"].contains(&act_type.as_str()) { panic!("Activation type not supported!");}
 
         let function_name = "activation";
-        let kernel = match &G_API.1 {Some(kmap) => {kmap["activation"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &G_KERNEL.0 {Some(kmap) => {kmap["activation"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         let size : usize = arg.shape.iter().product();
+        let (block_size, grid_a, grid_b) = self.get_block_grid(arg.shape[1], arg.shape[0]);
 
         let result : DeviceResult<()> = match (&arg.data, &self.stream) {
             (Some(data_left),  Some(stream)) => {
@@ -518,9 +541,10 @@ impl DeviceExecutor {
                             ));
     
                             #[cfg(feature = "cuda_backend")]
-                            let result = launch!(kernel<<<(1, 1, 1), (arg.shape[0] as u32, arg.shape[1] as u32, 1), 0, stream>>>(
+                            let result = launch!(kernel<<<(grid_a as u32, grid_b as u32), (block_size as u32, block_size as u32), 0, stream>>>(
                                 matA.as_device_ptr(),
-                                size as i32,
+                                arg.shape[0] as u32,
+                                arg.shape[1] as u32,
                                 map_act[act_type.as_str()] as i32
                             ));
                 
@@ -574,11 +598,12 @@ impl DeviceExecutor {
     #[allow(non_snake_case)]
     pub fn transpose_owned(&self, arg: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
          let function_name = "transpose";
-        let kernel = match &G_API.1 {Some(kmap) => {kmap["transpose"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
-        #[cfg(feature = "tops_backend")]
+        let kernel = match &G_KERNEL.0 {Some(kmap) => {kmap["transpose"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        // #[cfg(feature = "tops_backend")]
         let input_shape = DeviceBuffer::from_slice(&[arg.shape[0] as i32, arg.shape[1] as i32, 1, 1])?;
-        #[cfg(feature = "tops_backend")]
+        // #[cfg(feature = "tops_backend")]
         let matOut = DeviceBuffer::from_slice(&vec![0.0f32; arg.shape[0] * arg.shape[1]])?;
+        let (block_size, grid_a, grid_b) = self.get_block_grid(arg.shape[1], arg.shape[0]);
 
         let result : DeviceResult<()> = match (&arg.data, &self.stream) {
             (Some(data_left),  Some(stream)) => {
@@ -593,10 +618,11 @@ impl DeviceExecutor {
                             ));
     
                             #[cfg(feature = "cuda_backend")]
-                            let result = launch!(kernel<<<(1, 1, 1), (arg.shape[0] as u32, arg.shape[1] as u32, 1), 0, stream>>>(
+                            let result = launch!(kernel<<<(grid_a as u32, grid_b as u32), (block_size as u32, block_size as u32), 0, stream>>>(
                                 matA.as_device_ptr(),
                                 matOut.as_device_ptr(),
-                                input_shape.as_device_ptr()
+                                arg.shape[0] as u32,
+                                arg.shape[1] as u32,  
                             ));
                 
                             result
@@ -645,10 +671,10 @@ mod tests {
 
     #[test]
     fn test_matmul_owned(){
+        match &G_KERNEL.1 { Some(_) => {} _ => {} }
         let a = DeviceTensor::ones(vec![17, 23]).unwrap();
         let b = DeviceTensor::ones(vec![23, 18]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![23.0; 17 * 18], vec![17, 18]).unwrap();
-
         let exec = DeviceExecutor::new();
         let c = exec.matmul_owned(a, b, true).unwrap();
         assert_eq!(c.ndims(), 2);
@@ -709,6 +735,7 @@ mod tests {
 
     #[test]
     fn test_activation_gelu_owned() {
+        match &G_KERNEL.1 { Some(_) => {} _ => {} }
         // let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 1.0, 1.0], vec![2, 4]).unwrap();
         // let cref = DeviceTensor::from_vec_shape(vec![0.841192f32, 1.9545977, 2.9963627, 3.9999297, 5.0, 6.0, 0.841192f32, 0.841192f32], vec![2, 4]).unwrap();
         let a = DeviceTensor::from_vec_shape(vec![1.0f32; 5*5], vec![5, 5]).unwrap();
@@ -716,7 +743,19 @@ mod tests {
 
         let exec = DeviceExecutor::new();
         let c = exec.activation_owned(a, true, "gelu".to_string()).unwrap();
-        
+        match &c.data {
+            Some(data) => {
+                match data {
+                    DeviceTensorKind::FloatTensor(out) => {
+                        let mut out_host = vec![0.0f32; c.shape[0] * c.shape[1]];
+                        out.copy_to(&mut out_host);
+                        for item in out_host {print!("{} ", item)};
+                    }
+                    _ => { println!("Unable to obtain results!");}
+                }
+            }
+            _ => {println!("Unable to obtain results!");}
+        }
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [5, 5]);
         assert_eq!(c, cref);
@@ -777,6 +816,7 @@ mod tests {
 
     #[test]
     fn test_divf32_owned() {
+        match &G_KERNEL.1 { Some(_) => {} _ => {} }
         let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let b = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![1.0f32; 6], vec![2, 3]).unwrap();
@@ -789,6 +829,7 @@ mod tests {
 
     #[test]
     fn test_transpose_owned() {
+        match &G_KERNEL.1 { Some(_) => {} _ => {} }
         let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![1.0f32, 4.0, 2.0, 5.0, 3.0, 6.0], vec![3, 2]).unwrap();
         let exec = DeviceExecutor::new();
@@ -806,19 +847,6 @@ mod tests {
         let cref = DeviceTensor::from_vec_shape_i32(vec![3i32; 50*50], vec![50, 50]).unwrap();
         let exec = DeviceExecutor::new();
         let c = exec.addi32_owned(a, b, true).unwrap();
-        match &c.data {
-            Some(data) => {
-                match data {
-                    DeviceTensorKind::Int32Tensor(out) => {
-                        let mut out_host = vec![0i32; c.shape[0] * c.shape[1]];
-                        out.copy_to(&mut out_host);
-                        for item in out_host {print!("{} ", item)};
-                    }
-                    _ => { println!("Unable to obtain results!");}
-                }
-            }
-            _ => {println!("Unable to obtain results!");}
-        }
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [50, 50]);
         assert_eq!(c, cref);
