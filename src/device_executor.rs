@@ -15,6 +15,7 @@ use uhal::{DriverLibraryTrait};
 use uhal::module::{ModuleTrait};
 use uhal::memory::{DeviceBufferTrait};
 use uhal::stream::{StreamTrait, StreamFlags};
+use uhal::context::CurrentContextTrait;
 
 //Tops backend
 #[cfg(feature = "tops_backend")]
@@ -25,6 +26,8 @@ use tops::memory::TopsDeviceBuffer as DeviceBuffer;
 use tops::stream::TopsStream as Stream;
 #[cfg(feature = "tops_backend")]
 use tops::context::TopsContext as Context;
+#[cfg(feature = "tops_backend")]
+use cuda::context::TopsCurrentContext as CurrentContext;
 #[cfg(feature = "tops_backend")]
 use tops::module::TopsModule as Module;
 #[cfg(feature = "tops_backend")]
@@ -42,13 +45,15 @@ use cuda::stream::CuStream as Stream;
 #[cfg(feature = "cuda_backend")]
 use cuda::context::CuContext as Context;
 #[cfg(feature = "cuda_backend")]
+use cuda::context::CuCurrentContext as CurrentContext;
+#[cfg(feature = "cuda_backend")]
 use cuda::module::CuModule as Module;
 #[cfg(feature = "cuda_backend")]
 use cuda::CuApi as Api;
 #[cfg(feature = "cuda_backend")]
 use cuda::memory::CopyDestination;
 
-static mut G_KERNEL: (Option<Box<HashMap<String, Module>>>, Option<Context>) =  (None, None);
+pub (crate) static mut G_KERNEL: (Option<Box<HashMap<String, Module>>>, Option<Context>, Option<Stream>) =  (None, None, None);
 static INIT: Once = Once::new();
 
 pub fn init_api() -> Option<Context>{
@@ -60,24 +65,28 @@ pub fn init_api() -> Option<Context>{
     };
 }
 
-pub fn init_kernels() -> (Option<Box<HashMap<String, Module>>>, Option<Context>){
+pub fn init_kernels() -> (Option<Box<HashMap<String, Module>>>, Option<Context>, Option<Stream>){
     
     match init_api()  { 
         Some(context) => { 
+            let stream = match Stream::new(StreamFlags::NON_BLOCKING, None) {
+                Ok(_stream) => {_stream},
+                _ => {panic!("Unable to create stream!");}
+            };
             let mut kernel_map = Box::new(HashMap::<String, Module>::new());
             for kernel in ["matmul", "activation", "convolution", "transpose", "element", "elementi32"] {
                 let module = load_module(kernel).unwrap();
                 kernel_map.insert(kernel.to_string(), module);
             }
             if kernel_map.len() > 0 { println!("{} kernel(s) loaded!", kernel_map.len()); }
-            return (Some(kernel_map), Some(context))
+            return (Some(kernel_map), Some(context), Some(stream))
         } 
-        _ => { return (None, None) }
+        _ => { return (None, None, None) }
     };
 
 }
 
-fn get_kernels() -> &'static (Option<Box<HashMap<String, Module>>>, Option<Context>) {
+fn get_kernels() -> &'static (Option<Box<HashMap<String, Module>>>, Option<Context>, Option<Stream>) {
     unsafe {
         INIT.call_once(|| {
             G_KERNEL = init_kernels();
@@ -101,26 +110,27 @@ fn load_module<'a>(name : &str) -> DeviceResult<Module>{
 
 #[derive(Debug)]
 pub struct DeviceExecutor {
-    stream : Option<Stream>,
+    // stream : Option<Stream>,
     // kernel_map : Box<HashMap<String, Module>>
     kernel_map: Option<&'static Box<HashMap<String, Module>>>, 
-    context : Option<&'static Context>
+    context : Option<&'static Context>,
+    stream : Option<&'static Stream>
 
 }
 
 impl DeviceExecutor {
     pub fn new() -> Self {
+        println!("DeviceExecutor::new");
         match get_kernels() {
-            (Some(_kernel_map), Some(_context)) => {
+            (Some(_kernel_map), Some(_context), Some(_stream)) => {
                 Self {
                     context : Some(_context),
                     kernel_map: Some(_kernel_map),
-                    stream : match Stream::new(StreamFlags::NON_BLOCKING, None) { Ok(stream) => {Some(stream)} _ => {panic!("Unable to create stream!");}},
+                    stream : Some(_stream)
                 }
             }
             _ => panic!("Load kernels failed!")
         }
-
     }
 
     pub fn synchronize(&self) -> DeviceResult<()> {
@@ -244,7 +254,8 @@ impl DeviceExecutor {
         // let kernel = self.kernel_map["matmul"].get_function(&function_name)?;
         let size : usize = lhs.shape.iter().product();
         let matOut = DeviceBuffer::from_slice(&vec![0.0f32; size])?;
-        let (block_size, grid_a, grid_b) = self.get_block_grid(rhs.shape[1], lhs.shape[0]);
+        // let (block_size, grid_a, grid_b) = self.get_block_grid(rhs.shape[1], lhs.shape[0]);
+        let (block_size, grid_a, grid_b) = self.get_block_grid(if rhs.shape.len() > 1 {rhs.shape[1] } else {lhs.shape[0]}, lhs.shape[0]);
 
         let result : DeviceResult<()> = match (lhs.data, rhs.data, &self.stream) {
             (Some(data_left), Some(data_right), Some(stream)) => {
@@ -266,7 +277,7 @@ impl DeviceExecutor {
                                 matB.as_device_ptr(),
                                 matOut.as_device_ptr(),
                                 lhs.shape[0] as u32,
-                                lhs.shape[1] as u32,
+                                if lhs.shape.len() > 1 {lhs.shape[1] as u32 } else {lhs.shape[0] as u32},
                                 tp as u32
                             ));
                 
@@ -311,7 +322,8 @@ impl DeviceExecutor {
         let kernel = match &self.kernel_map {Some(kmap) => {kmap["elementi32"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         let size : usize = lhs.shape.iter().product();
         let matOut = DeviceBuffer::from_slice(&vec![0i32; size])?;
-        let (block_size, grid_a, grid_b) = self.get_block_grid(rhs.shape[1], lhs.shape[0]);
+        
+        let (block_size, grid_a, grid_b) = self.get_block_grid(if rhs.shape.len() > 1 {rhs.shape[1] } else {lhs.shape[0]}, lhs.shape[0]);
 
         let result : DeviceResult<()> = match (lhs.data, rhs.data, &self.stream) {
             (Some(data_left), Some(data_right), Some(stream)) => {
@@ -333,7 +345,7 @@ impl DeviceExecutor {
                                 matB.as_device_ptr(),
                                 matOut.as_device_ptr(),
                                 lhs.shape[0] as u32,
-                                lhs.shape[1] as u32,
+                                if lhs.shape.len() > 1 {lhs.shape[1] as u32 } else {lhs.shape[0] as u32},
                                 tp as u32
                             ));
                 

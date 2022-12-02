@@ -4,7 +4,8 @@ use float_eq::float_eq;
 //Import UHAL for common computing interfaces
 use uhal::error::{DeviceResult};
 use uhal::memory::{DeviceBufferTrait};
-
+use uhal::context::CurrentContextTrait;
+use crate::device_executor::G_KERNEL;
 //Tops backend
 #[cfg(feature = "tops_backend")]
 use tops_backend as tops;
@@ -12,6 +13,8 @@ use tops_backend as tops;
 use tops::memory::TopsDeviceBuffer as DeviceBuffer;
 #[cfg(feature = "tops_backend")]
 use tops::memory::CopyDestination;
+#[cfg(feature = "tops_backend")]
+use cuda::context::TopsCurrentContext as CurrentContext;
 
 //Cuda backend
 #[cfg(feature = "cuda_backend")]
@@ -20,7 +23,8 @@ use cuda_backend as cuda;
 use cuda::memory::CuDeviceBuffer as DeviceBuffer;
 #[cfg(feature = "cuda_backend")]
 use cuda::memory::CopyDestination;
-
+#[cfg(feature = "cuda_backend")]
+use cuda::context::CuCurrentContext as CurrentContext;
 
 // TODO consider hide TensorKind, and expose a into_raw_vec for BlasTensor
 #[derive(Debug, Clone)]
@@ -71,6 +75,10 @@ impl DeviceTensor {
     }
 
     pub fn from_vec(raw_data: Vec<f32>) -> DeviceResult<DeviceTensor> {
+        unsafe {
+            match &G_KERNEL.1 {Some(context) => {CurrentContext::set_current(context).unwrap()} _=> {}}
+        }
+        
         let raw_shape = vec![raw_data.len()];
         let data = DeviceBuffer::from_slice(&raw_data);
         
@@ -90,6 +98,9 @@ impl DeviceTensor {
     }
 
     pub fn from_vec_shape(raw_data: Vec<f32>, shape: Vec<usize>) -> DeviceResult<DeviceTensor> {
+        unsafe {
+            match &G_KERNEL.1 {Some(context) => {CurrentContext::set_current(context).unwrap()} _=> {}}
+        }
         let data = DeviceBuffer::from_slice(&raw_data);
         match data {
             Ok(buf) => {
@@ -106,6 +117,9 @@ impl DeviceTensor {
     }
 
     pub fn from_vec_shape_i32(raw_data: Vec<i32>, shape: Vec<usize>) -> DeviceResult<DeviceTensor> {
+        unsafe {
+            match &G_KERNEL.1 {Some(context) => {CurrentContext::set_current(context).unwrap()} _=> {}}
+        }
         let data = DeviceBuffer::from_slice(&raw_data);
         match data {
             Ok(buf) => {
