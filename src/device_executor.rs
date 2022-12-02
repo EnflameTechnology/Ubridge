@@ -4,7 +4,7 @@ use std::ptr;
 use std::collections::HashMap;
 use crate::device_opcode::DeviceOpCode;
 use crate::device_tensor::{DeviceTensor, DeviceTensorKind};
-
+use std::sync::Once;
 use cust_core::DeviceCopy;
 
 
@@ -15,9 +15,6 @@ use uhal::{DriverLibraryTrait};
 use uhal::module::{ModuleTrait};
 use uhal::memory::{DeviceBufferTrait};
 use uhal::stream::{StreamTrait, StreamFlags};
-
-use lazy_static::{lazy_static};
-use std::sync::{Mutex};
 
 //Tops backend
 #[cfg(feature = "tops_backend")]
@@ -51,6 +48,9 @@ use cuda::CuApi as Api;
 #[cfg(feature = "cuda_backend")]
 use cuda::memory::CopyDestination;
 
+static mut G_KERNEL: (Option<Box<HashMap<String, Module>>>, Option<Context>) =  (None, None);
+static INIT: Once = Once::new();
+
 pub fn init_api() -> Option<Context>{
     match Api::quick_init() { 
         Ok(context) => { 
@@ -77,17 +77,15 @@ pub fn init_kernels() -> (Option<Box<HashMap<String, Module>>>, Option<Context>)
 
 }
 
-
-
-lazy_static! {
-    static ref G_MUTEX: Mutex<()> = Mutex::new(());
-    
-    static ref G_KERNEL: (Option<Box<HashMap<String, Module>>>, Option<Context>) = match init_kernels() 
-    { 
-        (Some(kmap), Some(context)) => { return (Some(kmap), Some(context)) } 
-        _ => { return (None, None) }
-    };
+fn get_kernels() -> &'static (Option<Box<HashMap<String, Module>>>, Option<Context>) {
+    unsafe {
+        INIT.call_once(|| {
+            G_KERNEL = init_kernels();
+        });
+        &G_KERNEL
+    }
 }
+
 
 fn load_module<'a>(name : &str) -> DeviceResult<Module>{
     #[cfg(feature = "tops_backend")]
@@ -105,13 +103,24 @@ fn load_module<'a>(name : &str) -> DeviceResult<Module>{
 pub struct DeviceExecutor {
     stream : Option<Stream>,
     // kernel_map : Box<HashMap<String, Module>>
+    kernel_map: Option<&'static Box<HashMap<String, Module>>>, 
+    context : Option<&'static Context>
+
 }
 
 impl DeviceExecutor {
     pub fn new() -> Self {
-        Self {
-            stream : match Stream::new(StreamFlags::NON_BLOCKING, None) { Ok(stream) => {Some(stream)} _ => {panic!("Unable to create stream!");}},
+        match get_kernels() {
+            (Some(_kernel_map), Some(_context)) => {
+                Self {
+                    context : Some(_context),
+                    kernel_map: Some(_kernel_map),
+                    stream : match Stream::new(StreamFlags::NON_BLOCKING, None) { Ok(stream) => {Some(stream)} _ => {panic!("Unable to create stream!");}},
+                }
+            }
+            _ => panic!("Load kernels failed!")
         }
+
     }
 
     pub fn synchronize(&self) -> DeviceResult<()> {
@@ -231,7 +240,7 @@ impl DeviceExecutor {
     #[allow(non_snake_case)]
     pub fn elementf32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, tp : i32, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "element";
-        let kernel = match &G_KERNEL.0 {Some(kmap) => {kmap["element"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &self.kernel_map {Some(kmap) => {kmap["element"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         // let kernel = self.kernel_map["matmul"].get_function(&function_name)?;
         let size : usize = lhs.shape.iter().product();
         let matOut = DeviceBuffer::from_slice(&vec![0.0f32; size])?;
@@ -299,7 +308,7 @@ impl DeviceExecutor {
     #[allow(non_snake_case)]
     pub fn elementi32_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, tp : i32, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "elementi32";
-        let kernel = match &G_KERNEL.0 {Some(kmap) => {kmap["elementi32"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &self.kernel_map {Some(kmap) => {kmap["elementi32"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         let size : usize = lhs.shape.iter().product();
         let matOut = DeviceBuffer::from_slice(&vec![0i32; size])?;
         let (block_size, grid_a, grid_b) = self.get_block_grid(rhs.shape[1], lhs.shape[0]);
@@ -367,7 +376,7 @@ impl DeviceExecutor {
     #[allow(non_snake_case)]
     pub fn matmul_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "matmul";
-        let kernel = match &G_KERNEL.0 {Some(kmap) => {kmap["matmul"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &self.kernel_map {Some(kmap) => {kmap["matmul"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         // let kernel = self.kernel_map["matmul"].get_function(&function_name)?;
         
         #[cfg(feature = "tops_backend")]
@@ -442,7 +451,7 @@ impl DeviceExecutor {
     #[allow(non_snake_case)]
     pub fn conv2d_owned(&self, lhs: DeviceTensor, rhs: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
         let function_name = "convolution";
-        let kernel = match &G_KERNEL.0 {Some(kmap) => {kmap["convolution"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &self.kernel_map {Some(kmap) => {kmap["convolution"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         // let kernel = self.kernel_map["matmul"].get_function(&function_name)?;
         
         #[cfg(feature = "tops_backend")]
@@ -524,7 +533,7 @@ impl DeviceExecutor {
         if !["relu", "gelu", "leaky", "tanh"].contains(&act_type.as_str()) { panic!("Activation type not supported!");}
 
         let function_name = "activation";
-        let kernel = match &G_KERNEL.0 {Some(kmap) => {kmap["activation"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let kernel = match &self.kernel_map {Some(kmap) => {kmap["activation"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         let size : usize = arg.shape.iter().product();
         let (block_size, grid_a, grid_b) = self.get_block_grid(arg.shape[1], arg.shape[0]);
 
@@ -597,8 +606,8 @@ impl DeviceExecutor {
     //Maximum input size 512 x 512 supported!
     #[allow(non_snake_case)]
     pub fn transpose_owned(&self, arg: DeviceTensor, eager_mode : bool) -> DeviceResult<DeviceTensor> {
-         let function_name = "transpose";
-        let kernel = match &G_KERNEL.0 {Some(kmap) => {kmap["transpose"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
+        let function_name = "transpose";
+        let kernel = match &self.kernel_map {Some(kmap) => {kmap["transpose"].get_function(&function_name)?} _=> {panic!("Unable to use kernel!");}};
         // #[cfg(feature = "tops_backend")]
         let input_shape = DeviceBuffer::from_slice(&[arg.shape[0] as i32, arg.shape[1] as i32, 1, 1])?;
         // #[cfg(feature = "tops_backend")]
@@ -671,11 +680,12 @@ mod tests {
 
     #[test]
     fn test_matmul_owned(){
-        match &G_KERNEL.1 { Some(_) => {} _ => {} }
+        let exec = DeviceExecutor::new();
+
         let a = DeviceTensor::ones(vec![17, 23]).unwrap();
         let b = DeviceTensor::ones(vec![23, 18]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![23.0; 17 * 18], vec![17, 18]).unwrap();
-        let exec = DeviceExecutor::new();
+        
         let c = exec.matmul_owned(a, b, true).unwrap();
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [17, 18]);
@@ -684,11 +694,11 @@ mod tests {
 
     #[test]
     fn test_conv2d_owned(){
+        let exec = DeviceExecutor::new();
         let a = DeviceTensor::ones(vec![9, 9]).unwrap();
         let b = DeviceTensor::fill(vec![3, 3], 0.5f32).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![4.5f32; 7 * 7], vec![7, 7]).unwrap();
 
-        let exec = DeviceExecutor::new();
         let c = exec.conv2d_owned(a, b, true).unwrap();
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [7, 7]);
@@ -697,10 +707,10 @@ mod tests {
 
     #[test]
     fn test_activation_relu_owned() {
+        let exec = DeviceExecutor::new();
         let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
 
-        let exec = DeviceExecutor::new();
         let c = exec.activation_owned(a, true, "relu".to_string()).unwrap();
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [2, 3]);
@@ -709,10 +719,10 @@ mod tests {
 
     #[test]
     fn test_activation_leaky_owned() {
+        let exec = DeviceExecutor::new();
         let a = DeviceTensor::from_vec_shape(vec![1.0f32, -0.8, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![1.0f32, -0.080000006, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
 
-        let exec = DeviceExecutor::new();
         let c = exec.activation_owned(a, true, "leaky".to_string()).unwrap();
 
         assert_eq!(c.ndims(), 2);
@@ -722,10 +732,10 @@ mod tests {
 
     #[test]
     fn test_activation_tanh_owned() {
+        let exec = DeviceExecutor::new();
         let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![0.7615942f32, 0.9640275, 0.9950547, 0.9993293, 0.99990916, 0.9999877], vec![2, 3]).unwrap();
 
-        let exec = DeviceExecutor::new();
         let c = exec.activation_owned(a, true, "tanh".to_string()).unwrap();
 
         assert_eq!(c.ndims(), 2);
@@ -735,13 +745,12 @@ mod tests {
 
     #[test]
     fn test_activation_gelu_owned() {
-        match &G_KERNEL.1 { Some(_) => {} _ => {} }
+        let exec = DeviceExecutor::new();
         // let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 1.0, 1.0], vec![2, 4]).unwrap();
         // let cref = DeviceTensor::from_vec_shape(vec![0.841192f32, 1.9545977, 2.9963627, 3.9999297, 5.0, 6.0, 0.841192f32, 0.841192f32], vec![2, 4]).unwrap();
         let a = DeviceTensor::from_vec_shape(vec![1.0f32; 5*5], vec![5, 5]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![0.841192f32; 5*5], vec![5, 5]).unwrap();
 
-        let exec = DeviceExecutor::new();
         let c = exec.activation_owned(a, true, "gelu".to_string()).unwrap();
         match &c.data {
             Some(data) => {
@@ -777,11 +786,11 @@ mod tests {
 
     #[test]
     fn test_addf32_owned() {
+        let exec = DeviceExecutor::new();
         // let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let a = DeviceTensor::from_vec_shape(vec![1.2f32; 50*50], vec![50, 50]).unwrap();
         let b = DeviceTensor::from_vec_shape(vec![2.8f32; 50*50], vec![50, 50]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![4.0f32; 50*50], vec![50, 50]).unwrap();
-        let exec = DeviceExecutor::new();
         let c = exec.addf32_owned(a, b, true).unwrap();
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [50, 50]);
@@ -790,11 +799,11 @@ mod tests {
 
     #[test]
     fn test_subf32_owned() {
+        let exec = DeviceExecutor::new();
         let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let b = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![0.0f32; 6], vec![2, 3]).unwrap();
 
-        let exec = DeviceExecutor::new();
         let c = exec.subf32_owned(a, b, true).unwrap();
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [2, 3]);
@@ -803,11 +812,11 @@ mod tests {
 
     #[test]
     fn test_mulf32_owned() {
+        let exec = DeviceExecutor::new();
         let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let b = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![1.0f32, 4.0, 9.0, 16.0, 25.0, 36.0], vec![2, 3]).unwrap();
 
-        let exec = DeviceExecutor::new();
         let c = exec.mulf32_owned(a, b, true).unwrap();
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [2, 3]);
@@ -816,11 +825,10 @@ mod tests {
 
     #[test]
     fn test_divf32_owned() {
-        match &G_KERNEL.1 { Some(_) => {} _ => {} }
+        let exec = DeviceExecutor::new();
         let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let b = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![1.0f32; 6], vec![2, 3]).unwrap();
-        let exec = DeviceExecutor::new();
         let c = exec.divf32_owned(a, b, true).unwrap();
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [2, 3]);
@@ -829,10 +837,9 @@ mod tests {
 
     #[test]
     fn test_transpose_owned() {
-        match &G_KERNEL.1 { Some(_) => {} _ => {} }
+        let exec = DeviceExecutor::new();
         let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape(vec![1.0f32, 4.0, 2.0, 5.0, 3.0, 6.0], vec![3, 2]).unwrap();
-        let exec = DeviceExecutor::new();
         let c = exec.transpose_owned(a, true).unwrap();
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [3, 2]);
@@ -841,11 +848,11 @@ mod tests {
 
     #[test]
     fn test_addi32_owned() {
+        let exec = DeviceExecutor::new();
         // let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let a = DeviceTensor::from_vec_shape_i32(vec![1i32; 50*50], vec![50, 50]).unwrap();
         let b = DeviceTensor::from_vec_shape_i32(vec![2i32; 50*50], vec![50, 50]).unwrap();
         let cref = DeviceTensor::from_vec_shape_i32(vec![3i32; 50*50], vec![50, 50]).unwrap();
-        let exec = DeviceExecutor::new();
         let c = exec.addi32_owned(a, b, true).unwrap();
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [50, 50]);
@@ -854,11 +861,11 @@ mod tests {
 
     #[test]
     fn test_subi32_owned() {
+        let exec = DeviceExecutor::new();
         let a = DeviceTensor::from_vec_shape_i32(vec![3i32, 2, 3, 4, 5, 6], vec![2, 3]).unwrap();
         let b = DeviceTensor::from_vec_shape_i32(vec![1i32, 2, 2, 2, 1, 5], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape_i32(vec![2i32, 0, 1, 2, 4, 1], vec![2, 3]).unwrap();
 
-        let exec = DeviceExecutor::new();
         let c = exec.subi32_owned(a, b, true).unwrap();
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [2, 3]);
@@ -867,11 +874,11 @@ mod tests {
 
     #[test]
     fn test_muli32_owned() {
+        let exec = DeviceExecutor::new();
         let a = DeviceTensor::from_vec_shape_i32(vec![1i32, 2, 3, 4, 5, 6], vec![2, 3]).unwrap();
         let b = DeviceTensor::from_vec_shape_i32(vec![1i32, 3, 0, 3, 5, 8], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape_i32(vec![1i32, 6, 0, 12, 25, 48], vec![2, 3]).unwrap();
 
-        let exec = DeviceExecutor::new();
         let c = exec.muli32_owned(a, b, true).unwrap();
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [2, 3]);
@@ -880,10 +887,10 @@ mod tests {
 
     #[test]
     fn test_divi32_owned() {
+        let exec = DeviceExecutor::new();
         let a = DeviceTensor::from_vec_shape_i32(vec![1i32, 4, 3, 4, 5, 6], vec![2, 3]).unwrap();
         let b = DeviceTensor::from_vec_shape_i32(vec![1i32, 2, 3, 4, 1, 3], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape_i32(vec![1i32, 2, 1, 1, 5, 2], vec![2, 3]).unwrap();
-        let exec = DeviceExecutor::new();
         let c = exec.divi32_owned(a, b, true).unwrap();
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [2, 3]);
