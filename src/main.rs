@@ -55,6 +55,12 @@ struct Layer<'a, T: DeviceCopy> {
     output_size : (usize, usize),
     out_ref : Option<&'a DeviceBuffer<T>>
 }
+pub fn get_block_grid(shape1:usize, shape0:usize) -> (usize, usize, usize) {
+    let grid_a : usize = (shape1 + 16 - 1) / 16;
+    let grid_b : usize = (shape0 + 16 - 1) / 16;
+    return (16, grid_a, grid_b)
+}
+
 //A 6-layer neural network forward pass
 //Unified interface (UHAL) for CUDA and Tops backend
 #[allow(non_snake_case)]
@@ -102,6 +108,7 @@ fn network_test() -> DeviceResult<()> {
             match load_module(function_name) {
                 Ok(module) => {
                     let kernel = module.get_function(&function_name)?;
+                    let (block_size, grid_a, grid_b) = get_block_grid(layer.input_size.1, layer.input_size.0);
                     unsafe {
                         #[cfg(feature = "tops_backend")]
                         let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
@@ -111,9 +118,10 @@ fn network_test() -> DeviceResult<()> {
                         ));
 
                         #[cfg(feature = "cuda_backend")]
-                        let result = launch!(kernel<<<(1, 1, 1), (layer.input_size.0 as u32, layer.input_size.1 as u32, 1), 0, stream>>>(
+                        let result = launch!(kernel<<<(grid_a as u32, grid_b as u32), (block_size as u32, block_size as u32), 0, stream>>>(
                             matA.as_device_ptr(),
-                            layer.output_size.0,
+                            layer.input_size.0 as u32,
+                            layer.input_size.1 as u32,
                             map_act[layer.op]
                         ));
 
@@ -128,6 +136,7 @@ fn network_test() -> DeviceResult<()> {
             match load_module(layer.op) {
                 Ok(module) => {
                     let kernel = module.get_function(&layer.op)?;
+                    let (block_size, grid_a, grid_b) = get_block_grid(layer.input_size.1, layer.input_size.0);
 
                     #[cfg(feature = "tops_backend")]
                     let inputShapeA = DeviceBuffer::from_slice(&[layer.input_size.0 as i32, layer.input_size.1 as i32, 1i32, 1i32])?;
@@ -145,11 +154,13 @@ fn network_test() -> DeviceResult<()> {
                         ));
 
                         #[cfg(feature = "cuda_backend")]
-                        let result = launch!(kernel<<<(1, 1, 1), (layer.input_size.0 as u32, layer.input_size.1 as u32, 1), 0, stream>>>(
+                        let result = launch!(kernel<<<(grid_a as u32, grid_b as u32), (block_size as u32, block_size as u32), 0, stream>>>(
                             matA.as_device_ptr(),
                             matB.as_device_ptr(),
                             matOut.as_device_ptr(),
-                            layer.output_size.0
+                            layer.input_size.0 as u32,
+                            layer.input_size.1 as u32,
+                            layer.output_size.1 as u32
                         ));
 
                         result?;
@@ -195,9 +206,10 @@ fn network_test() -> DeviceResult<()> {
                             matA.as_device_ptr(),
                             matB.as_device_ptr(),
                             matConvOut.as_device_ptr(),
-                            layer.input_size.0 as i32, layer.input_size.1 as i32,
-                            K as i32,
-                            K as i32
+                            layer.input_size.0 as u32, 
+                            layer.input_size.1 as u32,
+                            K as u32,
+                            K as u32
                         ));
 
                         result?;
