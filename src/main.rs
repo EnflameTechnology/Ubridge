@@ -40,10 +40,10 @@ use cuda::CuApi as Api;
 
 fn load_module<'a>(name : &str) -> DeviceResult<Module>{
     #[cfg(feature = "tops_backend")]
-    let ptx = format!("{}/resources/{}.o", env!("CARGO_MANIFEST_DIR"), name).to_string();
+    let ptx = format!("{}/kernels/{}.o", env!("CARGO_MANIFEST_DIR"), name).to_string();
 
     #[cfg(feature = "cuda_backend")]
-    let ptx = format!("{}/resources/{}.ptx", env!("CARGO_MANIFEST_DIR"), name).to_string();
+    let ptx = format!("{}/kernels/{}.ptx", env!("CARGO_MANIFEST_DIR"), name).to_string();
 
     Module::from_file(&ptx)
 }
