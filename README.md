@@ -64,10 +64,10 @@ use cuda::CuApi as Api;
 
 fn load_module<'a>(name : &str) -> DeviceResult<Module>{
     #[cfg(feature = "tops_backend")]
-    let ptx = format!("./resources/{}.o",name).to_string();
+    let ptx = format!("./kernels/{}.o",name).to_string();
 
     #[cfg(feature = "cuda_backend")]
-    let ptx = format!("./resources/{}.ptx",name).to_string();
+    let ptx = format!("./kernels/{}.ptx",name).to_string();
 
     Module::from_file(&ptx)
 }
@@ -284,7 +284,7 @@ fn main() -> DeviceResult<()> {
             println!("\nLaunched network_test successfully.");
         }
         Err(e) => {
-            println!("\nLaunche network_test failed.");
+            println!("\nLaunch network_test failed.");
             return Err(e);
         }
     }
