@@ -1,30 +1,28 @@
-use std::fmt::Debug;
 use float_eq::float_eq;
+use std::fmt::Debug;
 
 //Import UHAL for common computing interfaces
-use uhal::error::{DeviceResult};
-use uhal::memory::{DeviceBufferTrait};
-use uhal::context::CurrentContextTrait;
 use crate::device_executor::G_KERNEL;
+use uhal::context::CurrentContextTrait;
+use uhal::error::DeviceResult;
+use uhal::memory::{DeviceBufferTrait, DeviceBufferTraitEx};
 //Tops backend
-#[cfg(feature = "tops_backend")]
-use tops_backend as tops;
-#[cfg(feature = "tops_backend")]
-use tops::memory::TopsDeviceBuffer as DeviceBuffer;
 #[cfg(feature = "tops_backend")]
 use tops::memory::CopyDestination;
 #[cfg(feature = "tops_backend")]
-use cuda::context::TopsCurrentContext as CurrentContext;
+use tops::memory::TopsDeviceBuffer as DeviceBuffer;
+#[cfg(feature = "tops_backend")]
+use tops_backend as tops;
 
 //Cuda backend
 #[cfg(feature = "cuda_backend")]
-use cuda_backend as cuda;
-#[cfg(feature = "cuda_backend")]
-use cuda::memory::CuDeviceBuffer as DeviceBuffer;
+use cuda::context::CuCurrentContext as CurrentContext;
 #[cfg(feature = "cuda_backend")]
 use cuda::memory::CopyDestination;
 #[cfg(feature = "cuda_backend")]
-use cuda::context::CuCurrentContext as CurrentContext;
+use cuda::memory::CuDeviceBuffer as DeviceBuffer;
+#[cfg(feature = "cuda_backend")]
+use cuda_backend as cuda;
 
 // TODO consider hide TensorKind, and expose a into_raw_vec for BlasTensor
 #[derive(Debug, Clone)]
@@ -73,155 +71,214 @@ impl DeviceTensor {
     pub fn shape(&self) -> Vec<usize> {
         self.shape.clone()
     }
-
-    pub fn from_vec(raw_data: Vec<f32>) -> DeviceResult<DeviceTensor> {
-        unsafe {
-            match &G_KERNEL.1 {Some(context) => {CurrentContext::set_current(context).unwrap()} _=> {}}
+    pub fn to_cpu(&self, dest: &mut Vec<f32>) -> DeviceResult<()> {
+        match &self.data {
+            Some(DeviceTensorKind::FloatTensor(raw)) => raw.copy_to(dest),
+            _ => Err(uhal::error::DeviceError::UnknownError),
         }
-        
+    }
+    pub fn from_vec(raw_data: Vec<f32>) -> DeviceResult<DeviceTensor> {
         let raw_shape = vec![raw_data.len()];
         let data = DeviceBuffer::from_slice(&raw_data);
-        
-        match data {
-            Ok(buf) => {
-                Ok(DeviceTensor {
-                    data: Some(DeviceTensorKind::from(buf)),
-                    shape: raw_shape,
-                })
-            }
-            #[cfg(test)]
-            Err(_e) => { panic!("Failed to alloc device memory!"); }
-            #[cfg(not(test))]
-            Err(_e) => { println!("Failed to alloc device memory!"); Err(_e) }
-        }
 
+        match data {
+            Ok(buf) => Ok(DeviceTensor {
+                data: Some(DeviceTensorKind::from(buf)),
+                shape: raw_shape,
+            }),
+            #[cfg(test)]
+            Err(_e) => {
+                panic!("Failed to alloc device memory!");
+            }
+            #[cfg(not(test))]
+            Err(_e) => {
+                println!("Failed to alloc device memory!");
+                Err(_e)
+            }
+        }
     }
 
-    pub fn from_vec_shape(raw_data: Vec<f32>, shape: Vec<usize>) -> DeviceResult<DeviceTensor> {
-        unsafe {
-            match &G_KERNEL.1 {Some(context) => {CurrentContext::set_current(context).unwrap()} _=> {}}
-        }
+    pub fn from_vec_shape(raw_data: &Vec<f32>, shape: Vec<usize>) -> DeviceResult<DeviceTensor> {
         let data = DeviceBuffer::from_slice(&raw_data);
         match data {
-            Ok(buf) => {
-                Ok(DeviceTensor {
-                    data: Some(DeviceTensorKind::from(buf)),
-                    shape: shape,
-                })
-            }
+            Ok(buf) => Ok(DeviceTensor {
+                data: Some(DeviceTensorKind::from(buf)),
+                shape: shape,
+            }),
             #[cfg(test)]
-            Err(_e) => { panic!("Failed to alloc device memory!"); }
+            Err(_e) => {
+                panic!("Failed to alloc device memory!");
+            }
             #[cfg(not(test))]
-            Err(_e) => { println!("Failed to alloc device memory!"); Err(_e) }
+            Err(_e) => {
+                println!("Failed to alloc device memory!");
+                Err(_e)
+            }
+        }
+    }
+
+    pub fn from_pointer<M>(
+        pointer: *const M,
+        size: usize,
+        shape: Vec<usize>,
+    ) -> DeviceResult<DeviceTensor> {
+        let data = DeviceBuffer::from_pointer(pointer, size);
+        match data {
+            Ok(buf) => Ok(DeviceTensor {
+                data: Some(DeviceTensorKind::from(buf)),
+                shape: shape,
+            }),
+            #[cfg(test)]
+            Err(_e) => {
+                panic!("Failed to alloc device memory!");
+            }
+            #[cfg(not(test))]
+            Err(_e) => {
+                println!("Failed to alloc device memory!");
+                Err(_e)
+            }
         }
     }
 
     pub fn from_vec_shape_i32(raw_data: Vec<i32>, shape: Vec<usize>) -> DeviceResult<DeviceTensor> {
-        unsafe {
-            match &G_KERNEL.1 {Some(context) => {CurrentContext::set_current(context).unwrap()} _=> {}}
-        }
         let data = DeviceBuffer::from_slice(&raw_data);
         match data {
-            Ok(buf) => {
-                Ok(DeviceTensor {
-                    data: Some(DeviceTensorKind::from(buf)),
-                    shape: shape,
-                })
-            }
+            Ok(buf) => Ok(DeviceTensor {
+                data: Some(DeviceTensorKind::from(buf)),
+                shape: shape,
+            }),
             #[cfg(test)]
-            Err(_e) => { panic!("Failed to alloc device memory!"); }
+            Err(_e) => {
+                panic!("Failed to alloc device memory!");
+            }
             #[cfg(not(test))]
-            Err(_e) => { println!("Failed to alloc device memory!"); Err(_e) }
+            Err(_e) => {
+                println!("Failed to alloc device memory!");
+                Err(_e)
+            }
         }
     }
 
-    pub fn fill(shape: Vec<usize>, v : f32) -> DeviceResult<DeviceTensor> {
-        let ret: usize = shape.iter().fold(1usize, |mut ret, val| {ret *= *val; ret});
+    pub fn fill(shape: Vec<usize>, v: f32) -> DeviceResult<DeviceTensor> {
+        let ret: usize = shape.iter().fold(1usize, |mut ret, val| {
+            ret *= *val;
+            ret
+        });
         // let ret: u32 = shape.iter().product();
-        Self::from_vec_shape(vec![v; ret], shape)
+        Self::from_vec_shape(&vec![v; ret], shape)
     }
 
     pub fn zeros(shape: Vec<usize>) -> DeviceResult<DeviceTensor> {
-        let ret: usize = shape.iter().fold(1usize, |mut ret, val| {ret *= *val; ret});
+        let ret: usize = shape.iter().fold(1usize, |mut ret, val| {
+            ret *= *val;
+            ret
+        });
         // let ret: u32 = shape.iter().product();
-        Self::from_vec_shape(vec![0.0f32; ret], shape)
+        Self::from_vec_shape(&vec![0.0f32; ret], shape)
     }
 
     pub fn ones(shape: Vec<usize>) -> DeviceResult<DeviceTensor> {
-        let ret: usize = shape.iter().fold(1usize, |mut ret, val| {ret *= *val; ret});
+        let ret: usize = shape.iter().fold(1usize, |mut ret, val| {
+            ret *= *val;
+            ret
+        });
         // let ret: u32 = shape.iter().product();
-        Self::from_vec_shape(vec![1.0f32; ret], shape)
+        Self::from_vec_shape(&vec![1.0f32; ret], shape)
     }
-
 }
 
+// impl Drop for DeviceTensor {
+//     fn drop(&mut self) {
+//         match &mut self.data {
+//             Some(DeviceTensorKind::FloatTensor(raw)) => {
+//                 match DeviceBuffer::drop(raw) {
+//                     Ok(_) => {}
+//                     _=> { println!("DeviceTensor::drop failed {:?}", self.shape);}
+//                 }
+//             },
+//             Some(DeviceTensorKind::DoubleTensor(raw)) => {
+//                 match DeviceBuffer::drop(raw) {
+//                     Ok(_) => {}
+//                     _=> { println!("DeviceTensor::drop failed {:?}", self.shape);}
+//                 }
+//             },
+//             _=> {
+//                 panic!("Not implemented!");
+//             }
+//         }
+//     }
+// }
 impl PartialEq for DeviceTensor {
     fn eq(&self, other: &Self) -> bool {
         match &self.data {
-            Some(data1) => {
-                match &other.data {
-                    Some(data2) => {
-                        let size1: usize = self.shape.iter().fold(1usize, |mut ret, val| {ret *= *val; ret});
-                        let size2: usize = other.shape.iter().fold(1usize, |mut ret, val| {ret *= *val; ret});
-                        if self.shape != other.shape { return false }
-                        match data1 {
-                            DeviceTensorKind::FloatTensor(ret1) => {
-                                let mut out1 = vec![0.0f32; size1];
-                                ret1.copy_to(&mut out1[0..size1]).unwrap();
-                                match data2 {
-                                    DeviceTensorKind::FloatTensor(ret2) => {
-                                        let mut out2 = vec![0.0f32; size2];
-                                        ret2.copy_to(&mut out2[0..size2]).unwrap();
-                                        return float_eq!(out1, out2, rmax_all<=0.000001f32);
-                                    }
-                                    _ => { return false }
+            Some(data1) => match &other.data {
+                Some(data2) => {
+                    let size1: usize = self.shape.iter().fold(1usize, |mut ret, val| {
+                        ret *= *val;
+                        ret
+                    });
+                    let size2: usize = other.shape.iter().fold(1usize, |mut ret, val| {
+                        ret *= *val;
+                        ret
+                    });
+                    if self.shape != other.shape {
+                        return false;
+                    }
+                    match data1 {
+                        DeviceTensorKind::FloatTensor(ret1) => {
+                            let mut out1 = vec![0.0f32; size1];
+                            ret1.copy_to(&mut out1[0..size1]).unwrap();
+                            match data2 {
+                                DeviceTensorKind::FloatTensor(ret2) => {
+                                    let mut out2 = vec![0.0f32; size2];
+                                    ret2.copy_to(&mut out2[0..size2]).unwrap();
+                                    return float_eq!(out1, out2, rmax_all <= 0.000001f32);
                                 }
-                            }
-                            DeviceTensorKind::DoubleTensor(ret1) => {
-                                let mut out1 = vec![0.0f64; size1];
-                                ret1.copy_to(&mut out1[0..size1]).unwrap();
-                                match data2 {
-                                    DeviceTensorKind::DoubleTensor(ret2) => {
-                                        let mut out2 = vec![0.0f64; size2];
-                                        ret2.copy_to(&mut out2[0..size2]).unwrap();
-                                        return out1 == out2
-                                    }
-                                    _ => { return false }
-                                }
-                            }
-                            DeviceTensorKind::Int32Tensor(ret1) => {
-                                let mut out1 = vec![0i32; size1];
-                                ret1.copy_to(&mut out1[0..size1]).unwrap();
-                                match data2 {
-                                    DeviceTensorKind::Int32Tensor(ret2) => {
-                                        let mut out2 = vec![0i32; size2];
-                                        ret2.copy_to(&mut out2[0..size2]).unwrap();
-                                        return out1 == out2
-                                    }
-                                    _ => { return false }
-                                }
-                            }
-                            DeviceTensorKind::Int8Tensor(ret1) => {
-                                let mut out1 = vec![0i8; size1];
-                                ret1.copy_to(&mut out1[0..size1]).unwrap();
-                                match data2 {
-                                    DeviceTensorKind::Int8Tensor(ret2) => {
-                                        let mut out2 = vec![0i8; size2];
-                                        ret2.copy_to(&mut out2[0..size2]).unwrap();
-                                        return out1 == out2
-                                    }
-                                    _ => { return false }
-                                }
+                                _ => return false,
                             }
                         }
-
+                        DeviceTensorKind::DoubleTensor(ret1) => {
+                            let mut out1 = vec![0.0f64; size1];
+                            ret1.copy_to(&mut out1[0..size1]).unwrap();
+                            match data2 {
+                                DeviceTensorKind::DoubleTensor(ret2) => {
+                                    let mut out2 = vec![0.0f64; size2];
+                                    ret2.copy_to(&mut out2[0..size2]).unwrap();
+                                    return out1 == out2;
+                                }
+                                _ => return false,
+                            }
+                        }
+                        DeviceTensorKind::Int32Tensor(ret1) => {
+                            let mut out1 = vec![0i32; size1];
+                            ret1.copy_to(&mut out1[0..size1]).unwrap();
+                            match data2 {
+                                DeviceTensorKind::Int32Tensor(ret2) => {
+                                    let mut out2 = vec![0i32; size2];
+                                    ret2.copy_to(&mut out2[0..size2]).unwrap();
+                                    return out1 == out2;
+                                }
+                                _ => return false,
+                            }
+                        }
+                        DeviceTensorKind::Int8Tensor(ret1) => {
+                            let mut out1 = vec![0i8; size1];
+                            ret1.copy_to(&mut out1[0..size1]).unwrap();
+                            match data2 {
+                                DeviceTensorKind::Int8Tensor(ret2) => {
+                                    let mut out2 = vec![0i8; size2];
+                                    ret2.copy_to(&mut out2[0..size2]).unwrap();
+                                    return out1 == out2;
+                                }
+                                _ => return false,
+                            }
+                        }
                     }
-                    _ => { return false }
                 }
-            }
-            _ => {return false}
+                _ => return false,
+            },
+            _ => return false,
         }
-
     }
 }
 
@@ -243,14 +300,16 @@ mod tests {
                 };
                 assert_eq!(buf, reft);
             }
-            _ => { panic!("Failed to alloc device memory!"); }
-        }   
+            _ => {
+                panic!("Failed to alloc device memory!");
+            }
+        }
     }
 
     #[test]
     fn test_zeros_2d() {
         let tensor = DeviceTensor::zeros(vec![64, 32]);
-        let data = DeviceBuffer::from_slice(&[0.0f32; 64*32]).unwrap();
+        let data = DeviceBuffer::from_slice(&[0.0f32; 64 * 32]).unwrap();
 
         match tensor {
             Ok(buf) => {
@@ -260,8 +319,10 @@ mod tests {
                 };
                 assert_eq!(buf, reft);
             }
-            _ => { panic!("Failed to alloc device memory!"); }
-        }   
+            _ => {
+                panic!("Failed to alloc device memory!");
+            }
+        }
     }
 
     #[test]
@@ -277,14 +338,16 @@ mod tests {
                 };
                 assert_eq!(buf, reft);
             }
-            _ => { panic!("Failed to alloc device memory!"); }
-        }   
+            _ => {
+                panic!("Failed to alloc device memory!");
+            }
+        }
     }
 
     #[test]
     fn test_ones_2d() {
         let tensor = DeviceTensor::ones(vec![64, 32]);
-        let data = DeviceBuffer::from_slice(&[1.0f32; 64*32]).unwrap();
+        let data = DeviceBuffer::from_slice(&[1.0f32; 64 * 32]).unwrap();
 
         match tensor {
             Ok(buf) => {
@@ -294,7 +357,9 @@ mod tests {
                 };
                 assert_eq!(buf, reft);
             }
-            _ => { panic!("Failed to alloc device memory!"); }
-        } 
+            _ => {
+                panic!("Failed to alloc device memory!");
+            }
+        }
     }
 }
