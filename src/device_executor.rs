@@ -64,19 +64,19 @@ static INIT: Once = Once::new();
 
 static mut GCU: Option<DeviceExecutor> = None;
 
-pub fn init_api() -> Option<Device> {
-    match Api::quick_init(1) {
+pub fn init_api(device_id: u32) -> Option<Device> {
+    match Api::quick_init(device_id) {
         Ok(device) => return Some(device),
         _ => return None,
     };
 }
 
-pub fn init_kernels() -> (
+pub fn init_kernels(device_id: u32) -> (
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
     Option<Stream>,
 ) {
-    match init_api() {
+    match init_api(device_id) {
         Some(device) => {
             let stream = match Stream::new(StreamFlags::NON_BLOCKING, None) {
                 Ok(_stream) => _stream,
@@ -123,14 +123,14 @@ pub fn init_kernels() -> (
     };
 }
 
-fn get_kernels() -> &'static (
+fn get_kernels(device_id: u32) -> &'static (
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
     Option<Stream>,
 ) {
     unsafe {
         INIT.call_once(|| {
-            G_KERNEL = init_kernels();
+            G_KERNEL = init_kernels(device_id);
         });
         &G_KERNEL
     }
@@ -156,21 +156,21 @@ fn get_kernels() -> &'static (
 pub struct DeviceExecutor {
     kernel_map: Option<&'static Box<HashMap<String, Module>>>,
     function_map: Option<Box<HashMap<String, Function<'static>>>>,
-    device: Option<&'static Device>,
-    stream: Option<&'static Stream>,
+    pub device: Option<&'static Device>,
+    pub stream: Option<&'static Stream>,
     cache_buffer: HashMap<String, Box<DeviceTensor>>,
     cache_shape: HashMap<String, Box<DeviceBuffer<i32>>>,
 }
 
 impl DeviceExecutor {
-    pub fn get_gcu_executor() -> Option<&'static mut DeviceExecutor> {
+    pub fn get_gcu_executor(device_id: u32) -> Option<&'static mut DeviceExecutor> {
         unsafe {
             match &mut GCU {
                 Some(gcu) => {
                     return Some(gcu);
                 }
                 _ => {
-                    GCU = Some(DeviceExecutor::new());
+                    GCU = Some(DeviceExecutor::new(device_id));
                     match &mut GCU {
                         Some(gcu) => {
                             return Some(gcu);
@@ -183,10 +183,10 @@ impl DeviceExecutor {
             }
         }
     }
-    pub fn new() -> Self {
+    pub fn new(device_id: u32) -> Self {
         println!("DeviceExecutor::new");
         let mut function_map = Box::new(HashMap::<String, Function<'static>>::new());
-        match get_kernels() {
+        match get_kernels(device_id) {
             (Some(_kernel_map), Some(_device), Some(_stream)) => {
                 for kernel in [
                     "fused_batch_matmul",
@@ -1346,7 +1346,7 @@ mod tests {
 
     #[test]
     fn test_matmul_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
 
         let a = DeviceTensor::ones(vec![17, 23]).unwrap();
         let b = DeviceTensor::ones(vec![23, 18]).unwrap();
@@ -1360,7 +1360,7 @@ mod tests {
 
     #[test]
     fn test_conv2d_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
         let a = DeviceTensor::ones(vec![9, 9]).unwrap();
         let b = DeviceTensor::fill(vec![3, 3], 0.5f32).unwrap();
         let cref = DeviceTensor::from_vec_shape(&vec![4.5f32; 7 * 7], vec![7, 7]).unwrap();
@@ -1373,7 +1373,7 @@ mod tests {
 
     #[test]
     fn test_activation_relu_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
         let a = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
             .unwrap();
         let cref = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
@@ -1388,7 +1388,7 @@ mod tests {
 
     #[test]
     fn test_activation_leaky_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
         let a = DeviceTensor::from_vec_shape(&vec![1.0f32, -0.8, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
             .unwrap();
         let cref = DeviceTensor::from_vec_shape(
@@ -1407,7 +1407,7 @@ mod tests {
 
     #[test]
     fn test_activation_tanh_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
         let a = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
             .unwrap();
         let cref = DeviceTensor::from_vec_shape(
@@ -1433,7 +1433,7 @@ mod tests {
 
     #[test]
     fn test_activation_gelu_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
         // let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 1.0, 1.0], vec![2, 4]).unwrap();
         // let cref = DeviceTensor::from_vec_shape(vec![0.841192f32, 1.9545977, 2.9963627, 3.9999297, 5.0, 6.0, 0.841192f32, 0.841192f32], vec![2, 4]).unwrap();
         let a = DeviceTensor::from_vec_shape(&vec![1.0f32; 5 * 5], vec![5, 5]).unwrap();
@@ -1479,7 +1479,7 @@ mod tests {
 
     #[test]
     fn test_addf32_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
         // let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let a = DeviceTensor::from_vec_shape(&vec![1.2f32; 50 * 50], vec![50, 50]).unwrap();
         let b = DeviceTensor::from_vec_shape(&vec![2.8f32; 50 * 50], vec![50, 50]).unwrap();
@@ -1492,7 +1492,7 @@ mod tests {
 
     #[test]
     fn test_subf32_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
         let a = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
             .unwrap();
         let b = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
@@ -1507,7 +1507,7 @@ mod tests {
 
     #[test]
     fn test_mulf32_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
         let a = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
             .unwrap();
         let b = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
@@ -1524,7 +1524,7 @@ mod tests {
 
     #[test]
     fn test_divf32_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
         let a = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
             .unwrap();
         let b = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
@@ -1538,7 +1538,7 @@ mod tests {
 
     #[test]
     fn test_transpose_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
         let a = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
             .unwrap();
         let cref = DeviceTensor::from_vec_shape(&vec![1.0f32, 4.0, 2.0, 5.0, 3.0, 6.0], vec![3, 2])
@@ -1551,7 +1551,7 @@ mod tests {
 
     #[test]
     fn test_addi32_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
         // let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let a = DeviceTensor::from_vec_shape_i32(vec![1i32; 50 * 50], vec![50, 50]).unwrap();
         let b = DeviceTensor::from_vec_shape_i32(vec![2i32; 50 * 50], vec![50, 50]).unwrap();
@@ -1564,7 +1564,7 @@ mod tests {
 
     #[test]
     fn test_subi32_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
         let a = DeviceTensor::from_vec_shape_i32(vec![3i32, 2, 3, 4, 5, 6], vec![2, 3]).unwrap();
         let b = DeviceTensor::from_vec_shape_i32(vec![1i32, 2, 2, 2, 1, 5], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape_i32(vec![2i32, 0, 1, 2, 4, 1], vec![2, 3]).unwrap();
@@ -1577,7 +1577,7 @@ mod tests {
 
     #[test]
     fn test_muli32_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
         let a = DeviceTensor::from_vec_shape_i32(vec![1i32, 2, 3, 4, 5, 6], vec![2, 3]).unwrap();
         let b = DeviceTensor::from_vec_shape_i32(vec![1i32, 3, 0, 3, 5, 8], vec![2, 3]).unwrap();
         let cref =
@@ -1591,7 +1591,7 @@ mod tests {
 
     #[test]
     fn test_divi32_owned() {
-        let exec = DeviceExecutor::new();
+        let exec = DeviceExecutor::new(0);
         let a = DeviceTensor::from_vec_shape_i32(vec![1i32, 4, 3, 4, 5, 6], vec![2, 3]).unwrap();
         let b = DeviceTensor::from_vec_shape_i32(vec![1i32, 2, 3, 4, 1, 3], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape_i32(vec![1i32, 2, 1, 1, 5, 2], vec![2, 3]).unwrap();
