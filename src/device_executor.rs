@@ -6,7 +6,7 @@ use cust_core::DeviceCopy;
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
 use std::ptr;
-use std::sync::Once;
+use std::sync::{Once, Arc};
 
 //Import UHAL for common computing interfaces
 use uhal::context::CurrentContextTrait;
@@ -92,7 +92,8 @@ pub fn init_kernels(device_id: u32) -> (
                 "element",
                 "activation",
                 "transpose",
-                "matmul"
+                "matmul",
+                "unary"
             ] {
                 #[cfg(feature = "tops_backend")]
                 let ptx = format!(
@@ -154,12 +155,13 @@ fn get_kernels(device_id: u32) -> &'static (
 
 #[derive(Debug)]
 pub struct DeviceExecutor {
-    kernel_map: Option<&'static Box<HashMap<String, Module>>>,
-    function_map: Option<Box<HashMap<String, Function<'static>>>>,
+    module_map: Option<&'static Box<HashMap<String, Module>>>,
+    pub function_map: Option<HashMap<String, Arc<Function<'static>>>>,
     pub device: Option<&'static Device>,
     pub stream: Option<&'static Stream>,
     cache_buffer: HashMap<String, Box<DeviceTensor>>,
     cache_shape: HashMap<String, Box<DeviceBuffer<i32>>>,
+    pub registered_modules: Vec<String>
 }
 
 impl DeviceExecutor {
@@ -185,46 +187,76 @@ impl DeviceExecutor {
     }
     pub fn new(device_id: u32) -> Self {
         println!("DeviceExecutor::new");
-        let mut function_map = Box::new(HashMap::<String, Function<'static>>::new());
+
+        let unary_functions = vec!["ucopy", "uneg", "uexp", "ulog", "usin", "ucos", "uabs", "usqr", "usqrt", "ugelu", "urelu"]; //, "uelu"
+        let registered_modules : Vec<String> = vec![
+            "fused_batch_matmul",
+            "transposed_matmul",
+            "transpose_kernel",
+            "element",
+            "activation",
+            "transpose",
+            "matmul",
+            "unary"
+        ].iter().map(|x| x.to_string()).collect();
+        let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
         match get_kernels(device_id) {
-            (Some(_kernel_map), Some(_device), Some(_stream)) => {
-                for kernel in [
-                    "fused_batch_matmul",
-                    "transposed_matmul",
-                    "transpose_kernel",
-                    "element",
-                    "activation",
-                    "transpose",
-                    "matmul"
-                ] {
-                    if kernel == "activation" {
+            (Some(_module_map), Some(_device), Some(_stream)) => {
+                for module in registered_modules.clone() {
+                    if module == "activation" {
                         for fun in ["activationf32", "activationf16"] {
-                            let function = _kernel_map[kernel].get_function(fun).unwrap();
-                            function_map.insert(fun.to_string(), function);
+                            let function = _module_map[&module].get_function(fun).unwrap();
+                            function_map.insert(fun.to_string(), Arc::new(function));
                         }
 
-                    } else if kernel == "element" {
+                    } else if module == "element" {
                         for fun in ["elementi32", "elementf16", "elementf32"] {
-                            let function = _kernel_map[kernel].get_function(fun).unwrap();
-                            function_map.insert(fun.to_string(), function);
+                            let function = _module_map[&module].get_function(fun).unwrap();
+                            function_map.insert(fun.to_string(), Arc::new(function));
                         }
-                    } else {
-                        let function = _kernel_map[kernel].get_function(kernel).unwrap();
-                        function_map.insert(kernel.to_string(), function);
+                    } else if module == "unary" {
+                        for dt in ["bf16", "f16", "f32"] {
+                            for func in &unary_functions {
+                                let name = format!("{}_{}", func, dt);
+                                println!("Load function {}", name);
+                                let function = _module_map[&module].get_function(&name).unwrap();
+                                function_map.insert(name, Arc::new(function));
+                            }
+                        }
+                    }
+                     else {
+                        let function = _module_map[&module].get_function(&module).unwrap();
+                        function_map.insert(module, Arc::new(function));
                     }
 
                 }
+
+
                 Self {
                     device: Some(_device),
-                    kernel_map: Some(_kernel_map),
+                    module_map: Some(_module_map),
                     function_map: Some(function_map),
                     cache_buffer: HashMap::<String, Box<DeviceTensor>>::new(),
                     cache_shape: HashMap::<String, Box<DeviceBuffer<i32>>>::new(),
                     stream: Some(_stream),
+                    registered_modules: registered_modules.clone()
                 }
             }
             _ => panic!("Load kernels failed!"),
         }
+    }
+
+    pub fn has_function(&self, module_name: String, func_name: String) -> bool {
+        if self.registered_modules.contains(&module_name) {
+            match &self.function_map {
+                Some(funcs) => {
+                    return funcs.contains_key(&func_name);
+                }
+                _=> { 
+                }
+            }
+        } 
+        false
     }
 
     pub fn synchronize(&self) -> DeviceResult<()> {

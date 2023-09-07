@@ -5,8 +5,11 @@ use tops_backend as tops;
 use tops::stream::TopsStream as Stream;
 use uhal::error::{DeviceResult, DeviceError};
 pub use cust_core::_hidden::{DeviceCopy};
-
+use std::ffi::{c_void, c_ulonglong};
 use crate::gcu_device::GcuFunction;
+use std::ptr;
+#[cfg(feature = "tops_backend")]
+pub use tops::driv as driv;
 
 #[derive(Clone, Copy, Debug)]
 pub struct GcuLaunchConfig {
@@ -185,6 +188,32 @@ impl GcuFunction {
         cfg: GcuLaunchConfig,
         params: &mut [*mut std::ffi::c_void],
     ) -> DeviceResult<()> {
+        match self.func {
+            Some(func) => {
+                // println!("Launch {} func {:?}!", self.name, func);
+                // let mut args_ = Vec::new();
+                // for i in 0..args.len(){
+                //     let vaddress = std::mem::transmute::<*mut c_void, *mut *mut c_void>((*params)[i]);
+                //     unsafe {args_.push(*vaddress);}
+                    
+                // }
+
+                let mut size :usize = (std::mem::size_of::<c_ulonglong>() * (params.len() - 1) + std::mem::size_of::<usize>()) as usize;
+                let mut config = vec![0x1 as *const c_void, params.as_mut_ptr() as *const _ as *mut c_void, 0x2 as *const c_void, &mut size as *const _ as *mut c_void, 0x3 as *const c_void];
+        
+                let nul = ptr::null_mut();
+                let shared_mem_bytes = 0;
+                driv::topsModuleLaunchKernel(
+                    func, cfg.grid_dim.0, cfg.grid_dim.1, cfg.grid_dim.2,
+                    cfg.block_dim.0, cfg.block_dim.1, cfg.block_dim.2,
+                    shared_mem_bytes as u32,
+                    nul,
+                    nul as *mut *mut c_void,
+                    config.as_mut_ptr() as *mut *mut c_void            
+                );
+            }
+            _=> {}
+        }
         // self.device.bind_to_thread()?;
         // launch_kernel(
         //     self.cu_function,

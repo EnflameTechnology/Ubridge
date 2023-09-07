@@ -14,6 +14,7 @@ use std::{
     ops::{Bound, RangeBounds},
     string::String,
 };
+use std::path::Path;
 
 //Tops backend
 #[cfg(feature = "tops_backend")]
@@ -34,7 +35,7 @@ use tops::TopsApi as Api;
 use tops::function::TopsFunction as Function;
 #[cfg(feature = "tops_backend")]
 pub use tops::driv as driv;
-
+use driv::{topsFunction_t};
 use tops::error::ToResult;
 use crate::device_executor::DeviceExecutor;
 use crate::device_ptr::{DevicePtr, DevicePtrMut, DeviceSlice};
@@ -52,13 +53,15 @@ pub struct GcuDevice {
 pub struct GcuFunction {
     pub name: String,
     pub path: String,
+    pub func: Option<topsFunction_t>,
 }
 
 impl GcuFunction {
     pub fn new(name: String, path: String) -> Self {
         GcuFunction {
             name: name,
-            path: path
+            path: path,
+            func: None
         }
     }
 
@@ -115,9 +118,27 @@ impl GcuDevice {
     pub fn ordinal(&self) -> usize {
         0
     }
-    pub fn get_or_load_func(&self, name: &String, path: &String) -> DeviceResult<GcuFunction> {
+    pub fn get_or_load_func(&self, func_name: &str, kernel_path: &str) -> DeviceResult<GcuFunction> {
         // println!("Function {}, {}", name, path);
-        Ok(GcuFunction::new(name.clone(), path.clone())) //TODO, write kernels
+
+        let path = Path::new(kernel_path);
+        let _module_name = path.file_stem().unwrap().to_str().unwrap();
+        if _module_name == "unary" && self.executor.has_function(_module_name.to_string(), func_name.to_string()){
+            match &self.executor.function_map {
+                Some(funcs)=> {
+                    return Ok(
+                        GcuFunction {
+                            name: func_name.to_string(), 
+                            path: kernel_path.to_string(),
+                            func: Some(funcs[func_name].inner)
+                        }
+                    );
+                }
+                _=> {}
+            }
+
+        }
+        Ok(GcuFunction::new(func_name.to_string(), kernel_path.to_string())) //TODO, write kernels
     }
     /// Allocates device memory and increments the reference counter of [GcuDevice].
     ///
