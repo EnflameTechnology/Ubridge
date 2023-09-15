@@ -6,6 +6,13 @@
 This Rust crate serve as the bridge between "Chopper runtime" and "UHAL". The computing bytecode compiled by the Chopper runtime will be dispatched to the corresponding device backend through: <br>ubridge -> UHAL -> CUDA backend or Tops backend.
 </div>
 
+## UPDATE KERNELS
+```
+cd gcu_kernels && cargo build
+// or change kernels/op-name.cpp file and save it
+```
+TODO: currently, a single file update can lead to all kernels recompile, consider split this process
+
 ## Items
 device_tensor.rs: higher level abstraction of device tensor. 
 device_executor.rs: execution engine and kernel management. 

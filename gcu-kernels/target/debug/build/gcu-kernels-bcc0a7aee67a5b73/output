@@ -1,0 +1,18 @@
+cargo:rerun-if-changed=build.rs
+cargo:rerun-if-changed=../kernels/*.cpp
+Execution time: 7 seconds
+Execution time: 1 seconds
+Execution time: 1 seconds
+Execution time: 1 seconds
+Execution time: 1 seconds
+Execution time: 2 seconds
+Execution time: 1 seconds
+Execution time: 1 seconds
+Execution time: 6 seconds
+Execution time: 1 seconds
+Execution time: 1 seconds
+Execution time: 2 seconds
+Execution time: 1 seconds
+Execution time: 1 seconds
+Execution time: 1 seconds
+Execution time: 2 seconds

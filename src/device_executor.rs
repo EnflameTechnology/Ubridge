@@ -9,6 +9,7 @@ use std::ptr;
 use std::sync::{Arc, Once};
 
 //Import UHAL for common computing interfaces
+use std::fs;
 use uhal::context::CurrentContextTrait;
 use uhal::device::DeviceTrait;
 use uhal::error::DeviceResult;
@@ -17,7 +18,6 @@ use uhal::memory::DeviceBufferTrait;
 use uhal::module::ModuleTrait;
 use uhal::stream::{StreamFlags, StreamTrait};
 use uhal::DriverLibraryTrait;
-use std::fs;
 
 //Tops backend
 #[cfg(feature = "tops_backend")]
@@ -74,7 +74,8 @@ pub fn init_api(device_id: u32) -> Option<Device> {
 }
 
 pub fn init_kernels(
-    device_id: u32, kernel_platform: &str
+    device_id: u32,
+    kernel_platform: &str,
 ) -> (
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
@@ -90,12 +91,8 @@ pub fn init_kernels(
             };
             let mut module_map = Box::new(HashMap::<String, Module>::new());
 
-            let full_kernel_folder = format!(
-                "{}/kernels/{}",
-                env!("CARGO_MANIFEST_DIR"),
-                kernel_platform
-            )
-            .to_string();
+            let full_kernel_folder =
+                format!("{}/kernels/{}", env!("CARGO_MANIFEST_DIR"), kernel_platform).to_string();
 
             let paths = fs::read_dir(&full_kernel_folder).unwrap();
 
@@ -106,12 +103,10 @@ pub fn init_kernels(
                 let kernel_name = p.file_stem().unwrap().to_str().unwrap();
                 if filename.ends_with(".topsfb") || filename.ends_with(".ptx") {
                     #[cfg(feature = "cuda_backend")]
-                    let ptx = format!("{}/{}.ptx", full_kernel_folder, kernel_name)
-                        .to_string();
+                    let ptx = format!("{}/{}.ptx", full_kernel_folder, kernel_name).to_string();
 
-                    #[cfg(feature = "tops_backend")]
-                    let ptx = format!("{}/{}.topsfb", full_kernel_folder, kernel_name)
-                        .to_string();
+                    // #[cfg(feature = "tops_backend")]
+                    let ptx = format!("{}/{}.topsfb", full_kernel_folder, kernel_name).to_string();
 
                     println!("{}", ptx);
 
@@ -131,7 +126,8 @@ pub fn init_kernels(
 }
 
 fn get_kernels(
-    device_id: u32, kernel_platform: &str
+    device_id: u32,
+    kernel_platform: &str,
 ) -> &'static (
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
@@ -144,7 +140,6 @@ fn get_kernels(
         &G_KERNEL
     }
 }
-
 
 #[derive(Debug)]
 pub struct DeviceExecutor {
@@ -184,10 +179,10 @@ impl DeviceExecutor {
         let kernel_platform = "pavo"; //default kernel path
 
         #[cfg(feature = "dorado")]
-        let kernel_platform = "dorado"; 
+        let kernel_platform = "dorado";
 
         #[cfg(feature = "scorpio")]
-        let kernel_platform = "scorpio"; 
+        let kernel_platform = "scorpio";
 
         let unary_functions = vec![
             "ucopy", "uneg", "uexp", "ulog", "usin", "ucos", "uabs", "usqr", "usqrt", "ugelu",
@@ -217,7 +212,7 @@ impl DeviceExecutor {
                                 function_map.insert(name, Arc::new(function));
                             }
                         }
-                    }  else {
+                    } else {
                         println!("Failed to Load function {}", module);
                         let function = _module_map[module].get_function(&module).unwrap();
                         function_map.insert(module.clone(), Arc::new(function));
@@ -249,7 +244,7 @@ impl DeviceExecutor {
                     }
                 }
             }
-            _=> {}
+            _ => {}
         }
         false
     }
