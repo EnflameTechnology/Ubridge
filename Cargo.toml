@@ -21,3 +21,4 @@ num-traits = { version = "0.2.16"}
 default= ["tops_backend"]
 cuda = ["cuda_backend"]
 tops = ["tops_backend"]
+dorado = ["tops"]
