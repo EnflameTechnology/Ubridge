@@ -17,6 +17,7 @@ use uhal::memory::DeviceBufferTrait;
 use uhal::module::ModuleTrait;
 use uhal::stream::{StreamFlags, StreamTrait};
 use uhal::DriverLibraryTrait;
+use std::fs;
 
 //Tops backend
 #[cfg(feature = "tops_backend")]
@@ -54,6 +55,7 @@ use cuda::stream::CuStream as Stream;
 use cuda::CuApi as Api;
 #[cfg(feature = "cuda_backend")]
 use cuda_backend as cuda;
+
 pub(crate) static mut G_KERNEL: (
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
@@ -72,7 +74,7 @@ pub fn init_api(device_id: u32) -> Option<Device> {
 }
 
 pub fn init_kernels(
-    device_id: u32,
+    device_id: u32, kernel_platform: &str
 ) -> (
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
@@ -86,68 +88,50 @@ pub fn init_kernels(
                     panic!("Unable to create stream!");
                 }
             };
-            let mut kernel_map = Box::new(HashMap::<String, Module>::new());
-            #[cfg(all(feature = "tops_backend", not(feature = "dorado")))]
-            let pavo_kernels = vec![
-                "fused_batch_matmul",
-                "transposed_matmul",
-                "transpose_kernel",
-                "element",
-                "activation",
-                "transpose",
-                "matmul",
-            ];
+            let mut module_map = Box::new(HashMap::<String, Module>::new());
 
-            #[cfg(all(feature = "tops_backend", not(feature = "dorado")))]
-            for kernel_name in pavo_kernels {
-                let ptx = format!(
-                    "{}/kernels/{}.topsfb",
-                    env!("CARGO_MANIFEST_DIR"),
-                    kernel_name
-                )
-                .to_string();
-                // let ptx = format!("/home/guoqing/UHHI_ex/kernels/{}.topsfb", kernel).to_string();
+            let full_kernel_folder = format!(
+                "{}/kernels/{}",
+                env!("CARGO_MANIFEST_DIR"),
+                kernel_platform
+            )
+            .to_string();
 
-                #[cfg(feature = "cuda_backend")]
-                let ptx = format!("{}/kernels/{}.ptx", env!("CARGO_MANIFEST_DIR"), kernel_name)
-                    .to_string();
-                // let ptx = format!("/home/guoqing/UHHI_ex/kernels/{}.ptx", name).to_string();
+            let paths = fs::read_dir(&full_kernel_folder).unwrap();
 
-                println!("{}", ptx);
+            for path in paths {
+                let p = path.unwrap().path();
+                let file = p.file_name().unwrap();
+                let filename = file.to_str().unwrap();
+                let kernel_name = p.file_stem().unwrap().to_str().unwrap();
+                if filename.ends_with(".topsfb") || filename.ends_with(".ptx") {
+                    #[cfg(feature = "cuda_backend")]
+                    let ptx = format!("{}/{}.ptx", full_kernel_folder, kernel_name)
+                        .to_string();
 
-                let module = Module::from_file(&ptx).unwrap();
+                    #[cfg(feature = "tops_backend")]
+                    let ptx = format!("{}/{}.topsfb", full_kernel_folder, kernel_name)
+                        .to_string();
 
-                kernel_map.insert(kernel_name.to_string(), module);
+                    println!("{}", ptx);
+
+                    let module = Module::from_file(&ptx).unwrap();
+
+                    module_map.insert(kernel_name.to_string(), module);
+                }
             }
 
-            #[cfg(feature = "dorado")]
-            let dorado_kernels = vec!["unary-dorado"];
-
-            #[cfg(feature = "dorado")]
-            for kernel_name in dorado_kernels {
-                let ptx = format!(
-                    "{}/kernels/{}.topsfb",
-                    env!("CARGO_MANIFEST_DIR"),
-                    kernel_name
-                )
-                .to_string();
-
-                println!("{}", ptx);
-                let module = Module::from_file(&ptx).unwrap();
-                kernel_map.insert(kernel_name.to_string(), module);
+            if module_map.len() > 0 {
+                println!("{} kernel(s) loaded!", module_map.len());
             }
-
-            if kernel_map.len() > 0 {
-                println!("{} kernel(s) loaded!", kernel_map.len());
-            }
-            return (Some(kernel_map), Some(device), Some(stream));
+            return (Some(module_map), Some(device), Some(stream));
         }
         _ => return (None, None, None),
     };
 }
 
 fn get_kernels(
-    device_id: u32,
+    device_id: u32, kernel_platform: &str
 ) -> &'static (
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
@@ -155,37 +139,21 @@ fn get_kernels(
 ) {
     unsafe {
         INIT.call_once(|| {
-            G_KERNEL = init_kernels(device_id);
+            G_KERNEL = init_kernels(device_id, kernel_platform);
         });
         &G_KERNEL
     }
 }
 
-// fn load_module<'a>(name : &str) -> (Module, Function){
-//     #[cfg(feature = "tops_backend")]
-//     // let ptx = format!("{}/kernels/{}.topsfb", env!("CARGO_MANIFEST_DIR"), name).to_string();
-//     let ptx = format!("/home/guoqing/UHHI_ex/kernels/{}.topsfb", name).to_string();
-
-//     #[cfg(feature = "cuda_backend")]
-//     // let ptx = format!("{}/kernels/{}.ptx", env!("CARGO_MANIFEST_DIR"), name).to_string();
-//     let ptx = format!("/home/guoqing/UHHI_ex/kernels/{}.ptx", name).to_string();
-
-//     println!("{}", ptx);
-
-//     let module = Module::from_file(&ptx).unwrap();
-//     let function = module.get_function(&name).unwrap();
-//     return (module, function)
-// }
 
 #[derive(Debug)]
 pub struct DeviceExecutor {
-    module_map: Option<&'static Box<HashMap<String, Module>>>,
+    pub module_map: Option<&'static Box<HashMap<String, Module>>>,
     pub function_map: Option<HashMap<String, Arc<Function<'static>>>>,
     pub device: Option<&'static Device>,
     pub stream: Option<&'static Stream>,
     cache_buffer: HashMap<String, Box<DeviceTensor>>,
     cache_shape: HashMap<String, Box<DeviceBuffer<i32>>>,
-    pub registered_modules: Vec<String>,
 }
 
 impl DeviceExecutor {
@@ -212,42 +180,32 @@ impl DeviceExecutor {
     pub fn new(device_id: u32) -> Self {
         println!("DeviceExecutor::new");
 
+        #[cfg(feature = "tops_backend")]
+        let kernel_platform = "pavo"; //default kernel path
+
+        #[cfg(feature = "dorado")]
+        let kernel_platform = "dorado"; 
+
+        #[cfg(feature = "scorpio")]
+        let kernel_platform = "scorpio"; 
+
         let unary_functions = vec![
             "ucopy", "uneg", "uexp", "ulog", "usin", "ucos", "uabs", "usqr", "usqrt", "ugelu",
             "urelu",
         ]; //, "uelu"
 
-        #[cfg(all(feature = "tops_backend", not(feature = "dorado")))]
-        let registered_modules: Vec<String> = vec![
-            "fused_batch_matmul",
-            "transposed_matmul",
-            "transpose_kernel",
-            "element",
-            "activation",
-            "transpose",
-            "matmul",
-            "unary",
-        ]
-        .iter()
-        .map(|x| x.to_string())
-        .collect();
-
-        #[cfg(feature = "dorado")]
-        let registered_modules: Vec<String> =
-            vec!["unary-dorado"].iter().map(|x| x.to_string()).collect();
-
         let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
-        match get_kernels(device_id) {
+        match get_kernels(device_id, kernel_platform) {
             (Some(_module_map), Some(_device), Some(_stream)) => {
-                for module in registered_modules.clone() {
+                for module in _module_map.keys().into_iter() {
                     if module == "activation" {
                         for fun in ["activationf32", "activationf16"] {
-                            let function = _module_map[&module].get_function(fun).unwrap();
+                            let function = _module_map[module].get_function(fun).unwrap();
                             function_map.insert(fun.to_string(), Arc::new(function));
                         }
                     } else if module == "element" {
                         for fun in ["elementi32", "elementf16", "elementf32"] {
-                            let function = _module_map[&module].get_function(fun).unwrap();
+                            let function = _module_map[module].get_function(fun).unwrap();
                             function_map.insert(fun.to_string(), Arc::new(function));
                         }
                     } else if module == "unary" {
@@ -255,23 +213,14 @@ impl DeviceExecutor {
                             for func in &unary_functions {
                                 let name = format!("{}_{}", func, dt);
                                 println!("Load function {}", name);
-                                let function = _module_map[&module].get_function(&name).unwrap();
+                                let function = _module_map[module].get_function(&name).unwrap();
                                 function_map.insert(name, Arc::new(function));
                             }
                         }
-                    } else if module == "unary-dorado" {
-                        for dt in ["bf16", "f16", "f32"] {
-                            for func in &unary_functions {
-                                let name = format!("{}_{}", func, dt);
-                                println!("Load function {}", name);
-                                let function = _module_map[&module].get_function(&name).unwrap();
-                                function_map.insert(name, Arc::new(function));
-                            }
-                        }
-                    } else {
+                    }  else {
                         println!("Failed to Load function {}", module);
-                        let function = _module_map[&module].get_function(&module).unwrap();
-                        function_map.insert(module, Arc::new(function));
+                        let function = _module_map[module].get_function(&module).unwrap();
+                        function_map.insert(module.clone(), Arc::new(function));
                     }
                 }
 
@@ -282,7 +231,6 @@ impl DeviceExecutor {
                     cache_buffer: HashMap::<String, Box<DeviceTensor>>::new(),
                     cache_shape: HashMap::<String, Box<DeviceBuffer<i32>>>::new(),
                     stream: Some(_stream),
-                    registered_modules: registered_modules.clone(),
                 }
             }
             _ => panic!("Load kernels failed!"),
@@ -290,13 +238,18 @@ impl DeviceExecutor {
     }
 
     pub fn has_function(&self, module_name: String, func_name: String) -> bool {
-        if self.registered_modules.contains(&module_name) {
-            match &self.function_map {
-                Some(funcs) => {
-                    return funcs.contains_key(&func_name);
+        match &self.module_map {
+            Some(modules) => {
+                if modules.contains_key(&module_name) {
+                    match &self.function_map {
+                        Some(funcs) => {
+                            return funcs.contains_key(&func_name);
+                        }
+                        _ => {}
+                    }
                 }
-                _ => {}
             }
+            _=> {}
         }
         false
     }
