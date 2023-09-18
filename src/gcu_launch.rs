@@ -37,6 +37,57 @@ impl GcuLaunchConfig {
             shared_mem_bytes: 0,
         }
     }
+
+    #[allow(non_snake_case)]
+    pub fn for_transpose(dim1: u32, dim2: u32) -> Self {
+        let N = dim2;
+        let M = dim1;
+        let TILE_DIM = 64;
+        let mut GRIDS = N / TILE_DIM;
+        if GRIDS * TILE_DIM < N {
+            GRIDS += 1
+        };
+        let mut BLOCKS = M / TILE_DIM;
+        if BLOCKS * TILE_DIM < M {
+            BLOCKS += 1
+        };
+        let mut PER_BLOCKS = 1;
+        if BLOCKS > 4 {
+            PER_BLOCKS = 4;
+            if (BLOCKS / PER_BLOCKS) * 4 < BLOCKS {
+                BLOCKS /= PER_BLOCKS;
+                BLOCKS += 1;
+            } else {
+                BLOCKS /= PER_BLOCKS;
+            }
+        }
+
+        Self {
+            grid_dim: (GRIDS, 1, 1),
+            block_dim: (BLOCKS, PER_BLOCKS, 1),
+            shared_mem_bytes: 0,
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn for_dot(dim1_left: u32) -> Self {
+        let K = dim1_left;
+        let mut threads = 4;
+        if K % 4 > 0 {
+            threads += 1;
+        }
+        let mut grids = K / 4;
+        if grids < 1 {
+            threads = K;
+            grids = 1;
+        }
+
+        Self {
+            grid_dim: (grids, 1, 1),
+            block_dim: (threads, 1, 1),
+            shared_mem_bytes: 0,
+        }
+    }
 }
 
 /// Consumes a [GcuFunction] to execute asychronously on the device with
@@ -208,8 +259,9 @@ impl GcuFunction {
                     cfg.block_dim.0, cfg.block_dim.1, cfg.block_dim.2,
                     shared_mem_bytes as u32,
                     nul,
-                    nul as *mut *mut c_void,
-                    config.as_mut_ptr() as *mut *mut c_void            
+                    params.as_mut_ptr() as *mut *mut c_void,
+                    nul as *mut *mut c_void, 
+                    // config.as_mut_ptr() as *mut *mut c_void            
                 );
             }
             _=> {}

@@ -66,13 +66,13 @@ extern "C" __global__ void FN_NAME(  \
     tops::memcpy(ctx, dst, buf1); \
 }  \
 
-template<typename T>
-__device__ __forceinline__ T elu_fwd(T x, T alpha) {
-  if (x > static_cast<T>(0)) {
-    return x;
-  }
-  return alpha * (tops::exp<T>(x) - static_cast<T>(1));
-}
+// template<typename T>
+// __device__ __forceinline__ T elu_fwd(T x, T alpha) {
+//   if (x > static_cast<T>(0)) {
+//     return x;
+//   }
+//   return alpha * (tops::exp<T>(x) - static_cast<T>(1));
+// }
 
 
 
@@ -151,7 +151,7 @@ UNARY_OP(float, vfloat, usqrt_f32, tops::vsqrt<vfloat>(x))
 UNARY_OP(float, vfloat, ugelu_f32, tops::vgelu<vfloat>(x))
 UNARY_OP(float, vfloat, urelu_f32, tops::vmax<vfloat>(x, tops::vzero<vfloat>()))
 
-UNARY_OP1(float, vfloat, uelu_f32, elu_fwd(x[i], param))
+// UNARY_OP1(float, vfloat, uelu_f32, elu_fwd(x[i], param))
 
 int main() {
     return 0;

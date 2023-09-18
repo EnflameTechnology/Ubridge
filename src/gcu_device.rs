@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::sync::Mutex;
 use std::{marker::Unpin, pin::Pin, sync::Arc, vec::Vec};
 use tops::memory::AsyncCopyDestination;
 use uhal::device::DeviceTrait;
@@ -54,6 +55,7 @@ pub struct GcuFunction {
     pub name: String,
     pub path: String,
     pub func: Option<topsFunction_t>,
+    // pub executor: Option<Arc<Mutex<&'static mut DeviceExecutor>>>,
 }
 
 impl GcuFunction {
@@ -61,7 +63,8 @@ impl GcuFunction {
         GcuFunction {
             name: name,
             path: path,
-            func: None
+            func: None,
+            // executor: None
         }
     }
 
@@ -116,21 +119,22 @@ impl GcuDevice {
     }
 
     pub fn ordinal(&self) -> usize {
-        0
+        self.id
     }
     pub fn get_or_load_func(&self, func_name: &str, kernel_path: &str) -> DeviceResult<GcuFunction> {
-        // println!("Function {}, {}", name, path);
-
         let path = Path::new(kernel_path);
         let _module_name = path.file_stem().unwrap().to_str().unwrap();
-        if _module_name == "unary" && self.executor.has_function(_module_name.to_string(), func_name.to_string()){
-            match &self.executor.function_map {
-                Some(funcs)=> {
+        if (_module_name == "unary" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
+        || _module_name=="transpose" 
+        || _module_name=="dot" {
+            match (&self.executor.function_map, DeviceExecutor::get_gcu_executor(self.id as u32)) {
+                (Some(funcs), Some(gcu_executor)) => {
                     return Ok(
                         GcuFunction {
                             name: func_name.to_string(), 
                             path: kernel_path.to_string(),
-                            func: Some(funcs[func_name].inner)
+                            func: Some(funcs[func_name].inner),
+                            // executor: Some(Arc::new(Mutex::new(gcu_executor))),
                         }
                     );
                 }

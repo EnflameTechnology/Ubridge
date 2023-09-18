@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <tops/tops_runtime.h>
 #include <tops/topsrtc.h>
+#include <tops/half.h>
+#include <tops/bfloat.h>
 
 #define CHECK(cmd) \
 {\
@@ -11,30 +13,16 @@
         exit(EXIT_FAILURE);\
 	  }\
 }
-constexpr int MAX_RANK = 3;
-constexpr int TILE_DIM=32;
-constexpr int BLOCK_ROWS=8;
-
-template <typename T, std::size_t N>
-__device__ void copy_to_buffer(
-  tops_dte_ctx_t& ctx, 
-  T *buf_l3, 
-  T *buf_l1)
-{
-  tops_dte_ctx_t p_ctx;
-  tops::dte_scope p_s(p_ctx);
-
-  tops::mdspan from(tops::Global, buf_l3, N);
-  tops::mdspan to(tops::Private, buf_l1, N);
-  tops::memcpy(p_ctx, to, from);
-}
+constexpr int TILE_DIM=64;
 
 //fast transpose without large temp buffer
-extern "C" __global__ void transpose(const size_t rows, const size_t cols, float *idata, float *odata)
+template<typename T>
+__device__ void transpose(const size_t rows, const size_t cols, T *idata, T *odata)
 {
   tops_dte_ctx_t ctx;
   tops::dte_scope s(ctx);
-
+  printf("Rows %d, Cols %d", rows, cols);
+  
   int GRIDS = cols/TILE_DIM;
   if (GRIDS * TILE_DIM < cols) GRIDS += 1;
   int BLOCKS = rows/TILE_DIM;
@@ -45,7 +33,7 @@ extern "C" __global__ void transpose(const size_t rows, const size_t cols, float
 
   int x = threadId % GRIDS;
   int y = threadId / GRIDS;
-  __valigned__ float tile[TILE_DIM][TILE_DIM];
+  __valigned__ T tile[TILE_DIM][TILE_DIM];
   
   for (int j = 0; j < TILE_DIM; j += 1) {
     if (y * TILE_DIM + j >= rows) break; 
@@ -58,7 +46,7 @@ extern "C" __global__ void transpose(const size_t rows, const size_t cols, float
     tops::memcpy(ctx, buf, src);
   }
 
-  __valigned__ float matBbuffer[TILE_DIM][TILE_DIM];    
+  __valigned__ T matBbuffer[TILE_DIM][TILE_DIM];    
   for (int i=0; i<TILE_DIM; i++) {
     for(int j=0; j<TILE_DIM; j++) {
       matBbuffer[i][j] = tile[j][i];
@@ -81,6 +69,23 @@ extern "C" __global__ void transpose(const size_t rows, const size_t cols, float
   // __syncthreads();
 }
 
+extern "C"  __global__ void transpose_f32(const size_t rows, const size_t cols, float *idata, float *odata)
+{
+    transpose<float>(rows, cols, idata, odata);
+
+}
+
+extern "C"  __global__ void transpose_f16(const size_t rows, const size_t cols, tops::half *idata, tops::half *odata)
+{
+    transpose<tops::half>(rows, cols, idata, odata);
+
+}
+
+extern "C"  __global__ void transpose_bf16(const size_t rows, const size_t cols, tops::bfloat *idata, tops::bfloat *odata)
+{
+    transpose<tops::bfloat>(rows, cols, idata, odata);
+
+}
 
 int main(int argc, char *argv[])
 {

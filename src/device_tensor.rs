@@ -1,18 +1,24 @@
+use cust_core::DeviceCopy;
 use float_eq::float_eq;
+use tops::memory::TopsDevicePointer;
 use std::fmt::Debug;
 
 //Import UHAL for common computing interfaces
 use crate::device_executor::G_KERNEL;
 use uhal::context::CurrentContextTrait;
 use uhal::error::DeviceResult;
-use uhal::memory::{DeviceBufferTrait, DeviceBufferTraitEx};
+use uhal::memory::{DeviceBufferTrait, DeviceBufferTraitEx, DevicePointerTrait};
 //Tops backend
 #[cfg(feature = "tops_backend")]
 use tops::memory::CopyDestination;
 #[cfg(feature = "tops_backend")]
 use tops::memory::TopsDeviceBuffer as DeviceBuffer;
 #[cfg(feature = "tops_backend")]
+use tops::memory::TopsDevicePointer as DevicePointer;
+#[cfg(feature = "tops_backend")]
 use tops_backend as tops;
+
+use tops::driv::topsDeviceptr_t;
 
 //Cuda backend
 #[cfg(feature = "cuda_backend")]
@@ -21,6 +27,8 @@ use cuda::context::CuCurrentContext as CurrentContext;
 use cuda::memory::CopyDestination;
 #[cfg(feature = "cuda_backend")]
 use cuda::memory::CuDeviceBuffer as DeviceBuffer;
+#[cfg(feature = "cuda_backend")]
+use cuda::memory::CuDevicePointer as DevicePointer;
 #[cfg(feature = "cuda_backend")]
 use cuda_backend as cuda;
 
@@ -138,6 +146,23 @@ impl DeviceTensor {
                 Err(_e)
             }
         }
+    }
+
+    pub fn from_raw_parts (
+        pointer: &topsDeviceptr_t,
+        size: usize,
+        shape: Vec<usize>,
+    ) -> DeviceResult<DeviceTensor> {
+
+        unsafe { 
+            let data: DeviceBuffer<f32> = DeviceBuffer::from_raw_parts(DevicePointer::from_raw(*pointer), size); 
+
+            Ok(DeviceTensor {
+                data: Some(DeviceTensorKind::from(data)),
+                shape: shape,
+            })
+        }
+
     }
 
     pub fn from_vec_shape_i32(raw_data: Vec<i32>, shape: Vec<usize>) -> DeviceResult<DeviceTensor> {

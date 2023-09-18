@@ -6,6 +6,11 @@
 #include <tops/tops_runtime.h>
 #include <tops/topsrtc.h>
 #include <unistd.h>
+#include <tops/half.h>
+#include <tops/bfloat.h>
+
+constexpr int TILE_DIM=64;
+
 #define CHECK(cmd) \
 {\
     topsError_t error  = cmd;\
@@ -14,33 +19,24 @@
         exit(EXIT_FAILURE);\
 	  }\
 }
-constexpr int MAX_RANK = 3;
-constexpr int TILE_DIM=64;
-constexpr int BLOCK_ROWS=8;
 
-template <typename T, std::size_t N>
-__device__ void copy_to_buffer(
-  tops_dte_ctx_t& ctx, 
-  T *buf_l3, 
-  T *buf_l1)
-{
-  tops_dte_ctx_t p_ctx;
-  tops::dte_scope p_s(p_ctx);
-
-  tops::mdspan from(tops::Global, buf_l3, N);
-  tops::mdspan to(tops::Private, buf_l1, N);
-  tops::memcpy(p_ctx, to, from);
+namespace tops {
+template <typename T>
+__device__ __host__ __forceinline__ constexpr int hvlength() {
+  return 128 / sizeof(T);
 }
 
+} // namespace tops
+
+
 //matA_shape [1, m, k], tranasposed matB_shape[1, n, k], out shape [1, m, n]
-extern "C" __global__ void transposed_matmul(float *matA, float *matB, float* out, int* matA_shape, int* matB_shape)
+template<typename T, typename VT>
+__device__ void dot(const size_t m, const size_t k, const size_t n, T *matA, T *matB, T* out)
 {
   tops_dte_ctx_t ctx;
   tops::dte_scope s(ctx);
 
-  __valigned__ int buffer_shapeA[MAX_RANK];
-  copy_to_buffer<int, MAX_RANK>(ctx, matA_shape, buffer_shapeA);
-  int splits = buffer_shapeA[1];
+  int splits = m;
   int blockId = blockIdx.y * gridDim.x + blockIdx.x;
   int tid = blockId * blockDim.x + threadIdx.x;
   if (tid >= splits) {
@@ -48,21 +44,18 @@ extern "C" __global__ void transposed_matmul(float *matA, float *matB, float* ou
     return;
   }
 
-  __valigned__ int buffer_shapeB[MAX_RANK];
-
-  copy_to_buffer<int, MAX_RANK>(ctx, matB_shape, buffer_shapeB);
-
-  int matA_stride = buffer_shapeA[2];
-  int out_stride = buffer_shapeB[1];
+  int matA_stride = k;
+  int out_stride = n;
 
 
   int offsetA = tid * matA_stride;
   int offsetOut = tid * out_stride;
 
-  __valigned__ float bufferA[TILE_DIM];
-  __valigned__ float bufferB[TILE_DIM];
-  __valigned__ float bufferMul[TILE_DIM];
-  __valigned__ float bufferOut[TILE_DIM*192];
+  __valigned__ T bufferA[TILE_DIM];
+  __valigned__ T bufferB[TILE_DIM];
+  __valigned__ T bufferMul[TILE_DIM];
+  __valigned__ T bufferOut[TILE_DIM*192];
+  __valigned__ T SUM[tops::hvlength<VT>()];
 
   tops::mdspan bufA(tops::Private, &bufferA, TILE_DIM);
   tops::mdspan bufB(tops::Private, &bufferB, TILE_DIM);
@@ -71,7 +64,7 @@ extern "C" __global__ void transposed_matmul(float *matA, float *matB, float* ou
 
   for (int j=0; j<out_stride; j+=1) {
       //sum of mul results
-      float sums = 0.0;
+      tops::vstore(tops::vzero<VT>(), SUM);
       for (int i=0; i<matA_stride; i+=TILE_DIM) {
         int tilesize = TILE_DIM;
         if (i * TILE_DIM + TILE_DIM >= matA_stride) {
@@ -82,14 +75,14 @@ extern "C" __global__ void transposed_matmul(float *matA, float *matB, float* ou
         //element-wise mul of one row of matB with one column of matB
         tops::mdspan srcB(tops::Global, matB + j * matA_stride + i, tilesize);
         tops::memcpy(ctx, bufB, srcB);
-        const auto &v1_ = tops::vload<vfloat>(bufferA);
-        const auto &v2_ = tops::vload<vfloat>(bufferB);
-        tops::vstore(tops::vmul<vfloat>(v1_, v2_), bufferMul);
+        const auto &v1_ = tops::vload<VT>(bufferA);
+        const auto &v2_ = tops::vload<VT>(bufferB);
+        tops::vstore(tops::vmul<VT>(v1_, v2_), bufferMul);
         for (int m=0; m<tilesize; m++){
-          sums += bufferMul[m];
+          SUM[0] += bufferMul[m];
         }
       }
-      bufferOut[j] = sums;
+      bufferOut[j] = SUM[0];
       // printf("%.2f, ", sums);
 
   }
@@ -98,6 +91,22 @@ extern "C" __global__ void transposed_matmul(float *matA, float *matB, float* ou
 //   printf("Copy output from offset {%d}\n", offsetOut);
   tops::mdspan dst(tops::Global, out + offsetOut, out_stride);
   tops::memcpy(ctx, dst, bufOut);
+}
+
+extern "C" __global__ void dot_f16(const size_t m, const size_t k, const size_t n, tops::half *matA, tops::half *matB, tops::half* out)
+{
+    dot<tops::half, vhalf>(m, k, n, matA, matB, out);
+
+}
+
+extern "C" __global__ void dot_bf16(const size_t m, const size_t k, const size_t n, tops::bfloat *matA, tops::bfloat *matB, tops::bfloat* out)
+{
+    dot<tops::bfloat, vbfloat>(m, k, n, matA, matB, out);
+}
+
+extern "C" __global__ void dot_f32(const size_t m, const size_t k, const size_t n, float *matA, float *matB, float* out)
+{
+    dot<float, vfloat>(m, k, n, matA, matB, out);
 }
 
 int main(int argc, char *argv[])
@@ -165,7 +174,7 @@ int main(int argc, char *argv[])
         CHECK(topsMemcpy(shape_rhs_d, &shape_rhs, MAX_RANK * sizeof(int),
                         topsMemcpyHostToDevice));
 
-        transposed_matmul<<<dim3(grids, 1, 1), dim3(threads, 1, 1)>>>(lhs_d, rhs_d, out_d, shape_lhs_d, shape_rhs_d);
+        dot_f32<<<dim3(grids, 1, 1), dim3(threads, 1, 1)>>>(W, M, H, lhs_d, rhs_d, out_d);
 
         printf("info: copy Device2Host\n");
         CHECK(topsMemcpy(out_h, out_d, batch * size_out * sizeof(float), topsMemcpyDeviceToHost));

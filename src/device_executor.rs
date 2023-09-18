@@ -3,13 +3,13 @@ use crate::device_tensor::{DeviceTensor, DeviceTensorKind};
 use core::fmt::Debug;
 use core::panic;
 use cust_core::DeviceCopy;
+use tops::memory::TopsDevicePointer as DevicePointer;
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
 use std::ptr;
 use std::sync::{Arc, Once};
 
 //Import UHAL for common computing interfaces
-use std::fs;
 use uhal::context::CurrentContextTrait;
 use uhal::device::DeviceTrait;
 use uhal::error::DeviceResult;
@@ -18,6 +18,7 @@ use uhal::memory::DeviceBufferTrait;
 use uhal::module::ModuleTrait;
 use uhal::stream::{StreamFlags, StreamTrait};
 use uhal::DriverLibraryTrait;
+use std::fs;
 
 //Tops backend
 #[cfg(feature = "tops_backend")]
@@ -74,8 +75,7 @@ pub fn init_api(device_id: u32) -> Option<Device> {
 }
 
 pub fn init_kernels(
-    device_id: u32,
-    kernel_platform: &str,
+    device_id: u32, kernel_platform: &str
 ) -> (
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
@@ -91,8 +91,12 @@ pub fn init_kernels(
             };
             let mut module_map = Box::new(HashMap::<String, Module>::new());
 
-            let full_kernel_folder =
-                format!("{}/kernels/{}", env!("CARGO_MANIFEST_DIR"), kernel_platform).to_string();
+            let full_kernel_folder = format!(
+                "{}/kernels/{}",
+                env!("CARGO_MANIFEST_DIR"),
+                kernel_platform
+            )
+            .to_string();
 
             let paths = fs::read_dir(&full_kernel_folder).unwrap();
 
@@ -103,10 +107,12 @@ pub fn init_kernels(
                 let kernel_name = p.file_stem().unwrap().to_str().unwrap();
                 if filename.ends_with(".topsfb") || filename.ends_with(".ptx") {
                     #[cfg(feature = "cuda_backend")]
-                    let ptx = format!("{}/{}.ptx", full_kernel_folder, kernel_name).to_string();
+                    let ptx = format!("{}/{}.ptx", full_kernel_folder, kernel_name)
+                        .to_string();
 
-                    // #[cfg(feature = "tops_backend")]
-                    let ptx = format!("{}/{}.topsfb", full_kernel_folder, kernel_name).to_string();
+                    #[cfg(feature = "tops_backend")]
+                    let ptx = format!("{}/{}.topsfb", full_kernel_folder, kernel_name)
+                        .to_string();
 
                     println!("{}", ptx);
 
@@ -126,8 +132,7 @@ pub fn init_kernels(
 }
 
 fn get_kernels(
-    device_id: u32,
-    kernel_platform: &str,
+    device_id: u32, kernel_platform: &str
 ) -> &'static (
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
@@ -140,6 +145,7 @@ fn get_kernels(
         &G_KERNEL
     }
 }
+
 
 #[derive(Debug)]
 pub struct DeviceExecutor {
@@ -179,10 +185,10 @@ impl DeviceExecutor {
         let kernel_platform = "pavo"; //default kernel path
 
         #[cfg(feature = "dorado")]
-        let kernel_platform = "dorado";
+        let kernel_platform = "dorado"; 
 
         #[cfg(feature = "scorpio")]
-        let kernel_platform = "scorpio";
+        let kernel_platform = "scorpio"; 
 
         let unary_functions = vec![
             "ucopy", "uneg", "uexp", "ulog", "usin", "ucos", "uabs", "usqr", "usqrt", "ugelu",
@@ -212,7 +218,27 @@ impl DeviceExecutor {
                                 function_map.insert(name, Arc::new(function));
                             }
                         }
-                    } else {
+                    } else if module == "transpose" {
+                        for dt in ["bf16", "f16", "f32"] {
+                            let name = format!("{}_{}", module, dt);
+                            println!("Load function {}", name);
+                            let function = _module_map[module].get_function(&name).unwrap();
+                            function_map.insert(name, Arc::new(function));
+                        }
+                    } else if module == "dot" {
+                        for dt in ["bf16", "f16", "f32"] {
+                            let name = format!("{}_{}", module, dt);
+                            println!("Load function {}", name);
+                            let function = _module_map[module].get_function(&name).unwrap();
+                            function_map.insert(name, Arc::new(function));
+                        }
+                    } else if module == "matmul" {
+                        let name = "matmul_f32";
+                        println!("Load function matmul_f32");
+                        let function = _module_map[module].get_function(&name).unwrap();
+                        function_map.insert(name.to_string(), Arc::new(function));
+                    }
+                    else {
                         println!("Failed to Load function {}", module);
                         let function = _module_map[module].get_function(&module).unwrap();
                         function_map.insert(module.clone(), Arc::new(function));
@@ -244,7 +270,7 @@ impl DeviceExecutor {
                     }
                 }
             }
-            _ => {}
+            _=> {}
         }
         false
     }
@@ -684,14 +710,15 @@ impl DeviceExecutor {
     }
 
     #[allow(non_snake_case)]
-    pub fn batch_matmul_owned(
+    pub fn batch_matmul(
         &mut self,
         lhs: &DeviceTensor,
         rhs: &DeviceTensor,
+        out: &DeviceTensor,
         eager_mode: bool,
-    ) -> DeviceResult<&DeviceTensor> {
+    ) -> DeviceResult<()> {
         let kernel = match &self.function_map {
-            Some(kmap) => &kmap["fused_batch_matmul"],
+            Some(kmap) => &kmap["batch_matmul"],
             _ => {
                 panic!("Unable to use kernel!");
             }
@@ -746,29 +773,29 @@ impl DeviceExecutor {
             println!("GCU cache buffer [{}, {}]", rhs.shape[1], rhs.shape[2]);
         }
 
-        let cachename = format!("matOut{}_{}_{}", lhs.shape[0], lhs.shape[1], rhs.shape[2]);
+        // let cachename = format!("matOut{}_{}_{}", lhs.shape[0], lhs.shape[1], rhs.shape[2]);
 
-        if !self.cache_buffer.contains_key(&cachename) {
-            let buffer = Box::new(
-                DeviceTensor::from_vec_shape(
-                    &vec![0.0f32; lhs.shape[0] * lhs.shape[1] * rhs.shape[2]],
-                    vec![lhs.shape[0], lhs.shape[1], rhs.shape[2]],
-                )
-                .unwrap(),
-            );
-            self.cache_buffer.insert(cachename.clone(), buffer);
-            println!("GCU cache buffer [{}, {}]", lhs.shape[1], rhs.shape[2]);
-        }
+        // if !self.cache_buffer.contains_key(&cachename) {
+        //     let buffer = Box::new(
+        //         DeviceTensor::from_vec_shape(
+        //             &vec![0.0f32; lhs.shape[0] * lhs.shape[1] * rhs.shape[2]],
+        //             vec![lhs.shape[0], lhs.shape[1], rhs.shape[2]],
+        //         )
+        //         .unwrap(),
+        //     );
+        //     self.cache_buffer.insert(cachename.clone(), buffer);
+        //     println!("GCU cache buffer [{}, {}]", lhs.shape[1], rhs.shape[2]);
+        // }
 
         let matTranpose = &self.cache_buffer[&cachename1];
-        let matOut = &self.cache_buffer[&cachename];
+        // let matOut = &self.cache_buffer[&cachename];
 
         let result: DeviceResult<()> = match (
             &lhs.data,
             &rhs.data,
             self.stream,
             &matTranpose.data,
-            &matOut.data,
+            &out.data,
         ) {
             (
                 Some(data_left),
@@ -827,7 +854,7 @@ impl DeviceExecutor {
         }
 
         match result {
-            Ok(_) => Ok(matOut),
+            Ok(_) => Ok(()),
             #[cfg(test)]
             Err(_e) => {
                 panic!("Failed to alloc device memory!");
@@ -840,13 +867,66 @@ impl DeviceExecutor {
         }
     }
 
+
     #[allow(non_snake_case)]
-    pub fn transposed_matmul_owned(
+    // pub fn transposed_matmul_owned(
+    //     &mut self,
+    //     lhs: &DeviceTensor,
+    //     rhs: &DeviceTensor,
+    //     eager_mode: bool,
+    // ) -> DeviceResult<&DeviceTensor> {
+    //     let cachename = format!("matOut{}_{}_{}", lhs.shape[0], lhs.shape[1], rhs.shape[2]);
+
+    //     if !self.cache_buffer.contains_key(&cachename) {
+    //         let buffer = Box::new(
+    //             DeviceTensor::from_vec_shape(
+    //                 &vec![0.0f32; lhs.shape[0] * lhs.shape[1] * rhs.shape[2]],
+    //                 vec![lhs.shape[0], lhs.shape[1], rhs.shape[2]],
+    //             )
+    //             .unwrap(),
+    //         );
+    //         self.cache_buffer.insert(cachename.clone(), buffer);
+    //         println!("GCU cache buffer [{}, {}]", lhs.shape[1], rhs.shape[2]);
+    //     }
+    //     // let matOut = &self.cache_buffer[&cachename];
+
+    //     match self.transposed_matmul(lhs, rhs, &self.cache_buffer[&cachename], eager_mode) {
+    //         Ok(_) => {
+    //             Ok(&self.cache_buffer[&cachename])
+    //         }
+    //         _=> {
+    //             panic!("Unable to use kernel!");
+    //         }
+    //     }
+    // }
+
+    // pub fn matmul_f32(&mut self, shape: &[usize], lhs: &topsDeviceptr_t, rhs: &topsDeviceptr_t, out: &topsDeviceptr_t, eager_mode: bool) -> DeviceResult<()> {
+
+    //     let (b, m, n, k) = (shape[0], shape[1], shape[2], shape[3]);
+    //     let ltensor = DeviceTensor::from_raw_parts(lhs, b * m * n, vec![b, m, n]).unwrap();
+    //     let rtensor = DeviceTensor::from_raw_parts(rhs, b * n * k, vec![b, n, k]).unwrap();
+    //     let outensor = DeviceTensor::from_raw_parts(out, b * m * k, vec![b, m, k]).unwrap();
+
+    //     if k > 1 && m < 12000 && k < 12000 && n < 12000 {
+    //         if b > 1 {
+    //             return self.batch_matmul(&ltensor, &rtensor, &outensor, eager_mode);
+    //         } else {
+    //             return self.transposed_matmul(&ltensor, &rtensor, &outensor, eager_mode);
+    //         }
+
+    //     }
+    //     Ok(())
+
+    // }
+
+    #[allow(non_snake_case)]
+    pub fn transposed_matmul(
         &mut self,
         lhs: &DeviceTensor,
         rhs: &DeviceTensor,
+        out: &DeviceTensor,
         eager_mode: bool,
-    ) -> DeviceResult<&DeviceTensor> {
+    ) -> DeviceResult<()> {
         let kernel_transpose = match &self.function_map {
             Some(kmap) => &kmap["transpose_kernel"],
             _ => {
@@ -859,11 +939,6 @@ impl DeviceExecutor {
                 panic!("Unable to use kernel!");
             }
         };
-
-        // let stream = match Stream::new(StreamFlags::NON_BLOCKING, None) {
-        //     Ok(_stream) => {Some(_stream)},
-        //     _ => {panic!("Unable to create stream!");}
-        // };
 
         let shape1 = format!(
             "inputShapeA{}_{}_{}",
@@ -931,29 +1006,14 @@ impl DeviceExecutor {
             println!("GCU cache buffer [{}, {}]", rhs.shape[1], rhs.shape[2]);
         }
 
-        let cachename = format!("matOut{}_{}_{}", lhs.shape[0], lhs.shape[1], rhs.shape[2]);
-
-        if !self.cache_buffer.contains_key(&cachename) {
-            let buffer = Box::new(
-                DeviceTensor::from_vec_shape(
-                    &vec![0.0f32; lhs.shape[0] * lhs.shape[1] * rhs.shape[2]],
-                    vec![lhs.shape[0], lhs.shape[1], rhs.shape[2]],
-                )
-                .unwrap(),
-            );
-            self.cache_buffer.insert(cachename.clone(), buffer);
-            println!("GCU cache buffer [{}, {}]", lhs.shape[1], rhs.shape[2]);
-        }
-
         let matTranpose = &self.cache_buffer[&cachename1];
-        let matOut = &self.cache_buffer[&cachename];
 
         let result: DeviceResult<()> = match (
             &lhs.data,
             &rhs.data,
             &self.stream,
             &matTranpose.data,
-            &matOut.data,
+            &out.data,
         ) {
             (
                 Some(data_left),
@@ -1045,13 +1105,6 @@ impl DeviceExecutor {
                             panic!("Unable to synchronize kernels!");
                         }
                     }
-                    // match stream {
-                    //     Some(s) => {
-                    //         s.synchronize();
-                    //         <Stream as StreamTrait>::drop(s);
-                    //     },
-                    //     _=> {}
-                    // }
                 }
                 _ => {
                     panic!("Unable to synchronize kernels!");
@@ -1060,7 +1113,7 @@ impl DeviceExecutor {
         }
 
         match result {
-            Ok(_) => Ok(matOut),
+            Ok(ret) => Ok(ret),
             #[cfg(test)]
             Err(_e) => {
                 panic!("Failed to alloc device memory!");
