@@ -3,7 +3,7 @@ use cust_core::DeviceCopy;
 use std::collections::HashMap;
 
 //Import UHAL for common computing interfaces
-use crate::device_tensor::DeviceTensor;
+
 use uhal::error::DeviceResult;
 use uhal::launch;
 use uhal::memory::DeviceBufferTrait;
@@ -184,7 +184,7 @@ pub fn network_test() -> DeviceResult<()> {
                         map_act[layer.op] as i32,
                     ])?;
 
-                    let (block_size, grid_a, grid_b) =
+                    let (_block_size, _grid_a, _grid_b) =
                         get_block_grid(layer.input_size.1, layer.input_size.0);
                     unsafe {
                         #[cfg(feature = "tops_backend")]

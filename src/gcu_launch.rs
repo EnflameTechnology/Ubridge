@@ -3,7 +3,7 @@
 use tops_backend as tops;
 #[cfg(feature = "tops_backend")]
 use tops::stream::TopsStream as Stream;
-use uhal::error::{DeviceResult, DeviceError};
+use uhal::error::{DeviceResult};
 pub use cust_core::_hidden::{DeviceCopy};
 use std::ffi::{c_void, c_ulonglong};
 use crate::gcu_device::GcuFunction;
@@ -250,7 +250,7 @@ impl GcuFunction {
                 // }
 
                 let mut size :usize = (std::mem::size_of::<c_ulonglong>() * (params.len() - 1) + std::mem::size_of::<usize>()) as usize;
-                let mut config = vec![0x1 as *const c_void, params.as_mut_ptr() as *const _ as *mut c_void, 0x2 as *const c_void, &mut size as *const _ as *mut c_void, 0x3 as *const c_void];
+                let _config = vec![0x1 as *const c_void, params.as_mut_ptr() as *const _ as *mut c_void, 0x2 as *const c_void, &mut size as *const _ as *mut c_void, 0x3 as *const c_void];
         
                 let nul = ptr::null_mut();
                 let shared_mem_bytes = 0;
@@ -281,9 +281,9 @@ impl GcuFunction {
     #[inline(always)]
     unsafe fn par_launch_async_impl(
         self,
-        stream: &Stream,
-        cfg: GcuLaunchConfig,
-        params: &mut [*mut std::ffi::c_void],
+        _stream: &Stream,
+        _cfg: GcuLaunchConfig,
+        _params: &mut [*mut std::ffi::c_void],
     ) -> DeviceResult<()> {
         // self.device.bind_to_thread()?;
         // launch_kernel(

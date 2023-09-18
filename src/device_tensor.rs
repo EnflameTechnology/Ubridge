@@ -1,11 +1,11 @@
-use cust_core::DeviceCopy;
+
 use float_eq::float_eq;
-use tops::memory::TopsDevicePointer;
+
 use std::fmt::Debug;
 
 //Import UHAL for common computing interfaces
-use crate::device_executor::G_KERNEL;
-use uhal::context::CurrentContextTrait;
+
+
 use uhal::error::DeviceResult;
 use uhal::memory::{DeviceBufferTrait, DeviceBufferTraitEx, DevicePointerTrait};
 //Tops backend

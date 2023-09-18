@@ -2,16 +2,16 @@ use crate::device_opcode::DeviceOpCode;
 use crate::device_tensor::{DeviceTensor, DeviceTensorKind};
 use core::fmt::Debug;
 use core::panic;
-use cust_core::DeviceCopy;
-use tops::memory::TopsDevicePointer as DevicePointer;
-use std::borrow::BorrowMut;
+
+
+
 use std::collections::HashMap;
-use std::ptr;
+
 use std::sync::{Arc, Once};
 
 //Import UHAL for common computing interfaces
 use uhal::context::CurrentContextTrait;
-use uhal::device::DeviceTrait;
+
 use uhal::error::DeviceResult;
 use uhal::launch;
 use uhal::memory::DeviceBufferTrait;
@@ -23,8 +23,7 @@ use std::fs;
 //Tops backend
 #[cfg(feature = "tops_backend")]
 use tops::device::TopsDevice as Device;
-#[cfg(feature = "tops_backend")]
-use tops::memory::CopyDestination;
+
 #[cfg(feature = "tops_backend")]
 use tops::memory::TopsDeviceBuffer as DeviceBuffer;
 #[cfg(feature = "tops_backend")]
@@ -448,7 +447,7 @@ impl DeviceExecutor {
         };
         let size: usize = lhs.shape.iter().product();
         let matOut = DeviceBuffer::from_slice(&vec![0.0f32; size])?;
-        let (block_size, grid_a, grid_b) = self.get_block_grid(
+        let (_block_size, _grid_a, _grid_b) = self.get_block_grid(
             if rhs.shape.len() > 1 {
                 rhs.shape[1]
             } else {
@@ -1051,7 +1050,7 @@ impl DeviceExecutor {
                     }
 
                     #[cfg(feature = "tops_backend")]
-                    let result = launch!(kernel_transpose<<<(GRIDS, BLOCKS, 1), (PER_BLOCKS, 1, 1), 0, stream>>>(
+                    let _result = launch!(kernel_transpose<<<(GRIDS, BLOCKS, 1), (PER_BLOCKS, 1, 1), 0, stream>>>(
                         matB.as_device_ptr(),
                         matTrans.as_device_ptr(),
                         inputShapeB.as_device_ptr()

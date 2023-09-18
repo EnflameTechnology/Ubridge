@@ -1,4 +1,4 @@
-use ubridge::tests::{network_test, memory_test, kernel_test};
+use ubridge::tests::{network_test, kernel_test};
 use uhal::error::DeviceResult;
 
 fn main() -> DeviceResult<()> {

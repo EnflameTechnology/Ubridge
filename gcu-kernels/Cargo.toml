@@ -1,11 +1,10 @@
 [package]
 name = "gcu-kernels"
-version = "0.2.0"
+version = "0.1.0"
 edition = "2021"
 
-description = "CUDA kernels for Candle"
-repository = "https://github.com/huggingface/candle"
-keywords = ["blas", "tensor", "machine-learning"]
+description = "GCU kernels for Candle"
+repository = "http://git.enflame.cn/era/candle-gcu.git"
 categories = ["science"]
 license = "MIT OR Apache-2.0"
 

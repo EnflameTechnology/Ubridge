@@ -1,18 +1,17 @@
 use std::ffi::c_void;
-use std::sync::Mutex;
+
 use std::{marker::Unpin, pin::Pin, sync::Arc, vec::Vec};
 use tops::memory::AsyncCopyDestination;
 use uhal::device::DeviceTrait;
-use uhal::error::{DeviceResult, DeviceError};
-use uhal::launch;
+use uhal::error::{DeviceResult};
+
 use uhal::memory::{DeviceBufferTrait, DevicePointerTrait};
 use uhal::module::ModuleTrait;
-use uhal::stream::{StreamFlags, StreamTrait};
+use uhal::stream::{StreamTrait};
 use uhal::DriverLibraryTrait;
 pub use cust_core::_hidden::{DeviceCopy};
 use std::{
-    marker::PhantomData,
-    ops::{Bound, RangeBounds},
+    ops::{RangeBounds},
     string::String,
 };
 use std::path::Path;
@@ -26,14 +25,11 @@ use tops::device::TopsDevice as Device;
 use tops::memory::CopyDestination;
 #[cfg(feature = "tops_backend")]
 use tops::memory::TopsDeviceBuffer as DeviceBuffer;
-#[cfg(feature = "tops_backend")]
-use tops::module::TopsModule as Module;
+
 #[cfg(feature = "tops_backend")]
 use tops::stream::TopsStream as Stream;
-#[cfg(feature = "tops_backend")]
-use tops::TopsApi as Api;
-#[cfg(feature = "tops_backend")]
-use tops::function::TopsFunction as Function;
+
+
 #[cfg(feature = "tops_backend")]
 pub use tops::driv as driv;
 use driv::{topsFunction_t};
@@ -128,7 +124,7 @@ impl GcuDevice {
         || _module_name=="transpose" 
         || _module_name=="dot" {
             match (&self.executor.function_map, DeviceExecutor::get_gcu_executor(self.id as u32)) {
-                (Some(funcs), Some(gcu_executor)) => {
+                (Some(funcs), Some(_gcu_executor)) => {
                     return Ok(
                         GcuFunction {
                             name: func_name.to_string(), 

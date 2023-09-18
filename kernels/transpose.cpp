@@ -21,7 +21,7 @@ __device__ void transpose(const size_t rows, const size_t cols, T *idata, T *oda
 {
   tops_dte_ctx_t ctx;
   tops::dte_scope s(ctx);
-  printf("Rows %d, Cols %d", rows, cols);
+  // printf("Rows %d, Cols %d", rows, cols);
   
   int GRIDS = cols/TILE_DIM;
   if (GRIDS * TILE_DIM < cols) GRIDS += 1;
@@ -66,6 +66,7 @@ __device__ void transpose(const size_t rows, const size_t cols, T *idata, T *oda
     tops::mdspan dst(tops::Global, odata + (y * TILE_DIM + j) * rows + x * TILE_DIM, bufsize);
     tops::memcpy(ctx, dst, src);
   }
+  
   // __syncthreads();
 }
 
