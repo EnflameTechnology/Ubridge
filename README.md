@@ -1,26 +1,50 @@
 <div align="center">
-<h2 align="center">UHAL Bridge (ubridge) - Bridge between Chopper Runtime and UHAL. </h2>
+<h2 align="center">UHAL Bridge (ubridge) - Bridge between computing frameworks and UHAL. </h2>
 <br />
 <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg" /><br>
 <br>
-This Rust crate serve as the bridge between "Chopper runtime" and "UHAL". The computing bytecode compiled by the Chopper runtime will be dispatched to the corresponding device backend through: <br>ubridge -> UHAL -> CUDA backend or Tops backend.
+This Rust crate serve as the bridge between "computing frameworks", such as Chopper and Candle and "UHAL". <br> The computing instructions will be dispatched to the corresponding devices through: ubridge -> UHAL -> CUDA driver or Tops driver.
 </div>
 
 ## UPDATE KERNELS
+
+The gcu kernels written in TopsCC will be build automatically when compiling Ubridge or Candle-GCU project.
+
+You may also manually build them if there are any changes:
 ```
 cd gcu_kernels && cargo build
-// or change kernels/op-name.cpp file and save it
 ```
-TODO: currently, a single file update can lead to all kernels recompile, consider split this process
 
 ## Items
 device_tensor.rs: higher level abstraction of device tensor. 
-device_executor.rs: execution engine and kernel management. 
-device_opcode.rs: definition of operators that currently supported,
-main.rs: example of UHAL usage (executed by **cargo run**).
-resources: CUDA/GCU kernels.
 
-## The entire workflow:
+device_executor.rs: execution engine and kernel management. 
+
+device_opcode.rs: definition of operators that currently supported.
+
+gcu_device.rs: abstraction of GCU device for Candle.
+
+gcu_slice.rs: used for tensor slicing for candle-gcu.
+
+gcu_launch.rs: gcu kernel launch for candle-gcu.
+
+tests/*: samples of UHAL, ubridge.
+
+main.rs: entry for samples (executed by **cargo run**).
+
+kernels: CUDA/GCU kernels.
+
+## The entire workflow （for Candle-GCU):
+Candle Models **->** 
+Candle-nn / Candle-core  **->** 
+GCU Backend **->** 
+UBridge (http://git.enflame.cn/guoqing.bao/ubridge) **->** 
+UHAL (http://git.enflame.cn/guoqing.bao/UHHI/) **->** 
+Concreate backend (CUDA/Tops) **->**
+Drivers (CUDA/Tops) **->**
+Nvidia GPU/Enflame GCU
+
+## The entire workflow （for Chopper）:
 Frontend (Pytorch, Tensorflow, Jax) scripts **->** 
 Chopper (_Compiler -> Chopper Runtime -> Raptors_) **->** 
 UBridge (http://git.enflame.cn/guoqing.bao/ubridge) **->** 
@@ -322,7 +346,7 @@ Results of forward pass******************
 
 #### External dependencies
 **Computing on GCU**: 
-_libtops_api64.so, Enflame GCU Driver, Enflame T20 card_
+Enflame GCU Driver, GCU Runtime 2.0/3.0, Enflame T20 card_
 
 **Computing on GPU**: 
 _CUDA 11.3, Nvidia Driver, Nvidia GPU card_
