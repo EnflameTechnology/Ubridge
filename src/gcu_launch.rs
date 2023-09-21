@@ -45,11 +45,11 @@ impl GcuLaunchConfig {
         let TILE_DIM = 64;
         let mut GRIDS = N / TILE_DIM;
         if GRIDS * TILE_DIM < N {
-            GRIDS += 1
+            GRIDS += 1;
         };
         let mut BLOCKS = M / TILE_DIM;
         if BLOCKS * TILE_DIM < M {
-            BLOCKS += 1
+            BLOCKS += 1;
         };
         let mut PER_BLOCKS = 1;
         if BLOCKS > 4 {

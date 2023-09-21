@@ -1,7 +1,4 @@
 #include "tops.h"
-#pragma clang force_cuda_host_device begin
-#include <stdio.h>
-#pragma clang force_cuda_host_device end
 #include <stdio.h>
 #include <tops/tops_runtime.h>
 #include <tops/topsrtc.h>
@@ -111,12 +108,12 @@ extern "C" __global__ void dot_f32(const size_t m, const size_t k, const size_t 
 
 int main(int argc, char *argv[])
 {
-    CHECK(topsInit(0));
-    CHECK(topsSetDevice(1));
+    // CHECK(topsInit(0));
+    // CHECK(topsSetDevice(1));
     
     int W = 14;
-    int M = 128;
-    int H = 32;
+    int M = 4096;
+    int H = 512;
     const int MAX_RANK = 3;
     const int batch = 1;
 
@@ -199,6 +196,6 @@ int main(int argc, char *argv[])
         // topsDeviceReset();
         // topsStreamDestroy(stream);
         // topsModuleUnload(module);
-        sleep(2);
+        // sleep(2);
     return 0;
 }
