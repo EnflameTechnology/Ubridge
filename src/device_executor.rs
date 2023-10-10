@@ -224,7 +224,7 @@ impl DeviceExecutor {
                             let function = _module_map[module].get_function(&name).unwrap();
                             function_map.insert(name, Arc::new(function));
                         }
-                    } else if module == "dot" {
+                    } else if module == "dotllm" {
                         for dt in ["bf16", "f16", "f32"] {
                             let name = format!("{}_{}", module, dt);
                             println!("Load function {}", name);
@@ -239,8 +239,8 @@ impl DeviceExecutor {
                     }
                     else {
                         println!("Failed to Load function {}", module);
-                        let function = _module_map[module].get_function(&module).unwrap();
-                        function_map.insert(module.clone(), Arc::new(function));
+                        // let function = _module_map[module].get_function(&module).unwrap();
+                        // function_map.insert(module.clone(), Arc::new(function));
                     }
                 }
 

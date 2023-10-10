@@ -12,7 +12,7 @@
 
 
 template <typename T, typename VT, FP dot_intrinsic>
-__global__ void dot(
+__device__ void dot(
   T *lhs,
   T *rhs,
   T *out,
@@ -92,7 +92,24 @@ __global__ void dot(
   } 
 }
 
-int test(int M, int K, int N, bool check) {
+
+extern "C" __global__ void dotllm_f16(const size_t m, const size_t k, const size_t n, tops::half *matA, tops::half *matB, tops::half* out)
+{
+    dot<tops::half, vhalf, kernel_dot_m_le256_fp16>(matA, matB, out, m, k, n);
+
+}
+
+extern "C" __global__ void dotllm_bf16(const size_t m, const size_t k, const size_t n, tops::bfloat *matA, tops::bfloat *matB, tops::bfloat* out)
+{
+    dot<tops::bfloat, vbfloat, kernel_dot_m_le256_fp16>(matA, matB, out, m, k, n);
+}
+
+extern "C" __global__ void dotllm_f32(const size_t m, const size_t k, const size_t n, float *matA, float *matB, float* out)
+{
+    dot<float, vfloat, kernel_dot_m_le256_fp16>(matA, matB, out, m, k, n);
+}
+
+int test(size_t M, size_t K, size_t N, bool check) {
   printf("entry...\n");
   const int vlen = tops::hvlength<vhalf>();
   const int tile_size = 1 * vlen;
@@ -120,14 +137,14 @@ int test(int M, int K, int N, bool check) {
   CHECK(topsEventRecord(start));
   printf("Kernel launch... [%d, %d, %d]\n", gridsz, blocksz, perthreads);
 
-   dot<
-    tops::half, vhalf, dot_general_kernel_rhs_parallel_no_reduce_f16>
-      <<<dim3(gridsz, blocksz, 1), dim3(perthreads, 1, 1)>>>(data.lhs_d,
-                            data.rhs_d,
-                            data.out_d,
-                            M,
+   dotllm_f16
+      <<<dim3(gridsz, blocksz, 1), dim3(perthreads, 1, 1)>>>( M,
                             K,
-                            N);
+                            N,
+                            data.lhs_d,
+                            data.rhs_d,
+                            data.out_d
+                           );
 
   CHECK(topsGetLastError());
 
@@ -153,8 +170,8 @@ int test(int M, int K, int N, bool check) {
 }
 
 int main() {
-  int M = 64;
-  int K = 4096;
-  int N = 4096;
-  return test(M, K, N, false);
+  size_t M = 1;
+  size_t K = 4096;
+  size_t N = 4096;
+  return test(M, K, N, true);
 }
