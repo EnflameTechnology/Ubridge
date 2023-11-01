@@ -70,21 +70,35 @@ impl GcuLaunchConfig {
     }
 
     #[allow(non_snake_case)]
-    pub fn for_dot(dim1_left: u32) -> Self {
-        let K = dim1_left;
-        let mut threads = 4;
-        if K % 4 > 0 {
-            threads += 1;
+    pub fn for_dot(M: u32, N: u32) -> Self {
+        // let K = dim1_left;
+        // let mut threads = 4;
+        // if K % 4 > 0 {
+        //     threads += 1;
+        // }
+        // let mut grids = K / 4;
+        // if grids < 1 {
+        //     threads = K;
+        //     grids = 1;
+        // }
+
+        let tile_size = 64;
+        let mut gridsz = M / tile_size;
+        if gridsz < 1 {
+          gridsz = 1;
         }
-        let mut grids = K / 4;
-        if grids < 1 {
-            threads = K;
-            grids = 1;
+        let MAX_PAVO_SIP_NUM = 6;
+        let mut blocksz = N / tile_size;
+        let mut perthreads = MAX_PAVO_SIP_NUM;
+        if blocksz > MAX_PAVO_SIP_NUM {
+          blocksz /= MAX_PAVO_SIP_NUM;
+        } else {
+          perthreads = 1;
         }
 
         Self {
-            grid_dim: (grids, 1, 1),
-            block_dim: (threads, 1, 1),
+            grid_dim: (gridsz, blocksz, 1),
+            block_dim: (perthreads, 1, 1),
             shared_mem_bytes: 0,
         }
     }
