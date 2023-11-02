@@ -31,7 +31,7 @@ __device__ void copy_to_buffer(
 }
 
 //matA_shape [batch, m, k], matB_shape[batch, k, n], out shape [batch, m, n]
-extern "C" __global__ void batch_matmul(float *matA, float *matB, float* out, int* matA_shape, int* matB_shape)
+extern "C" __global__ void batch_matmul_legacy(float *matA, float *matB, float* out, int* matA_shape, int* matB_shape)
 {
   
   tops_dte_ctx_t ctx;

@@ -74,7 +74,7 @@ pub fn network_test() -> DeviceResult<()> {
     //Neural network layers: matmul(tanh act) -> matmul(relu act) -> matmul(tanh act) -> convolution(3x3 kernel, tanh act) -> matmul(tanh act) -> matmul(leaky act)
     let layers = vec![
         Layer::<f32> {
-            op: "batch_matmul",
+            op: "batch_matmul_legacy",
             weight: Some(DeviceBuffer::from_slice(&[0.01f32; N * N])?),
             input_size: (N, N),
             output_size: (N, N),
@@ -88,7 +88,7 @@ pub fn network_test() -> DeviceResult<()> {
             out_ref: None,
         }, //out N x N
         Layer::<f32> {
-            op: "batch_matmul",
+            op: "batch_matmul_legacy",
             weight: Some(DeviceBuffer::from_slice(&[0.02f32; N * N])?),
             input_size: (N, N),
             output_size: (N, N),
@@ -102,7 +102,7 @@ pub fn network_test() -> DeviceResult<()> {
             out_ref: None,
         }, //out N x N
         Layer::<f32> {
-            op: "batch_matmul",
+            op: "batch_matmul_legacy",
             weight: Some(DeviceBuffer::from_slice(&[0.5f32; K * K])?),
             input_size: (N, N),
             output_size: (N, N),
@@ -132,7 +132,7 @@ pub fn network_test() -> DeviceResult<()> {
             out_ref: None,
         }, //out (N - K + 1) x (N - K + 1)
         Layer::<f32> {
-            op: "batch_matmul",
+            op: "batch_matmul_legacy",
             weight: Some(DeviceBuffer::from_slice(
                 &[0.2f32; (N - K + 1) * (N - K + 1)],
             )?),
@@ -148,7 +148,7 @@ pub fn network_test() -> DeviceResult<()> {
             out_ref: None,
         }, //output shape (N - K + 1) * (N - K + 1)
         Layer::<f32> {
-            op: "batch_matmul",
+            op: "batch_matmul_legacy",
             weight: None,
             input_size: (N - K + 1, N - K + 1),
             output_size: (N - K + 1, N - K + 1),
@@ -210,7 +210,7 @@ pub fn network_test() -> DeviceResult<()> {
                     panic!("Failed to load kernel!");
                 }
             }
-        } else if layer.op == "batch_matmul" {
+        } else if layer.op == "batch_matmul_legacy" {
             match load_module(layer.op) {
                 Ok(module) => {
                     let kernel = module.get_function(&layer.op)?;
