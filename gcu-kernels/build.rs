@@ -7,7 +7,8 @@ macro_rules! eprintln {
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    for kernel in ["unary", "dot", "dotllm", "transpose", "activation", "element", "convolution", "batch_matmul", "batch_matmul_legacy"] {
+    for kernel in ["unary", "dot", "dotllm", "transpose", "activation", 
+            "element", "convolution", "batch_matmul", "batch_matmul_legacy", "fill"] {
         println!("cargo:rerun-if-changed=../kernels/{kernel}.cpp");
     }
     gcu::build_kernels();
@@ -15,58 +16,36 @@ fn main() {
 
 mod gcu {
     pub fn build_kernels() -> () {
-        
-        for kernel in ["unary", "dot", "dotllm", "transpose", "activation", "element", "convolution", "batch_matmul", "batch_matmul_legacy"] {
-            let in_file = "../kernels/".to_string() + kernel + ".cpp";
-            let in_filename = std::path::Path::new(&in_file);
+        for platform in ["pavo", "dorado", "scorpio"] {
+            for kernel in ["unary", "dot", "dotllm", "transpose", "activation", 
+            "element", "convolution", "batch_matmul", "batch_matmul_legacy", "fill"] {
+                let in_file = "../kernels/".to_string() + kernel + ".cpp";
+                let in_filename = std::path::Path::new(&in_file);
 
-            let out_file_dorado = "../kernels/dorado/".to_string() + kernel + ".topsfb";
-            let output_filename = std::path::Path::new(&out_file_dorado);
-            let ignore = if output_filename.exists() {
-                let out_modified = output_filename.metadata().unwrap().modified().unwrap();
-                if in_filename.exists() {
-                    let in_modified = in_filename.metadata().unwrap().modified().unwrap();
-                    out_modified.duration_since(in_modified).is_ok()
-                } else {
-                    true
+                let out_file = "../kernels/".to_string() + platform + "/" + kernel + ".topsfb";
+                let output_filename = std::path::Path::new(&out_file);
+                let ignore = if output_filename.exists() {
+                    let out_modified = output_filename.metadata().unwrap().modified().unwrap();
+                    if in_filename.exists() {
+                        let in_modified = in_filename.metadata().unwrap().modified().unwrap();
+                        out_modified.duration_since(in_modified).is_ok()
+                    } else {
+                        true
+                    }
+
+                } else{
+                    false
+                };
+
+                if !ignore {
+                    let mut command = std::process::Command::new("bash");
+                    command
+                        .arg("../tools/topscc-compile-".to_string() + platform + ".sh")
+                        .arg(kernel);
+                    let _ = command.spawn().expect("failed").wait_with_output();
                 }
-
-            } else{
-                false
-            };
-
-            if !ignore {
-                let mut command = std::process::Command::new("bash");
-                command
-                    .arg("../tools/topscc-compile-dorado.sh")
-                    .arg(kernel);
-                let _ = command.spawn().expect("failed").wait_with_output();
             }
-
-
-            let out_file_pavo = "../kernels/pavo/".to_string() + kernel + ".topsfb";
-            let output_filename = std::path::Path::new(&out_file_pavo);
-            let ignore = if output_filename.exists() {
-                let out_modified = output_filename.metadata().unwrap().modified().unwrap();
-                if in_filename.exists() {
-                    let in_modified = in_filename.metadata().unwrap().modified().unwrap();
-                    out_modified.duration_since(in_modified).is_ok()
-                } else {
-                    true
-                }
-
-            } else{
-                false
-            };
-
-            if !ignore {
-                let mut command = std::process::Command::new("bash");
-                command
-                    .arg("../tools/topscc-compile-pavo.sh")
-                    .arg(kernel);
-                let _ = command.spawn().expect("failed").wait_with_output();
-            }
-
         }
+        
     }
 }

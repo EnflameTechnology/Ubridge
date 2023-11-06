@@ -5,7 +5,14 @@
 #include <krt/scalar.h>
 
 #include <tops/tops_runtime.h>
+#if __GCU_ARCH__ < 300 
 #include "sip20intrin.h"
+#endif
+
+#if __GCU_ARCH__ >= 300 
+#include "sip30intrin.h"
+#endif
+
 #pragma clang force_cuda_host_device begin
 #include <stdio.h>
 #pragma clang force_cuda_host_device end
@@ -48,7 +55,7 @@ void check_data(T* d_result, T* h_result, int m, int k, int n) {
 
 
 __device__ __forceinline__
-auto get_index() {
+int get_index() {
     std::size_t blockIndex = blockIdx.z*(gridDim.x*gridDim.y)
         + blockIdx.y*gridDim.x + blockIdx.x;
     std::size_t threadIndex = threadIdx.z*(blockDim.x*blockDim.y)
@@ -57,7 +64,7 @@ auto get_index() {
 }
 
 __device__ __forceinline__
-auto get_threadIndex() {
+int get_threadIndex() {
     std::size_t threadIndex = threadIdx.z*(blockDim.x*blockDim.y)
         + threadIdx.y*blockDim.x + threadIdx.x;
     return threadIndex;

@@ -4,7 +4,15 @@
 #include <krt/scalar.h>
 
 #include <tops/tops_runtime.h>
+
+#if __GCU_ARCH__ < 300 
 #include "sip20intrin.h"
+#endif
+
+#if __GCU_ARCH__ >= 300 
+#include "sip30intrin.h"
+#endif
+
 #pragma clang force_cuda_host_device begin
 #include <stdio.h>
 #pragma clang force_cuda_host_device end
