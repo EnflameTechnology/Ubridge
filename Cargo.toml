@@ -22,4 +22,6 @@ num-traits = { version = "0.2.16"}
 default= ["tops_backend", "gcu-kernels"]
 cuda = ["cuda_backend"]
 tops = ["tops_backend", "gcu-kernels"]
-dorado = ["tops"]
+dorado = ["tops_backend", "gcu-kernels"]
+scorpio = ["tops_backend", "gcu-kernels"]
+
