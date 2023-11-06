@@ -39,8 +39,12 @@ use cuda::CuApi as Api;
 use cuda_backend as cuda;
 
 fn load_module<'a>(name: &str) -> DeviceResult<Module> {
+    #[cfg(not(feature = "scorpio"))]
     #[cfg(feature = "tops_backend")]
     let ptx = format!("{}/kernels/pavo/{}.topsfb", env!("CARGO_MANIFEST_DIR"), name).to_string();
+
+    #[cfg(feature = "scorpio")]
+    let ptx = format!("{}/kernels/scorpio/{}.topsfb", env!("CARGO_MANIFEST_DIR"), name).to_string();
 
     #[cfg(feature = "cuda_backend")]
     let ptx = format!("{}/kernels/gpu/{}.ptx", env!("CARGO_MANIFEST_DIR"), name).to_string();
