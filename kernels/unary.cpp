@@ -73,10 +73,14 @@ enum UNARY_TYPE {
     UNARY_TYPE_ABS = 6,
     UNARY_TYPE_SQUARE = 8,
     UNARY_TYPE_SQRT = 9,
-    UNARY_TYPE_GELU = 10,
-    UNARY_TYPE_RELU = 11,
-    UNARY_TYPE_ELU = 12,
-    UNARY_TYPE_COPY = 13,
+    UNARY_TYPE_RSQRT = 10,
+    UNARY_TYPE_GELU = 11,
+    UNARY_TYPE_RELU = 12,
+    UNARY_TYPE_ELU = 13,
+    UNARY_TYPE_SILU = 14,
+    UNARY_TYPE_TANH = 15,
+    UNARY_TYPE_RECIP = 16,
+    UNARY_TYPE_COPY = 20,
 };
 
 // template <typename T>
@@ -188,6 +192,11 @@ __device__ __forceinline__ void unary_atomic(T* in, T* out, int len, UNARY_TYPE 
         sqrt(out, in, len);
         break;
       }
+    case UNARY_TYPE_RSQRT:
+      {
+        rsqrt(out, in, len);
+        break;
+      }
     case UNARY_TYPE_GELU:
       {
         // gelu(out, in, len);
@@ -201,8 +210,26 @@ __device__ __forceinline__ void unary_atomic(T* in, T* out, int len, UNARY_TYPE 
         // dst = tops::vmax<VT>(src, tops::vzero<VT>());
         break;
       }
-    // case UNARY_TYPE_ELU:
-    //   break;
+    case UNARY_TYPE_ELU:
+      {
+        // elu(out, in, len);
+        break;
+      }
+    case UNARY_TYPE_SILU:
+      {
+        // elu(out, in, len);
+        break;
+      }
+    case UNARY_TYPE_TANH:
+      {
+        tanh(out, in, len);
+        break;
+      }
+    case UNARY_TYPE_RECIP:
+      {
+        reciprocal(out, in, len);
+        break;
+      }
     case UNARY_TYPE_COPY:
       {
         // dst = src;
@@ -549,9 +576,13 @@ UNARY_OP(__bf16, vbfloat, ucos_bf16, UNARY_TYPE_COS)
 UNARY_OP(__bf16, vbfloat, uabs_bf16, UNARY_TYPE_ABS)
 UNARY_OP(__bf16, vbfloat, usqr_bf16, UNARY_TYPE_SQUARE)
 UNARY_OP(__bf16, vbfloat, usqrt_bf16, UNARY_TYPE_SQRT)
+UNARY_OP(__bf16, vbfloat, ursqrt_bf16, UNARY_TYPE_RSQRT)
 UNARY_OP(__bf16, vbfloat, ugelu_bf16, UNARY_TYPE_GELU)
 UNARY_OP(__bf16, vbfloat, urelu_bf16, UNARY_TYPE_RELU) 
-// UNARY_OP(tops::bfloat, vbfloat, uelu_bf16, UNARY_TYPE_ELU) 
+UNARY_OP(__bf16, vbfloat, uelu_bf16, UNARY_TYPE_ELU) 
+UNARY_OP(__bf16, vbfloat, usilu_bf16, UNARY_TYPE_SILU) 
+UNARY_OP(__bf16, vbfloat, utanh_bf16, UNARY_TYPE_TANH) 
+UNARY_OP(__bf16, vbfloat, urecip_bf16, UNARY_TYPE_RECIP) 
 UNARY_OP(__bf16, vbfloat, ucopy_bf16, UNARY_TYPE_COPY) 
 
 
@@ -564,9 +595,13 @@ UNARY_OP(__fp16, vhalf, ucos_f16, UNARY_TYPE_COS)
 UNARY_OP(__fp16, vhalf, uabs_f16, UNARY_TYPE_ABS)
 UNARY_OP(__fp16, vhalf, usqr_f16, UNARY_TYPE_SQUARE)
 UNARY_OP(__fp16, vhalf, usqrt_f16, UNARY_TYPE_SQRT)
+UNARY_OP(__fp16, vhalf, ursqrt_f16, UNARY_TYPE_RSQRT)
 UNARY_OP(__fp16, vhalf, ugelu_f16, UNARY_TYPE_GELU)
 UNARY_OP(__fp16, vhalf, urelu_f16, UNARY_TYPE_RELU)
-// UNARY_OP(tops::half, vhalf, uelu_f16, UNARY_TYPE_ELU)
+UNARY_OP(__fp16, vhalf, uelu_f16, UNARY_TYPE_ELU)
+UNARY_OP(__fp16, vhalf, usilu_f16, UNARY_TYPE_SILU)
+UNARY_OP(__fp16, vhalf, utanh_f16, UNARY_TYPE_TANH)
+UNARY_OP(__fp16, vhalf, urecip_f16, UNARY_TYPE_RECIP)
 UNARY_OP(__fp16, vhalf, ucopy_f16, UNARY_TYPE_COPY)
 
 
@@ -578,9 +613,13 @@ UNARY_OP(float, vfloat, ucos_f32, UNARY_TYPE_COS)
 UNARY_OP(float, vfloat, uabs_f32, UNARY_TYPE_ABS)
 UNARY_OP(float, vfloat, usqr_f32, UNARY_TYPE_SQUARE)
 UNARY_OP(float, vfloat, usqrt_f32, UNARY_TYPE_SQRT)
+UNARY_OP(float, vfloat, ursqrt_f32, UNARY_TYPE_RSQRT)
 UNARY_OP(float, vfloat, ugelu_f32, UNARY_TYPE_GELU)
 UNARY_OP(float, vfloat, urelu_f32, UNARY_TYPE_RELU)
-// UNARY_OP(float, vfloat, uelu_f32, UNARY_TYPE_ELU)
+UNARY_OP(float, vfloat, uelu_f32, UNARY_TYPE_ELU)
+UNARY_OP(float, vfloat, usilu_f32, UNARY_TYPE_SILU)
+UNARY_OP(float, vfloat, utanh_f32, UNARY_TYPE_TANH)
+UNARY_OP(float, vfloat, urecip_f32, UNARY_TYPE_RECIP)
 UNARY_OP(float, vfloat, ucopy_f32, UNARY_TYPE_COPY)
 
 
