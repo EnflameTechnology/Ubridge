@@ -33,12 +33,12 @@
 #endif
 
 #include <tops.h>
-#include <tops/tops_runtime.h>
 #include <tops/topsrtc.h>
 #include <tops/half.h>
 #include <tops/bfloat.h>
 
-
+#include <tops/tops_runtime.h>
+#include <tops/topsrtc.h>
 
 #include "utils.h"
 using namespace std;
@@ -150,6 +150,8 @@ enum UNARY_TYPE {
 template <typename T, typename VT>
 __device__ __forceinline__ void unary_atomic(T* in, T* out, int len, UNARY_TYPE tp)
 {
+  tops_dte_ctx_t ctx;
+  ctx.init();
   #if __GCU_ARCH__ >= 300 
   switch (tp) {
     case UNARY_TYPE_NEG:
@@ -232,7 +234,9 @@ __device__ __forceinline__ void unary_atomic(T* in, T* out, int len, UNARY_TYPE 
       }
     case UNARY_TYPE_COPY:
       {
-        // dst = src;
+        tops::mdspan src_p(tops::Private, in, len);
+        tops::mdspan dst_p(tops::Private, out, len);
+        tops::memcpy(ctx, dst_p, src_p);
         break;
       }
     default:

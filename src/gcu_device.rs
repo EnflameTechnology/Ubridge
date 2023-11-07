@@ -120,10 +120,10 @@ impl GcuDevice {
     pub fn get_or_load_func(&self, func_name: &str, kernel_path: &str) -> DeviceResult<GcuFunction> {
         let path = Path::new(kernel_path);
         let _module_name = path.file_stem().unwrap().to_str().unwrap();
-        // if (_module_name == "unary" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
+        if (_module_name == "unary" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
         // || _module_name=="transpose" 
         // || _module_name=="dotllm" 
-        if _module_name=="dotllm" 
+        // if _module_name=="dotllm" 
         {
             // match (&self.executor.function_map, DeviceExecutor::get_gcu_executor(self.id as u32)) {
             //     (Some(funcs), Some(_gcu_executor)) => {

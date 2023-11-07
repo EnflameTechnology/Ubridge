@@ -24,20 +24,34 @@ pub struct GcuLaunchConfig {
 }
 
 impl GcuLaunchConfig {
-    /// Creates a [LaunchConfig] with:
-    /// - block_dim == `1024`
-    /// - grid_dim == `(n - 1023) / 1024`
-    /// - shared_mem_bytes == `0`
     pub fn for_num_elems(n: u32) -> Self {
-        const NUM_THREADS: u32 = 1024;
-        let num_blocks = (n + NUM_THREADS - 1) / NUM_THREADS;
+        let tile_size = 0x8000;
+        let mut grids = n/tile_size;
+        let mut threads = Self::max_sip_num();
+        if grids < 1 {
+          grids = 1;
+        } else if grids / Self::max_sip_num() > 0 {
+          grids = grids / Self::max_sip_num();
+        } else {
+          threads = 1;
+        }
+      
         Self {
-            grid_dim: (num_blocks, 1, 1),
-            block_dim: (NUM_THREADS, 1, 1),
+            grid_dim: (grids, 1, 1),
+            block_dim: (threads, 1, 1),
             shared_mem_bytes: 0,
         }
     }
 
+    #[cfg(feature = "scorpio")]
+    pub fn max_sip_num() -> u32 {
+        12
+    }
+
+    #[cfg(not(feature = "scorpio"))]
+    pub fn max_sip_num() -> u32 {
+        6
+    }
     #[allow(non_snake_case)]
     pub fn for_transpose(dim1: u32, dim2: u32) -> Self {
         let N = dim2;
@@ -71,27 +85,15 @@ impl GcuLaunchConfig {
 
     #[allow(non_snake_case)]
     pub fn for_dot(M: u32, N: u32) -> Self {
-        // let K = dim1_left;
-        // let mut threads = 4;
-        // if K % 4 > 0 {
-        //     threads += 1;
-        // }
-        // let mut grids = K / 4;
-        // if grids < 1 {
-        //     threads = K;
-        //     grids = 1;
-        // }
-
         let tile_size = 64;
         let mut gridsz = M / tile_size;
         if gridsz < 1 {
           gridsz = 1;
         }
-        let MAX_PAVO_SIP_NUM = 6;
         let mut blocksz = N / tile_size;
-        let mut perthreads = MAX_PAVO_SIP_NUM;
-        if blocksz > MAX_PAVO_SIP_NUM {
-          blocksz /= MAX_PAVO_SIP_NUM;
+        let mut perthreads = Self::max_sip_num();
+        if blocksz > Self::max_sip_num() {
+          blocksz /= Self::max_sip_num();
         } else {
           perthreads = 1;
         }
