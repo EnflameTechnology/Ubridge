@@ -121,6 +121,7 @@ impl GcuDevice {
         let path = Path::new(kernel_path);
         let _module_name = path.file_stem().unwrap().to_str().unwrap();
         if (_module_name == "unary" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
+        || (_module_name == "binary" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
         // || _module_name=="transpose" 
         // || _module_name=="dotllm" 
         // if _module_name=="dotllm" 

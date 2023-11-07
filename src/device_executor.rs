@@ -194,6 +194,11 @@ impl DeviceExecutor {
             "urelu",
         ]; //, "uelu"
 
+        let binary_functions = vec![
+            "badd", "bsub", "bmul", "bdiv", "bmaximum", "bminimum", "mod", "eq", "ne", "ge",
+            "gt", "lt", "le"
+        ];
+
         let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
         match get_kernels(device_id, kernel_platform) {
             (Some(_module_map), Some(_device), Some(_stream)) => {
@@ -211,6 +216,15 @@ impl DeviceExecutor {
                     } else if module == "unary" {
                         for dt in ["bf16", "f16", "f32"] {
                             for func in &unary_functions {
+                                let name = format!("{}_{}", func, dt);
+                                println!("Load function {}", name);
+                                let function = _module_map[module].get_function(&name).unwrap();
+                                function_map.insert(name, Arc::new(function));
+                            }
+                        }
+                    } else if module == "binary" {
+                        for dt in ["bf16", "f16", "f32"] {
+                            for func in &binary_functions {
                                 let name = format!("{}_{}", func, dt);
                                 println!("Load function {}", name);
                                 let function = _module_map[module].get_function(&name).unwrap();

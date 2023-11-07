@@ -14,7 +14,13 @@
  * limitations under the License.
  */
 #include <stdio.h>
+#include <tops.h>
+#include <tops/topsrtc.h>
+#include <tops/half.h>
+#include <tops/bfloat.h>
 
+#include <tops/tops_runtime.h>
+#include <tops/topsrtc.h>
 #include <krt/scalar.h>
 #include <krt/vector_mask.h>
 #include <krt/dispatch.h>
@@ -31,14 +37,6 @@
 #include "include/common/atomic_op.h"
 // #include "/home/kernel/atomicop_pkg/src/include/common/atomic_op.h"
 #endif
-
-#include <tops.h>
-#include <tops/topsrtc.h>
-#include <tops/half.h>
-#include <tops/bfloat.h>
-
-#include <tops/tops_runtime.h>
-#include <tops/topsrtc.h>
 
 #include "utils.h"
 using namespace std;

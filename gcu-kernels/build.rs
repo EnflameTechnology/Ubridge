@@ -18,7 +18,7 @@ mod gcu {
     pub fn build_kernels() -> () {
         for platform in ["pavo", "dorado", "scorpio"] {
             for kernel in ["unary", "dot", "dotllm", "transpose", "activation", 
-            "element", "convolution", "batch_matmul", "batch_matmul_legacy", "fill"] {
+            "element", "convolution", "batch_matmul", "batch_matmul_legacy", "fill", "binary"] {
                 let in_file = "../kernels/".to_string() + kernel + ".cpp";
                 let in_filename = std::path::Path::new(&in_file);
 
