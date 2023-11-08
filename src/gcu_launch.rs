@@ -84,8 +84,8 @@ impl GcuLaunchConfig {
     }
 
     #[allow(non_snake_case)]
-    pub fn for_dot(M: u32, N: u32) -> Self {
-        let tile_size = 64;
+    pub fn for_dot(M: u32, N: u32, tile_size: u32) -> Self {
+        // let tile_size = 64;
         let mut gridsz = M / tile_size;
         if gridsz < 1 {
           gridsz = 1;

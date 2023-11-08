@@ -122,12 +122,9 @@ impl GcuDevice {
         let _module_name = path.file_stem().unwrap().to_str().unwrap();
         if (_module_name == "unary" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
         || (_module_name == "binary" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
-        // || _module_name=="transpose" 
-        // || _module_name=="dotllm" 
+        || _module_name=="dotllm" 
         // if _module_name=="dotllm" 
         {
-            // match (&self.executor.function_map, DeviceExecutor::get_gcu_executor(self.id as u32)) {
-            //     (Some(funcs), Some(_gcu_executor)) => {
             match &self.executor.function_map{
                 Some(funcs) => {
                     return Ok(
@@ -135,7 +132,6 @@ impl GcuDevice {
                             name: func_name.to_string(), 
                             path: kernel_path.to_string(),
                             func: Some(funcs[func_name].inner),
-                            // executor: Some(Arc::new(Mutex::new(gcu_executor))),
                         }
                     );
                 }

@@ -7,10 +7,12 @@
 
 #if __GCU_ARCH__ < 300 
 #include "sip20intrin.h"
+#define MAX_SIP_NUM 6
 #endif
 
 #if __GCU_ARCH__ >= 300 
 #include "sip30intrin.h"
+#define MAX_SIP_NUM 12
 #endif
 
 #pragma clang force_cuda_host_device begin
@@ -85,9 +87,8 @@ __device__ void dot(
                        reinterpret_cast<long long>(out_address),
                        lstride,
                        tile_size,
-                       tile_size,
-                       0,
-                       1);
+                       tile_size
+                       );
 
         for (auto i = 0; i < lstride * tile_size; i++) {
           out_l1[i] += temp[i];
@@ -103,38 +104,45 @@ __device__ void dot(
 
 extern "C" __global__ void dotllm_f16(const size_t m, const size_t k, const size_t n, tops::half *matA, tops::half *matB, tops::half* out)
 {
+  if (m < 16) {
+    dot<tops::half, vhalf, kernel_dot_batch_m_lt32_fp16>(matA, matB, out, m, k, n);
+  } else {
     dot<tops::half, vhalf, kernel_dot_m_le256_fp16>(matA, matB, out, m, k, n);
-
+  }
 }
 
 extern "C" __global__ void dotllm_bf16(const size_t m, const size_t k, const size_t n, tops::bfloat *matA, tops::bfloat *matB, tops::bfloat* out)
 {
-    dot<tops::bfloat, vbfloat, kernel_dot_m_le256_fp16>(matA, matB, out, m, k, n);
+    // dot<tops::bfloat, vbfloat, kernel_dot_m_le256_fp16>(matA, matB, out, m, k, n);
 }
 
 extern "C" __global__ void dotllm_f32(const size_t m, const size_t k, const size_t n, float *matA, float *matB, float* out)
 {
-    dot<float, vfloat, kernel_dot_m_le256_fp16>(matA, matB, out, m, k, n);
+    if (m < 16) { 
+      dot<float, vfloat, kernel_dot_batch_m_lt32_outfp32>(matA, matB, out, m, k, n);
+    } else {
+      dot<float, vfloat, kernel_dot_m_le256_outfp32>(matA, matB, out, m, k, n);
+    }
 }
 
 int test(size_t M, size_t K, size_t N, bool check) {
-  printf("entry...\n");
   const int vlen = tops::hvlength<vhalf>();
+  printf("tile size %d\n", vlen);
+
   const int tile_size = 1 * vlen;
   int gridsz = M / tile_size;
   if (gridsz < 1) {
     gridsz = 1;
   }
-  int MAX_PAVO_SIP_NUM = 6;
   int blocksz = N / tile_size;
-  int perthreads = MAX_PAVO_SIP_NUM;
-  if (blocksz > MAX_PAVO_SIP_NUM) {
-    blocksz /= MAX_PAVO_SIP_NUM;
+  int perthreads = MAX_SIP_NUM;
+  if (blocksz > MAX_SIP_NUM) {
+    blocksz /= MAX_SIP_NUM;
   } else {
     perthreads = 1;
   }
 
-  DATA<tops::half> data(M, K, N, check);
+  DATA<tops::half> data(M, K, N, tile_size, check);
 
   float time = 0.0;
   topsEvent_t start, stop;
@@ -178,8 +186,15 @@ int test(size_t M, size_t K, size_t N, bool check) {
 }
 
 int main() {
-  size_t M = 1;
+  size_t M = 13;
   size_t K = 4096;
-  size_t N = 4096;
-  return test(M, K, N, true);
+  size_t N = 11008;
+
+
+  for (int i=0; i< 10; i++) {
+    test(13, 4096, 4096, false);
+
+    test(M, K, N, false);
+  }
+  return 0;
 }
