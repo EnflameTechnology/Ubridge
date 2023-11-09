@@ -1,10 +1,17 @@
 #include "tops.h"
-#pragma clang force_cuda_host_device begin
-#include <stdio.h>
-#pragma clang force_cuda_host_device end
 #include <stdio.h>
 #include <tops/tops_runtime.h>
 #include <tops/topsrtc.h>
+#include <tops/half.h>
+#include <tops/bfloat.h>
+
+#include "utils.h"
+
+// #if __GCU_ARCH__ >= 300
+// #include "include/common/atomic_op.h"
+// #include "include/common/binary.h"
+// #endif
+
 
 #define CHECK(cmd) \
 {\
@@ -17,38 +24,19 @@
 constexpr int MAX_RANK = 3;
 constexpr int TILE_DIM=32;
 constexpr int BLOCK_ROWS=8;
+constexpr int MAX_DIM=4096;
 
-
-template <typename T, std::size_t N>
-__device__ void copy_to_buffer(
-  tops_dte_ctx_t& ctx, 
-  T *buf_l3, 
-  T *buf_l1)
+template <typename T, typename VT>
+__device__ __forceinline__ void matmul(T *matA, T *matB, T *matTmpB, T* out, int B, int M, int K, int N)
 {
-  tops_dte_ctx_t p_ctx;
-  tops::dte_scope p_s(p_ctx);
-
-  tops::mdspan from(tops::Global, buf_l3, N);
-  tops::mdspan to(tops::Private, buf_l1, N);
-  tops::memcpy(p_ctx, to, from);
-}
-
-//matA_shape [batch, m, k], matB_shape[batch, k, n], out shape [batch, m, n]
-extern "C" __global__ void batch_matmul(float *matA, float *matB, float *matTmpB, float* out, int* matA_shape, int* matB_shape)
-{
-  
   tops_dte_ctx_t ctx;
   tops::dte_scope s(ctx);
-
-  __valigned__ int shapeA[MAX_RANK];
-  __valigned__ int shapeB[MAX_RANK];
-  copy_to_buffer<int, MAX_RANK>(ctx, matA_shape, shapeA);
-  copy_to_buffer<int, MAX_RANK>(ctx, matB_shape, shapeB);
-  int batch = shapeA[0];
+  int batch = B;
   int blockId = blockIdx.y * gridDim.x + blockIdx.x;
   int threadId = blockId * blockDim.x + threadIdx.x;
-  int batch_id = threadId / shapeA[1];
-  int task_id = threadId % shapeA[1];
+
+  int batch_id = threadId / M;
+  int task_id = threadId % M;
   if (batch_id >= batch) 
   {
     __syncthreads();
@@ -56,19 +44,17 @@ extern "C" __global__ void batch_matmul(float *matA, float *matB, float *matTmpB
   }
 
   // printf("Batch ID = {%d}, Task ID = {%d}", batch_id, task_id);
-  int strideA = shapeA[2];
-  int strideOut = shapeB[2];
-  int offsetA = batch_id * shapeA[1] * shapeA[2];
-  int offsetB = batch_id * shapeB[1] * shapeB[2];
-  int offsetOut = batch_id * shapeA[1] * shapeB[2];
+  int offsetA = batch_id * M * K;
+  int offsetB = batch_id * K * N;
+  int offsetOut = batch_id * M * N;
 
   if (task_id == 0) { //for worker thread in each batch perform matB transpose
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx);
-    __valigned__ int shapeB_[2] = {shapeB[1], shapeB[2]};
+    __valigned__ int shapeB_[2] = {K, N};
     tops::mdspan src(tops::Global, matB + offsetB, shapeB_);
 
-    __valigned__ int shapeTransB_[2] = {shapeB[2], shapeB[1]};
+    __valigned__ int shapeTransB_[2] = {N, K};
     tops::mdspan dst(tops::Global, matTmpB + offsetB, shapeTransB_);
     
     // layout parameter
@@ -81,37 +67,59 @@ extern "C" __global__ void batch_matmul(float *matA, float *matB, float *matTmpB
   
   __syncthreads();
 
-
-  __valigned__ float bufferA[TILE_DIM];
-  __valigned__ float bufferB[TILE_DIM];
-  __valigned__ float bufferMul[TILE_DIM];
-  __valigned__ float bufferOut[TILE_DIM*400];
-
+// #if __GCU_ARCH__ < 300
+  __valigned__ T bufferA[TILE_DIM];
+  __valigned__ T bufferB[TILE_DIM];
+  __valigned__ T bufferMul[TILE_DIM];
   tops::mdspan bufA(tops::Private, &bufferA, TILE_DIM);
   tops::mdspan bufB(tops::Private, &bufferB, TILE_DIM);
   tops::mdspan bufMul(tops::Private, &bufferMul, TILE_DIM);
-  tops::mdspan bufOut(tops::Private, &bufferOut, strideOut);
+// #endif
 
-  for (int j=0; j<strideOut; j+=1) {
+// #if __GCU_ARCH__ >= 300
+//   __valigned__ T bufferA[MAX_DIM];
+//   __valigned__ T bufferB[MAX_DIM];
+//   tops::mdspan bufA(tops::Private, &bufferA, MAX_DIM);
+//   tops::mdspan bufB(tops::Private, &bufferB, MAX_DIM);
+// #endif
+
+  __valigned__ T bufferOut[MAX_DIM];
+  tops::mdspan bufOut(tops::Private, &bufferOut, MAX_DIM);
+
+  for (int j=0; j<N; j+=1) {
       //sum of mul results
-      float sums = 0.0;
-      for (int i=0; i<strideA; i+=TILE_DIM) {
+      T sums = T(0.0);
+    // #if __GCU_ARCH__ < 300 
+      for (int i=0; i<K; i+=TILE_DIM) {
         int tilesize = TILE_DIM;
-        if (i * TILE_DIM + TILE_DIM >= strideA) {
-          tilesize = strideA - i * TILE_DIM;
+        if (i * TILE_DIM + TILE_DIM >= K) {
+          tilesize = K - i * TILE_DIM;
         }
-        tops::mdspan srcA(tops::Global, matA + offsetA  + task_id * strideA + i, tilesize);
+        tops::mdspan srcA(tops::Global, matA + offsetA  + task_id * K + i, tilesize);
         tops::memcpy(ctx, bufA, srcA);
         //element-wise mul of one row of matB with one column of matB
-        tops::mdspan srcB(tops::Global, matTmpB + offsetB + j * strideA + i, tilesize);
+        tops::mdspan srcB(tops::Global, matTmpB + offsetB + j * K + i, tilesize);
         tops::memcpy(ctx, bufB, srcB);
-        const auto &v1_ = tops::vload<vfloat>(bufferA);
-        const auto &v2_ = tops::vload<vfloat>(bufferB);
-        tops::vstore(tops::vmul<vfloat>(v1_, v2_), bufferMul);
+        const auto &v1_ = tops::vload<VT>(bufferA);
+        const auto &v2_ = tops::vload<VT>(bufferB);
+        tops::vstore(tops::vmul<VT>(v1_, v2_), bufferMul);
         for (int m=0; m<tilesize; m++){
           sums += bufferMul[m];
         }
       }
+    // #endif
+    
+    // #if __GCU_ARCH__ >= 300
+    //     tops::mdspan srcA(tops::Global, matA + offsetA  + task_id * K, K);
+    //     tops::memcpy(ctx, bufA, srcA);
+    //     //element-wise mul of one row of matB with one column of matB
+    //     tops::mdspan srcB(tops::Global, matTmpB + offsetB + j * K, K);
+    //     tops::memcpy(ctx, bufB, srcB);
+    //     mul(reinterpret_cast<T*>(bufferB),reinterpret_cast<T*>(bufferA), reinterpret_cast<T*>(bufferB), K);
+    //     for (int m=0; m<K; m++){
+    //       sums += bufferB[m];
+    //     }
+    // #endif
       bufferOut[j] = sums;
       // printf("%.2f, ", sums);
 
@@ -121,11 +129,27 @@ extern "C" __global__ void batch_matmul(float *matA, float *matB, float *matTmpB
 //   printf("Copy output from offset {%d}\n", offsetOut);
   // printf("\nCopy output in Batch ID = {%d}, Task ID = {%d}", batch_id, task_id);
 
-  tops::mdspan dst(tops::Global, out + offsetOut + task_id * strideOut, strideOut);
+  tops::mdspan dst(tops::Global, out + offsetOut + task_id * N, N);
   tops::memcpy(ctx, dst, bufOut);
   __syncthreads();
 }
 
+extern "C" __global__ void matmul_f32(float *matA, float *matB, float *matTmpB, float* out, int B, int M, int K, int N)
+{
+  matmul<float, vfloat>(matA, matB, matTmpB, out, B, M, K, N);
+}
+
+extern "C" __global__ void matmul_f16(__fp16 *matA, __fp16 *matB, __fp16 *matTmpB, __fp16* out, int B, int M, int K, int N)
+{
+  matmul<__fp16, vhalf>(matA, matB, matTmpB, out, B, M, K, N);
+
+}
+
+// extern "C" __global__ void matmul_bf16(__bf16 *matA, __bf16 *matB, __bf16 *matTmpB, __bf16* out, int B, int M, int K, int N)
+// {
+//   matmul<__bf16, vbfloat>(matA, matB, matTmpB, out, B, M, K, N);
+
+// }
 
 int main(int argc, char *argv[])
 {
@@ -206,8 +230,7 @@ int main(int argc, char *argv[])
 
       CHECK(topsEventRecord(start));
 
-      // topsModuleLaunchKernel(kernel, W/4, 1, 1, 4, 1, 1, 0, nullptr, nullptr, config);
-      batch_matmul<<<dim3(M, batch, 1), dim3(1, 1, 1)>>>(lhs_d, rhs_d, rhs_tmp_d, out_d, shape_lhs_d, shape_rhs_d);
+      matmul_f32<<<dim3(M, batch, 1), dim3(1, 1, 1)>>>(lhs_d, rhs_d, rhs_tmp_d, out_d, batch, M, K, N);
 
       CHECK(topsEventRecord(stop));
       CHECK(topsEventSynchronize(stop));

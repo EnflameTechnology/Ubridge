@@ -208,11 +208,6 @@ impl DeviceExecutor {
                             let function = _module_map[module].get_function(fun).unwrap();
                             function_map.insert(fun.to_string(), Arc::new(function));
                         }
-                    } else if module == "element" {
-                        for fun in ["elementi32", "elementf16", "elementf32"] {
-                            let function = _module_map[module].get_function(fun).unwrap();
-                            function_map.insert(fun.to_string(), Arc::new(function));
-                        }
                     } else if module == "unary" {
                         for dt in ["bf16", "f16", "f32"] {
                             for func in &unary_functions {
@@ -231,13 +226,6 @@ impl DeviceExecutor {
                                 function_map.insert(name, Arc::new(function));
                             }
                         }
-                    } else if module == "transpose" {
-                        for dt in ["bf16", "f16", "f32"] {
-                            let name = format!("{}_{}", module, dt);
-                            println!("Load function {}", name);
-                            let function = _module_map[module].get_function(&name).unwrap();
-                            function_map.insert(name, Arc::new(function));
-                        }
                     } else if module == "dotllm" {
                         for dt in ["bf16", "f16", "f32"] {
                             let name = format!("{}_{}", module, dt);
@@ -250,9 +238,17 @@ impl DeviceExecutor {
                         println!("Load function matmul_f32");
                         let function = _module_map[module].get_function(&name).unwrap();
                         function_map.insert(name.to_string(), Arc::new(function));
+                    } 
+                    else if module == "affine" {
+                        for dt in ["bf16", "f16", "f32"] {
+                            let name = format!("{}_{}", module, dt);
+                            println!("Load function {}", name);
+                            let function = _module_map[module].get_function(&name).unwrap();
+                            function_map.insert(name, Arc::new(function));
+                        }
                     }
                     else {
-                        println!("Failed to Load function {}", module);
+                        println!("Module not load: {}", module);
                         // let function = _module_map[module].get_function(&module).unwrap();
                         // function_map.insert(module.clone(), Arc::new(function));
                     }

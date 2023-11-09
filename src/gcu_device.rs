@@ -122,7 +122,9 @@ impl GcuDevice {
         let _module_name = path.file_stem().unwrap().to_str().unwrap();
         if (_module_name == "unary" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
         || (_module_name == "binary" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
-        || _module_name=="dotllm" 
+        || (_module_name == "affine" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
+        || _module_name=="dotllm"
+        || _module_name=="batch_matmul" 
         // if _module_name=="dotllm" 
         {
             match &self.executor.function_map{

@@ -104,6 +104,16 @@ impl GcuLaunchConfig {
             shared_mem_bytes: 0,
         }
     }
+    
+    #[allow(non_snake_case)]
+    pub fn for_batch_matmul(batch: u32, M: u32) -> Self {
+        Self {
+            grid_dim: (batch, M, 1),
+            block_dim: (1, 1, 1),
+            shared_mem_bytes: 0,
+        }
+        
+    }
 }
 
 /// Consumes a [GcuFunction] to execute asychronously on the device with
