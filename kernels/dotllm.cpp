@@ -104,7 +104,7 @@ __device__ void dot(
 
 extern "C" __global__ void dotllm_f16(const size_t m, const size_t k, const size_t n, tops::half *matA, tops::half *matB, tops::half* out)
 {
-  if (m < 16) {
+  if (m < 32) {
     dot<tops::half, vhalf, kernel_dot_batch_m_lt32_fp16>(matA, matB, out, m, k, n);
   } else {
     dot<tops::half, vhalf, kernel_dot_m_le256_fp16>(matA, matB, out, m, k, n);
@@ -182,19 +182,22 @@ int test(size_t M, size_t K, size_t N, bool check) {
 
   printf("intrinsic_fp16_kernel throughput is %8.2f GFLOPS\n",
    (2LL*M*K*N)/time/1000000000LL);
-  return 0;
+  return time;
 }
 
 int main() {
-  size_t M = 13;
+  size_t M = 1;
   size_t K = 4096;
-  size_t N = 11008;
+  size_t N = 4096;
 
+  float total = 0;
+  int ITERATION = 20;
+  for (int i=0; i< ITERATION; i++) {
+  //   test(13, 4096, 4096, false);
 
-  for (int i=0; i< 10; i++) {
-    test(13, 4096, 4096, false);
-
-    test(M, K, N, false);
+    int tm = test(M, K, N, false);
+    total += tm;
   }
+  printf("Average time taken: %.2f ms\n", total/ITERATION);
   return 0;
 }

@@ -265,8 +265,8 @@ impl GcuFunction {
                     
                 // }
 
-                let mut size :usize = (std::mem::size_of::<c_ulonglong>() * (params.len() - 1) + std::mem::size_of::<usize>()) as usize;
-                let _config = vec![0x1 as *const c_void, params.as_mut_ptr() as *const _ as *mut c_void, 0x2 as *const c_void, &mut size as *const _ as *mut c_void, 0x3 as *const c_void];
+                // let mut size :usize = (std::mem::size_of::<c_ulonglong>() * (params.len() - 1) + std::mem::size_of::<usize>()) as usize;
+                // let _config = vec![0x1 as *const c_void, params.as_mut_ptr() as *const _ as *mut c_void, 0x2 as *const c_void, &mut size as *const _ as *mut c_void, 0x3 as *const c_void];
         
                 let nul = ptr::null_mut();
                 let shared_mem_bytes = 0;
