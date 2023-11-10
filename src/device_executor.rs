@@ -199,6 +199,17 @@ impl DeviceExecutor {
             "gt", "lt", "le"
         ];
 
+        let cast_functions = vec![
+            "cast_fp16_i8", "cast_fp16_i16", "cast_fp16_i32", "cast_fp16_fp32", 
+            "cast_f32_i8", "cast_f32_i16", "cast_f32_i32", "cast_f32_fp16", 
+            "cast_i8_i16", "cast_i8_i32", "cast_i8_fp32", "cast_i8_fp16", 
+            "cast_i16_i8", "cast_i16_i32", "cast_i16_fp32", "cast_i16_fp16", 
+            "cast_i32_i8", "cast_i32_i16", "cast_i32_fp32", "cast_i32_fp16",
+            "cast_u8_u16", "cast_u8_u32", "cast_u8_f32", "cast_u8_fp16", 
+            "cast_u16_u8", "cast_u16_u32", "cast_u16_f32", "cast_u16_fp16",
+            "cast_u32_u8", "cast_u32_u16", "cast_u32_f32", "cast_u32_fp16"
+        ];
+
         let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
         match get_kernels(device_id, kernel_platform) {
             (Some(_module_map), Some(_device), Some(_stream)) => {
@@ -245,6 +256,12 @@ impl DeviceExecutor {
                             println!("Load function {}", name);
                             let function = _module_map[module].get_function(&name).unwrap();
                             function_map.insert(name, Arc::new(function));
+                        }
+                    } else if module == "cast" {
+                        for func in &cast_functions {
+                            println!("Load function {}", func);
+                            let function = _module_map[module].get_function(&func).unwrap();
+                            function_map.insert(func.to_string(), Arc::new(function));
                         }
                     }
                     else {

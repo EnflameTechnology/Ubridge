@@ -123,6 +123,7 @@ impl GcuDevice {
         if (_module_name == "unary" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
         || (_module_name == "binary" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
         || (_module_name == "affine" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
+        || (_module_name == "cast" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
         || _module_name=="dotllm"
         || _module_name=="batch_matmul" 
         // if _module_name=="dotllm" 
