@@ -3,13 +3,15 @@
 use tops_backend as tops;
 #[cfg(feature = "tops_backend")]
 use tops::stream::TopsStream as Stream;
-use uhal::error::{DeviceResult};
+use uhal::error::{DeviceResult, DeviceError};
 pub use cust_core::_hidden::{DeviceCopy};
 use std::ffi::{c_void, c_ulonglong};
 use crate::gcu_device::GcuFunction;
 use std::ptr;
 #[cfg(feature = "tops_backend")]
 pub use tops::driv as driv;
+
+use tops::error::ToResult;
 
 #[derive(Clone, Copy, Debug)]
 pub struct GcuLaunchConfig {
@@ -26,14 +28,15 @@ pub struct GcuLaunchConfig {
 impl GcuLaunchConfig {
     pub fn for_num_elems(n: u32) -> Self {
         let tile_size = 0x8000;
-        let mut grids = n/tile_size;
         let mut threads = Self::max_sip_num();
-        if grids < 1 {
+        let mut grids = n/tile_size;
+        
+        if grids <= threads {
           grids = 1;
-        } else if grids / Self::max_sip_num() > 0 {
-          grids = grids / Self::max_sip_num();
+        } else if grids / threads > 0 {
+          grids = grids / threads;
         } else {
-          threads = 1;
+          grids = 1;
         }
       
         Self {
@@ -113,6 +116,15 @@ impl GcuLaunchConfig {
             shared_mem_bytes: 0,
         }
         
+    }
+
+    #[allow(non_snake_case)]
+    pub fn for_gemm() -> Self {
+        Self {
+            grid_dim: (1, 1, 1),
+            block_dim: (Self::max_sip_num(), 1, 1),
+            shared_mem_bytes: 0,
+        }
     }
 }
 
@@ -256,6 +268,10 @@ impl_launch!(
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 );
 
+impl_launch!(
+    [A, B, C, D, E, F, G, H, I, J, K,   L, M,  N,  O,  P,  Q,   R, S,  T,  U],
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+);
 
 
 impl GcuFunction {
@@ -280,7 +296,7 @@ impl GcuFunction {
         
                 let nul = ptr::null_mut();
                 let shared_mem_bytes = 0;
-                driv::topsModuleLaunchKernel(
+                return driv::topsModuleLaunchKernel(
                     func, cfg.grid_dim.0, cfg.grid_dim.1, cfg.grid_dim.2,
                     cfg.block_dim.0, cfg.block_dim.1, cfg.block_dim.2,
                     shared_mem_bytes as u32,
@@ -288,7 +304,8 @@ impl GcuFunction {
                     params.as_mut_ptr() as *mut *mut c_void,
                     nul as *mut *mut c_void, 
                     // config.as_mut_ptr() as *mut *mut c_void            
-                );
+                ).to_result();
+
             }
             _=> {}
         }

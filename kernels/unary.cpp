@@ -44,14 +44,6 @@ using namespace tops;
 #define tile_size 0x8000
 #define PING_PONG_SIZE 2
 
-namespace tops {
-template <typename T>
-__device__ __host__ __forceinline__ constexpr int hvlength() {
-  return 128 / sizeof(T);
-}
-
-} // namespace tops
-
 __device__ __forceinline__
 int get_index() {
     std::size_t blockIndex = blockIdx.z*(gridDim.x*gridDim.y)
@@ -81,21 +73,38 @@ enum UNARY_TYPE {
     UNARY_TYPE_COPY = 20,
 };
 
-// template <typename T>
-// __device__ void gelu(T* output, T* input, int num) {
-//   using vtype = typename scalar_to_vector<T,
-//                                           TOPS_VECTOR_LENGTH>::type;
-//   const int vlength = vector_length<vtype>::value;
-//   leaptr<vtype> intput_ptr = simple_leaptr<vtype>(input);
-//   leaptr<vtype> output_ptr = simple_leaptr<vtype>(output);
-//   int group_num = (num + vlength - 1) / vlength;
-//   vtype v_input, v_output;
-//   for (int i = 0; i < group_num; i++) {
-//     v_input = intput_ptr.load();
-//     v_output = vgelu(v_input);
-//     output_ptr.store(v_output);
-//   }
-// }
+template <typename T>
+__device__ void gelu_kernel(T* output, T* input, int num) {
+  using vtype = typename scalar_to_vector<T,
+                                          TOPS_VECTOR_LENGTH>::type;
+  const int vlength = vector_length<vtype>::value;
+  leaptr<vtype> intput_ptr = simple_leaptr<vtype>(input);
+  leaptr<vtype> output_ptr = simple_leaptr<vtype>(output);
+  int group_num = (num + vlength - 1) / vlength;
+  vtype v_input, v_output;
+  for (int i = 0; i < group_num; i++) {
+    v_input = intput_ptr.load();
+    v_output = vgelu(v_input);
+    output_ptr.store(v_output);
+  }
+}
+
+template <typename T, typename VT>
+__device__ void relu_kernel(T* output, T* input, int num) {
+  using vtype = typename scalar_to_vector<T,
+                                          TOPS_VECTOR_LENGTH>::type;
+  const int vlength = vector_length<vtype>::value;
+  leaptr<vtype> intput_ptr = simple_leaptr<vtype>(input);
+  leaptr<vtype> output_ptr = simple_leaptr<vtype>(output);
+  int group_num = (num + vlength - 1) / vlength;
+  vtype v_input, v_output;
+  auto vzeros = tops::vzero<VT>();
+  for (int i = 0; i < group_num; i++) {
+    v_input = intput_ptr.load();
+    // v_output = vmax(v_input, vzeros); // fix this!
+    output_ptr.store(v_output);
+  }
+}
 
 // template <typename T, typename OP>
 // __global__ void gelu_fwd_kernel(T* out, T* in, int num) {
@@ -199,15 +208,12 @@ __device__ __forceinline__ void unary_atomic(T* in, T* out, int len, UNARY_TYPE 
       }
     case UNARY_TYPE_GELU:
       {
-        // gelu(out, in, len);
-        
+        gelu_kernel(out, in, len);
         break;
       }
     case UNARY_TYPE_RELU:
       {
-        // relu(out, in , len);
-        // max(out, in, )
-        // dst = tops::vmax<VT>(src, tops::vzero<VT>());
+        relu_kernel<T, VT>(out, in , len);
         break;
       }
     case UNARY_TYPE_ELU:
@@ -217,7 +223,7 @@ __device__ __forceinline__ void unary_atomic(T* in, T* out, int len, UNARY_TYPE 
       }
     case UNARY_TYPE_SILU:
       {
-        // elu(out, in, len);
+        //(out, in, len);
         break;
       }
     case UNARY_TYPE_TANH:
@@ -470,17 +476,6 @@ __device__ void unary_kernel(T* in, T* out, int len, UNARY_TYPE tp) {
   }
 }
 
-// #define UNARY_OP(TYPE, VT, FN_NAME, TP) \
-// extern "C" __global__ void FN_NAME( \
-//     const size_t numel, \
-//     const size_t num_dims, \
-//     const size_t *info, \
-//     TYPE *inp, \
-//     TYPE *out) \
-// { \
-//     unary_kernel<TYPE, VT>(inp, out, numel, TP); \
-// } \
-
 #define UNARY_OP(TYPE, VT, FN_NAME, TP) \
 extern "C" __global__ void FN_NAME( \
     const size_t numel, \
@@ -489,49 +484,6 @@ extern "C" __global__ void FN_NAME( \
 { \
     unary_kernel<TYPE, VT>(inp, out, numel, TP); \
 } \
-
-// #define UNARY_OP(TYPE, VT, FN_NAME, FUNC) \
-// extern "C" __global__ void FN_NAME( \
-//     const size_t numel, \
-//     const size_t num_dims, \
-//     const size_t *info, \
-//     TYPE *inp, \
-//     TYPE *out) \
-// { \
-//     tops_dte_ctx_t ctx; \
-//     tops::dte_scope s(ctx); \
-//     std::size_t idx = get_index(); \
-//     constexpr std::size_t num_len = tops::hvlength<VT>(); \
-//     __valigned__ TYPE buffer1[num_len]; \
-//     tops::mdspan buf1(tops::Private, &buffer1, num_len); \
-//     tops::mdspan src1(tops::Global, inp + idx * num_len, num_len); \
-//     tops::memcpy(ctx, buf1, src1); \
-//     const auto &x = tops::vload<VT>(buffer1);  \
-//     tops::mdspan dst(tops::Global, out + idx *num_len, num_len); \
-//     tops::vstore(FUNC, buffer1);  \
-//     tops::memcpy(ctx, dst, buf1); \
-// } \
-
-
-// #define UNARY_COPY_OP(TYPE, VT, FN_NAME)  \
-// extern "C" __global__ void FN_NAME(  \
-//     const size_t numel,  \
-//     const size_t num_dims,  \
-//     const size_t *info,  \
-//     TYPE *inp,  \
-//     TYPE *out) \
-// {  \
-//     tops_dte_ctx_t ctx; \
-//     tops::dte_scope s(ctx); \
-//     std::size_t idx = get_index(); \
-//     constexpr std::size_t num_len = tops::hvlength<VT>(); \
-//     __valigned__ TYPE buffer1[num_len]; \
-//     tops::mdspan buf1(tops::Private, &buffer1, num_len); \
-//     tops::mdspan src1(tops::Global, inp + idx * num_len, num_len); \
-//     tops::memcpy(ctx, buf1, src1); \
-//     tops::mdspan dst(tops::Global, out + idx *num_len, num_len);  \
-//     tops::memcpy(ctx, dst, buf1); \
-// }  \
 
 // template<typename T>
 // __device__ __forceinline__ T elu_fwd(T x, T alpha) {
@@ -581,13 +533,11 @@ UNARY_OP(__bf16, vbfloat, usqrt_bf16, UNARY_TYPE_SQRT)
 UNARY_OP(__bf16, vbfloat, ursqrt_bf16, UNARY_TYPE_RSQRT)
 UNARY_OP(__bf16, vbfloat, ugelu_bf16, UNARY_TYPE_GELU)
 UNARY_OP(__bf16, vbfloat, urelu_bf16, UNARY_TYPE_RELU) 
-UNARY_OP(__bf16, vbfloat, uelu_bf16, UNARY_TYPE_ELU) 
 UNARY_OP(__bf16, vbfloat, usilu_bf16, UNARY_TYPE_SILU) 
 UNARY_OP(__bf16, vbfloat, utanh_bf16, UNARY_TYPE_TANH) 
 UNARY_OP(__bf16, vbfloat, urecip_bf16, UNARY_TYPE_RECIP) 
 UNARY_OP(__bf16, vbfloat, ucopy_bf16, UNARY_TYPE_COPY) 
-
-
+UNARY_OP(__bf16, vbfloat, uelu_bf16, UNARY_TYPE_ELU) 
 
 UNARY_OP(__fp16, vhalf, uneg_f16, UNARY_TYPE_NEG)
 UNARY_OP(__fp16, vhalf, uexp_f16, UNARY_TYPE_EXP)
@@ -600,11 +550,11 @@ UNARY_OP(__fp16, vhalf, usqrt_f16, UNARY_TYPE_SQRT)
 UNARY_OP(__fp16, vhalf, ursqrt_f16, UNARY_TYPE_RSQRT)
 UNARY_OP(__fp16, vhalf, ugelu_f16, UNARY_TYPE_GELU)
 UNARY_OP(__fp16, vhalf, urelu_f16, UNARY_TYPE_RELU)
-UNARY_OP(__fp16, vhalf, uelu_f16, UNARY_TYPE_ELU)
 UNARY_OP(__fp16, vhalf, usilu_f16, UNARY_TYPE_SILU)
 UNARY_OP(__fp16, vhalf, utanh_f16, UNARY_TYPE_TANH)
 UNARY_OP(__fp16, vhalf, urecip_f16, UNARY_TYPE_RECIP)
 UNARY_OP(__fp16, vhalf, ucopy_f16, UNARY_TYPE_COPY)
+UNARY_OP(__fp16, vhalf, uelu_f16, UNARY_TYPE_ELU)
 
 
 UNARY_OP(float, vfloat, uneg_f32, UNARY_TYPE_NEG)
@@ -618,17 +568,19 @@ UNARY_OP(float, vfloat, usqrt_f32, UNARY_TYPE_SQRT)
 UNARY_OP(float, vfloat, ursqrt_f32, UNARY_TYPE_RSQRT)
 UNARY_OP(float, vfloat, ugelu_f32, UNARY_TYPE_GELU)
 UNARY_OP(float, vfloat, urelu_f32, UNARY_TYPE_RELU)
-UNARY_OP(float, vfloat, uelu_f32, UNARY_TYPE_ELU)
 UNARY_OP(float, vfloat, usilu_f32, UNARY_TYPE_SILU)
 UNARY_OP(float, vfloat, utanh_f32, UNARY_TYPE_TANH)
 UNARY_OP(float, vfloat, urecip_f32, UNARY_TYPE_RECIP)
 UNARY_OP(float, vfloat, ucopy_f32, UNARY_TYPE_COPY)
+UNARY_OP(float, vfloat, uelu_f32, UNARY_TYPE_ELU)
 
 
 // UNARY_OP(int8_t, vchar, ucopy_i8, UNARY_TYPE_COPY)
-// UNARY_OP(uint8_t, vuchar, ucopy_u8, UNARY_TYPE_COPY)
+// UNARY_OP(u_int8_t, vuchar, ucopy_u8, UNARY_TYPE_COPY)
 // UNARY_OP(int32_t, vint, ucopy_i32, UNARY_TYPE_COPY)
-// UNARY_OP(uint32_t, vuint, ucopy_u32, UNARY_TYPE_COPY)
+// UNARY_OP(u_int32_t, vuint, ucopy_u32, UNARY_TYPE_COPY)
+// UNARY_OP(double, vfloatx2, ucopy_f64, UNARY_TYPE_COPY)
+
 
 int test() {
   float *lhs_d, *out_d;
@@ -665,7 +617,7 @@ int test() {
     threads = 1;
   }
 
-  uneg_f32<<<dim3(grids, 1, 1), dim3(threads, 1, 1)>>>(size_out, lhs_d, out_d);
+  ugelu_f32<<<dim3(grids, 1, 1), dim3(threads, 1, 1)>>>(size_out, lhs_d, out_d);
 
   printf("info: copy Device2Host\n");
   topsMemcpy(out_h, out_d, size_out * sizeof(float), topsMemcpyDeviceToHost);

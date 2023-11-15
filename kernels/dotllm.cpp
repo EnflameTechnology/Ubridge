@@ -19,6 +19,7 @@
 #include <stdio.h>
 #pragma clang force_cuda_host_device end
 #include "dot_core_kernels.h"
+#include "utils.h"
 
 
 template <typename T, typename VT, FP dot_intrinsic>
@@ -125,8 +126,8 @@ extern "C" __global__ void dotllm_f32(const size_t m, const size_t k, const size
     }
 }
 
-int test(size_t M, size_t K, size_t N, bool check) {
-  const int vlen = tops::hvlength<vhalf>();
+int test(size_t B, size_t M, size_t K, size_t N, bool check) {
+  const int vlen = tops::hvlength<float>();
   printf("tile size %d\n", vlen);
 
   const int tile_size = 1 * vlen;
@@ -142,43 +143,50 @@ int test(size_t M, size_t K, size_t N, bool check) {
     perthreads = 1;
   }
 
-  DATA<tops::half> data(M, K, N, tile_size, check);
+  DATA<float> data(B, M, K, N, tile_size, check);
 
   float time = 0.0;
+  float total_time = 0.0;
   topsEvent_t start, stop;
+    printf("Kernel launch... [%d, %d, %d]\n", gridsz, blocksz, perthreads);
+  int ITERATION = 1;
+  for (int i=0; i< ITERATION; i++) {
+    CHECK(topsEventCreate(&start));
+    CHECK(topsEventCreate(&stop));
 
-  CHECK(topsEventCreate(&start));
-  CHECK(topsEventCreate(&stop));
+    CHECK(topsEventRecord(start));
 
-  CHECK(topsEventRecord(start));
-  printf("Kernel launch... [%d, %d, %d]\n", gridsz, blocksz, perthreads);
+    dotllm_f32
+        <<<dim3(gridsz, blocksz, 1), dim3(perthreads, 1, 1)>>>( M,
+                              K,
+                              N,
+                              data.lhs_d,
+                              data.rhs_d,
+                              data.out_d
+                            );
 
-   dotllm_f16
-      <<<dim3(gridsz, blocksz, 1), dim3(perthreads, 1, 1)>>>( M,
-                            K,
-                            N,
-                            data.lhs_d,
-                            data.rhs_d,
-                            data.out_d
-                           );
+    CHECK(topsGetLastError());
+
+    CHECK(topsEventRecord(stop));
+    CHECK(topsEventSynchronize(stop));
+    CHECK(topsEventElapsedTime(&time, start, stop));
+    total_time += time;
+  }
+  
+  printf("Avg Time taken: %g ms, Shape: %d %d %d --------\n", total_time/ITERATION, M, K, N);
 
   CHECK(topsGetLastError());
-
-  CHECK(topsEventRecord(stop));
-  CHECK(topsEventSynchronize(stop));
-  CHECK(topsEventElapsedTime(&time, start, stop));
-  printf("Time taken: %g ms, Shape: %d %d %d --------\n", time, M, K, N);
-
-  CHECK(topsGetLastError());
-  CHECK(topsMemcpy(data.out_h, data.out_d, data.size_out*sizeof(tops::half),
+  CHECK(topsMemcpy(data.out_h, data.out_d, data.size_out*sizeof(float),
     topsMemcpyDeviceToHost));
   
   //CPU/GPU check_data
-  if (check) { 
-    printf("Compare with CPU data...\n");
-    check_data<tops::half>(data.out_h, data.expected, M, K, N);
+  // if (check) { 
+  //   printf("Compare with CPU data...\n");
+  //   check_data<float>(data.out_h, data.expected, B * M * N);
+  // }
+  for (int i=0; i< B * M * N; i++){
+    printf("%.2f, %.2f \n", data.out_h[i], data.expected[i]);
   }
-
 
   printf("intrinsic_fp16_kernel throughput is %8.2f GFLOPS\n",
    (2LL*M*K*N)/time/1000000000LL);
@@ -186,18 +194,10 @@ int test(size_t M, size_t K, size_t N, bool check) {
 }
 
 int main() {
+  size_t B = 1;
   size_t M = 1;
   size_t K = 4096;
   size_t N = 4096;
-
-  float total = 0;
-  int ITERATION = 20;
-  for (int i=0; i< ITERATION; i++) {
-  //   test(13, 4096, 4096, false);
-
-    int tm = test(M, K, N, false);
-    total += tm;
-  }
-  printf("Average time taken: %.2f ms\n", total/ITERATION);
+  int tm = test(B, M, K, N, true);
   return 0;
 }

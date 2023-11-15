@@ -45,6 +45,7 @@ pub struct GcuDevice {
     stream: Option<&'static Stream>,
     executor: Arc<&'static mut DeviceExecutor>,
     is_async: bool,
+    prop: driv::topsDeviceProp_t,
 }
 
 pub struct GcuFunction {
@@ -87,12 +88,17 @@ impl GcuDevice {
     pub fn new(ordinal: usize, eager_mode: bool) -> DeviceResult<Arc<Self>> {
         match DeviceExecutor::get_gcu_executor(ordinal as u32) {
             Some(gcu_executor) => { 
+                let mut prop = driv::topsDeviceProp_t::default();
+                unsafe {
+                    driv::topsGetDeviceProperties(&mut prop as *mut driv::topsDeviceProp_t, ordinal as i32);
+                }
                 Ok(Arc::new(Self {
                     id: ordinal,
                     device: gcu_executor.device,
                     stream: gcu_executor.stream,
                     executor: Arc::new(gcu_executor),
-                    is_async: !eager_mode
+                    is_async: !eager_mode,
+                    prop: prop
                 }))
             }
             _=> {
@@ -125,6 +131,7 @@ impl GcuDevice {
         || (_module_name == "affine" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
         || (_module_name == "cast" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
         || _module_name=="dotllm"
+        // || _module_name=="gemm"
         || _module_name=="batch_matmul" 
         // if _module_name=="dotllm" 
         {
@@ -446,6 +453,22 @@ impl GcuDevice {
             _=> {panic!("Unable to use stream!")}
         }
     }
+
+    pub fn get_block_number(&self) -> i32 {
+        return self.prop.multiProcessorCount;
+    }
+      
+    pub fn get_thread_number(&self) -> i32 {
+        // if self.prop.gcuArchName.join("") == "dtu-enflame-tops--gcu210" {
+        //     let mut block_num = 0i32;
+        //     unsafe {
+        //         driv::topsDeviceGetAttribute(&mut block_num as *mut i32, driv::topsDeviceAttribute_t::topsDeviceAttributeMaxThreadsPerBlock, self.id as i32);
+        //     }
+        //   return block_num;
+        // }
+        
+        return self.prop.maxThreadsPerBlock;
+      }
 }
 
 

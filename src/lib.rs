@@ -10,6 +10,7 @@ pub mod gcu_slice;
 pub mod device_ptr;
 pub mod gcu_launch;
 pub mod tests;
+pub mod gemm_tuner;
 /// Prelude module for users to import
 pub mod prelude {
     // prelude
@@ -21,6 +22,7 @@ pub mod prelude {
     pub use crate::gcu_slice::*;
     pub use crate::gcu_launch::*;
     pub use crate::tests::*;
+    pub use crate::gemm_tuner::*;
 
     #[cfg(feature = "tops_backend")]
     pub use tops_backend::memory::CopyDestination;
@@ -43,4 +45,6 @@ pub const MATMUL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/matmul.to
 pub const TRANSPOSE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/transpose.topsfb");
 pub const DOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/dot.topsfb");
 pub const DOTLLM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/dotllm.topsfb");
+pub const GEMM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/gemm.topsfb");
+
 

@@ -6,8 +6,7 @@
 #include <tops/tops_runtime.h>
 #include <tops/topsrtc.h>
 #include <tops/half.h>
-constexpr int BUF_SIZE = 32;
-
+#include "utils.h"
 //supported activation kernels: relu (0), gelu (1), leaky relu (2), tanh (3)
 
 template <typename T, std::size_t N>
@@ -31,6 +30,7 @@ __device__ void activation(T *x, int* param)
 {
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx);
+    constexpr int vlen = tops::hvlength<VT>();
     __valigned__ int buffer[2];
     copy_to_buffer<int, 2>(ctx, param, buffer);
     int size = buffer[0];
@@ -38,11 +38,11 @@ __device__ void activation(T *x, int* param)
 
     // printf("size: %d, activation type: %d", size, type);
 
-    __valigned__ T bufferA[BUF_SIZE];
-    __valigned__ T bufferB[BUF_SIZE];
-    __valigned__ T bufferO[BUF_SIZE];
+    __valigned__ T bufferA[vlen];
+    __valigned__ T bufferB[vlen];
+    __valigned__ T bufferO[vlen];
 
-    int bufsize = BUF_SIZE;
+    int bufsize = vlen;
     if (bufsize > size) {bufsize=size;}
 
     tops::mdspan bufA(tops::Private, &bufferA, bufsize);
