@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ffi::c_void;
 
 use std::{marker::Unpin, pin::Pin, sync::Arc, vec::Vec};
@@ -15,6 +16,7 @@ use std::{
     string::String,
 };
 use std::path::Path;
+use crate::gemm_tuner::{AtenGemmTuner, AtenGemmInfo, AtenGemmTune, GEMM_OP_PARAS};
 
 //Tops backend
 #[cfg(feature = "tops_backend")]
@@ -38,7 +40,7 @@ use crate::device_executor::DeviceExecutor;
 use crate::device_ptr::{DevicePtr, DevicePtrMut, DeviceSlice};
 use crate::gcu_slice::{GcuSlice, RangeHelper};
 
-#[derive(Clone)]
+// #[derive(Clone)]
 pub struct GcuDevice {
     pub id: usize,
     device: Option<&'static Device>,
@@ -46,6 +48,7 @@ pub struct GcuDevice {
     executor: Arc<&'static mut DeviceExecutor>,
     is_async: bool,
     prop: driv::topsDeviceProp_t,
+    pub tuner: AtenGemmTuner,
 }
 
 pub struct GcuFunction {
@@ -98,7 +101,8 @@ impl GcuDevice {
                     stream: gcu_executor.stream,
                     executor: Arc::new(gcu_executor),
                     is_async: !eager_mode,
-                    prop: prop
+                    prop: prop,
+                    tuner: AtenGemmTuner::new(),
                 }))
             }
             _=> {
@@ -148,6 +152,14 @@ impl GcuDevice {
 
         }
         Ok(GcuFunction::new(func_name.to_string(), kernel_path.to_string())) //TODO, write kernels
+    }
+    
+    pub fn get_gemm_launch_params(&self, datatype: crate::DATATYPE, b: usize, m: usize, k: usize, n: usize) -> &GEMM_OP_PARAS {
+        // let bias = self.alloc::<f16>(n).w()?;
+        let info = AtenGemmInfo::new(datatype, b, m, k, n);
+        unsafe {
+            self.tuner.tuner(&info)
+        }
     }
     /// Allocates device memory and increments the reference counter of [GcuDevice].
     ///

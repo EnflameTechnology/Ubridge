@@ -47,4 +47,23 @@ pub const DOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/dot.topsfb")
 pub const DOTLLM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/dotllm.topsfb");
 pub const GEMM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/gemm.topsfb");
 
-
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum DATATYPE {
+    DataNone = -1,
+    DataI8 = 0,
+    DataU8,
+    DataI16,
+    DataU16,
+    DataFp16,
+    DataBf16,
+    DataI32,
+    DataU32,
+    DataFp32,
+    DataEf32,
+    DataTf32,
+    DataI64,
+    DataU64,
+    DataF64,
+    DataPred,
+    DataI4,
+}

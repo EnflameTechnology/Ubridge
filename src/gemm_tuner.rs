@@ -1,8 +1,9 @@
-use std::clone;
+use std::{clone, collections::HashMap};
 
 use num_traits::One; 
 pub use cust_core::_hidden::{DeviceCopy};
-
+pub use crate::DATATYPE;
+use std::cell::UnsafeCell; 
 // CeilDiv: ceil division
 fn ceil_div<T: num_traits::One>(x: T, y: T) -> T
 where
@@ -63,27 +64,6 @@ struct GemmOpParas {
     input_n: i32,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum TopsopDataType {
-    TopSopDataNone = -1,
-    TopSopDataI8 = 0,
-    TopSopDataU8,
-    TopSopDataI16,
-    TopSopDataU16,
-    TopSopDataFp16,
-    TopSopDataBf16,
-    TopSopDataI32,
-    TopSopDataU32,
-    TopSopDataFp32,
-    TopSopDataEf32,
-    TopSopDataTf32,
-    TopSopDataI64,
-    TopSopDataU64,
-    TopSopDataF64,
-    TopSopDataPred,
-    TopSopDataI4,
-}
-
 // Gemm Begin
 macro_rules! init_split {
     ($info: ident, $tune: ident) => {
@@ -131,8 +111,8 @@ macro_rules! set_split_option {
 }
 
 pub struct AtenGemmInfo {
-    pub data_type: TopsopDataType,
-    pub out_data_type: TopsopDataType,
+    pub data_type: DATATYPE,
+    pub out_data_type: DATATYPE,
     pub is_batch: bool,
     pub batch: i64,
     pub M: i64,
@@ -143,7 +123,7 @@ pub struct AtenGemmInfo {
 }
 
 impl AtenGemmInfo {
-    pub fn new(datatype: TopsopDataType, batch: usize, M: usize, K: usize, N: usize)-> AtenGemmInfo {
+    pub fn new(datatype: DATATYPE, batch: usize, M: usize, K: usize, N: usize)-> AtenGemmInfo {
         AtenGemmInfo {
             data_type : datatype,
             out_data_type : datatype,
@@ -161,8 +141,8 @@ impl AtenGemmInfo {
 impl Default for AtenGemmInfo {
     fn default() -> AtenGemmInfo {
         AtenGemmInfo {
-            data_type : TopsopDataType::TopSopDataFp32,
-            out_data_type : TopsopDataType::TopSopDataFp32,
+            data_type : DATATYPE::DataFp32,
+            out_data_type : DATATYPE::DataFp32,
             is_batch : false,
             batch : 1,
             M : 1,
@@ -174,7 +154,7 @@ impl Default for AtenGemmInfo {
     }
 }  
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(C)]
 pub struct AtenGemmTune {
     csb_batch: i64,
@@ -237,7 +217,7 @@ impl Default for AtenGemmTune {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct GEMM_OP_PARAS {
     pub input_dtype: i32, // 0
     pub output_dtype: i32,
@@ -320,38 +300,52 @@ impl GEMM_OP_PARAS {
         
     }
 }
+
+// #[derive(Clone)]
 pub struct AtenGemmTuner {
     op_name_: String,
+    tuned_map: UnsafeCell<HashMap<String, GEMM_OP_PARAS>>,
 }
 
 impl AtenGemmTuner {
     pub fn new() -> Self {
         AtenGemmTuner {
             op_name_: String::new(),
+            tuned_map: HashMap::<String, GEMM_OP_PARAS>::new().into(),
         }
     }
 
-    pub fn tuner(&self, info: &AtenGemmInfo, tune: &mut AtenGemmTune) -> i32 {
-        if info.data_type == info.out_data_type {
-            match info.data_type {
-                TopsopDataType::TopSopDataFp32 => {
-                    self.tuner_sgemm_f32(info, tune);
-                }
-                TopsopDataType::TopSopDataFp16 => {
-                    self.tuner_hgemm_f16(info, tune);
-                }
-                TopsopDataType::TopSopDataBf16 => {
-                    self.tuner_hgemm_f16(info, tune);
-                }
-                TopsopDataType::TopSopDataI8 => {
-                    self.tuner_int8_gemm_i8(info, tune);
-                }
-                _ => {}
-            }
+    pub unsafe fn tuner(&self, info: &AtenGemmInfo) -> &GEMM_OP_PARAS {
+        let pattern = format!("t{:?}_b{}_m{}_k{}_n{}", info.data_type, info.batch, info.M, info.K, info.N);
+        let mutmap = match self.tuned_map.get().as_mut() {Some(_b) => {_b}, _=> {panic!("error")}};
+
+        if mutmap.contains_key(&pattern) {
+            return &mutmap[&pattern.clone()];
         } else {
-            // handle the case when data_type is not equal to out_data_type
+            let mut tune = AtenGemmTune::default();
+            if info.data_type == info.out_data_type {
+                match info.data_type {
+                    DATATYPE::DataFp32 => {
+                        self.tuner_sgemm_f32(info, &mut tune);
+                    }
+                    DATATYPE::DataFp16 => {
+                        self.tuner_hgemm_f16(info, &mut tune);
+                    }
+                    DATATYPE::DataBf16 => {
+                        self.tuner_hgemm_f16(info, &mut tune);
+                    }
+                    DATATYPE::DataI8 => {
+                        self.tuner_int8_gemm_i8(info, &mut tune);
+                    }
+                    _ => {}
+                }
+            } else {
+                // handle the case when data_type is not equal to out_data_type
+            }
+            let param = GEMM_OP_PARAS::new(&info, &tune);
+            mutmap.insert(pattern.clone(), param);
+            return &mutmap[&pattern];
         }
-        0
     }
 
     fn tuner_sgemm_f32(&self, info: &AtenGemmInfo, tune: &mut AtenGemmTune) -> i32 {

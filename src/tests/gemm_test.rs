@@ -63,11 +63,8 @@ pub fn gemm_test() -> DeviceResult<()> {
     info.N = N as i64;
     info.batch = 16;
     info.is_batch = true;
-    let mut tune = AtenGemmTune::default();
     let tuner = AtenGemmTuner::new();
-    tuner.tuner(&info, &mut tune);
-
-    let param = GEMM_OP_PARAS::new(&info, &tune);
+    let param = unsafe { tuner.tuner(&info)};
 
     let lhs = vec![0.5f32; B * M * K];
     let rhs = vec![0.5f32; B * K * N];
