@@ -38,13 +38,15 @@ use cuda::CuApi as Api;
 #[cfg(feature = "cuda_backend")]
 use cuda_backend as cuda;
 
+use crate::device_executor::DeviceExecutor;
+
 fn load_module<'a>(name: &str) -> DeviceResult<Module> {
     #[cfg(not(feature = "scorpio"))]
     #[cfg(feature = "tops_backend")]
-    let ptx = format!("{}/kernels/pavo/{}.topsfb", env!("CARGO_MANIFEST_DIR"), name).to_string();
+    let ptx = format!("{}/kernels/legacy/pavo/{}.topsfb", env!("CARGO_MANIFEST_DIR"), name).to_string();
 
     #[cfg(feature = "scorpio")]
-    let ptx = format!("{}/kernels/scorpio/{}.topsfb", env!("CARGO_MANIFEST_DIR"), name).to_string();
+    let ptx = format!("{}/kernels/legacy/scorpio/{}.topsfb", env!("CARGO_MANIFEST_DIR"), name).to_string();
 
     #[cfg(feature = "cuda_backend")]
     let ptx = format!("{}/kernels/gpu/{}.ptx", env!("CARGO_MANIFEST_DIR"), name).to_string();
@@ -54,7 +56,7 @@ fn load_module<'a>(name: &str) -> DeviceResult<Module> {
 
 struct Layer<'a, T: DeviceCopy> {
     op: &'a str,
-    weight: Option<DeviceBuffer<T>>,
+    weight: Option<&'a DeviceBuffer<T>>,
     input_size: (usize, usize),
     output_size: (usize, usize),
     out_ref: Option<&'a DeviceBuffer<T>>,
@@ -71,15 +73,19 @@ pub fn get_block_grid(shape1: usize, shape0: usize) -> (usize, usize, usize) {
 pub fn network_test() -> DeviceResult<()> {
     let _device = Api::quick_init(0)?;
     let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
-
     const N: usize = 16;
     const K: usize = 3;
+    let w1 = DeviceBuffer::from_slice(&vec![0.01f32; N * N])?;
+    let w2 = DeviceBuffer::from_slice(&vec![0.02f32; N * N])?;
+    let w3 = DeviceBuffer::from_slice(&vec![0.03f32; N * N])?;
+    let w4 = DeviceBuffer::from_slice(&vec![0.04f32; N * N])?;
+    let w5 = DeviceBuffer::from_slice(&vec![0.05f32; N * N])?;
 
     //Neural network layers: matmul(tanh act) -> matmul(relu act) -> matmul(tanh act) -> convolution(3x3 kernel, tanh act) -> matmul(tanh act) -> matmul(leaky act)
     let layers = vec![
         Layer::<f32> {
             op: "batch_matmul_legacy",
-            weight: Some(DeviceBuffer::from_slice(&[0.01f32; N * N])?),
+            weight: Some(&w1),
             input_size: (N, N),
             output_size: (N, N),
             out_ref: None,
@@ -93,7 +99,7 @@ pub fn network_test() -> DeviceResult<()> {
         }, //out N x N
         Layer::<f32> {
             op: "batch_matmul_legacy",
-            weight: Some(DeviceBuffer::from_slice(&[0.02f32; N * N])?),
+            weight: Some(&w2),
             input_size: (N, N),
             output_size: (N, N),
             out_ref: None,
@@ -107,7 +113,7 @@ pub fn network_test() -> DeviceResult<()> {
         }, //out N x N
         Layer::<f32> {
             op: "batch_matmul_legacy",
-            weight: Some(DeviceBuffer::from_slice(&[0.5f32; K * K])?),
+            weight: Some(&w3),
             input_size: (N, N),
             output_size: (N, N),
             out_ref: None,
@@ -121,9 +127,7 @@ pub fn network_test() -> DeviceResult<()> {
         }, //out N x N
         Layer::<f32> {
             op: "convolution",
-            weight: Some(DeviceBuffer::from_slice(
-                &[0.2f32; (N - K + 1) * (N - K + 1)],
-            )?),
+            weight: Some(&w4),
             input_size: (N, N),
             output_size: (N - K + 1, N - K + 1),
             out_ref: None,
@@ -137,9 +141,7 @@ pub fn network_test() -> DeviceResult<()> {
         }, //out (N - K + 1) x (N - K + 1)
         Layer::<f32> {
             op: "batch_matmul_legacy",
-            weight: Some(DeviceBuffer::from_slice(
-                &[0.2f32; (N - K + 1) * (N - K + 1)],
-            )?),
+            weight: Some(&w5),
             input_size: (N - K + 1, N - K + 1),
             output_size: (N - K + 1, N - K + 1),
             out_ref: None,
@@ -166,15 +168,21 @@ pub fn network_test() -> DeviceResult<()> {
             out_ref: None,
         }, //output shape (N - K + 1) * (N - K + 1)
     ];
+    let mat = vec![0.5f32; N * N];
+    let mato = vec![0.0f32; N * N];
+    let convo = vec![0.0f32; (N - K + 1) * (N - K + 1)];
 
-    let mut matA = DeviceBuffer::from_slice(&[0.5f32; N * N])?;
-    let mut matB = DeviceBuffer::from_slice(&[0.1f32; N * N])?;
-    let mut matOut = DeviceBuffer::from_slice(&[0.0f32; N * N])?;
-    let mut matConvOut = DeviceBuffer::from_slice(&[0.0f32; (N - K + 1) * (N - K + 1)])?;
+    let matA = DeviceBuffer::from_slice(&mat)?;
+    let matB = DeviceBuffer::from_slice(&mat)?;
+    let matOut = DeviceBuffer::from_slice(&mato)?;
+    let matConvOut = DeviceBuffer::from_slice(&convo)?;
 
     let map_act = HashMap::from([("relu", 0), ("gelu", 1), ("leaky", 2), ("tanh", 3)]);
 
-    let mut out_ref: Option<&DeviceBuffer<f32>> = None;
+    let mut out_ref: Option<&DeviceBuffer<f32>> = Some(&matOut);
+    let mut matA_ref: Option<&DeviceBuffer<f32>> = Some(&matA);
+    let mut matB_ref: Option<&DeviceBuffer<f32>> = Some(&matB);
+
     let mut out_size: Option<(usize, usize)> = None;
     for layer in layers {
         if ["relu", "gelu", "leaky", "tanh"].contains(&layer.op) {
@@ -190,16 +198,17 @@ pub fn network_test() -> DeviceResult<()> {
 
                     let (_block_size, _grid_a, _grid_b) =
                         get_block_grid(layer.input_size.1, layer.input_size.0);
+                    let A = match matA_ref {Some(a)=> {a}, _=> {panic!("error")}};
                     unsafe {
                         #[cfg(feature = "tops_backend")]
                         let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
-                            matA.as_device_ptr(),
+                            A.as_device_ptr(),
                             param.as_device_ptr(),
                         ));
 
                         #[cfg(feature = "cuda_backend")]
                         let result = launch!(kernel<<<(grid_a as u32, grid_b as u32), (block_size as u32, block_size as u32), 0, stream>>>(
-                            matA.as_device_ptr(),
+                            A.as_device_ptr(),
                             layer.input_size.0 as u32,
                             layer.input_size.1 as u32,
                             map_act[layer.op]
@@ -207,7 +216,7 @@ pub fn network_test() -> DeviceResult<()> {
 
                         result?;
                     }
-                    out_ref = Some(&matA);
+                    out_ref = Some(&A);
                     out_size = Some(layer.output_size);
                 }
                 _ => {
@@ -230,22 +239,25 @@ pub fn network_test() -> DeviceResult<()> {
                         layer.input_size.0 as i32,
                         layer.input_size.1 as i32,
                     ])?;
+                    let A = match matA_ref {Some(a)=> {a}, _=> {panic!("error")}};
+                    let B = match matB_ref {Some(a)=> {a}, _=> {panic!("error")}};
+                    let O = match out_ref {Some(a)=> {a}, _=> {panic!("error")}};
 
                     unsafe {
                         #[cfg(feature = "tops_backend")]
                         let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
-                            matA.as_device_ptr(),
-                            matB.as_device_ptr(),
-                            matOut.as_device_ptr(),
+                            A.as_device_ptr(),
+                            B.as_device_ptr(),
+                            O.as_device_ptr(),
                             inputShapeA.as_device_ptr(),
                             inputShapeB.as_device_ptr()
                         ));
 
                         #[cfg(feature = "cuda_backend")]
                         let result = launch!(kernel<<<(grid_a as u32, grid_b as u32), (block_size as u32, block_size as u32), 0, stream>>>(
-                            matA.as_device_ptr(),
-                            matB.as_device_ptr(),
-                            matOut.as_device_ptr(),
+                            A.as_device_ptr(),
+                            B.as_device_ptr(),
+                            O.as_device_ptr(),
                             layer.input_size.0 as u32,
                             layer.input_size.1 as u32,
                             layer.output_size.1 as u32
@@ -253,16 +265,17 @@ pub fn network_test() -> DeviceResult<()> {
 
                         result?;
                     }
-                    std::mem::swap(&mut matA, &mut matOut);
+
+                    matA_ref = Some(&O);
                     match layer.weight {
                         Some(w) => {
-                            matB = w;
+                            matB_ref = Some(w);
                         }
                         _ => {
-                            // if idx < len - 1 { println!("Failed to get weight!"); break; }
                         }
-                    }
-                    out_ref = Some(&matA);
+                    };
+
+                    out_ref = Some(&O);
                     out_size = Some(layer.output_size);
                 }
                 _ => {
@@ -273,6 +286,8 @@ pub fn network_test() -> DeviceResult<()> {
             match load_module(layer.op) {
                 Ok(module) => {
                     let kernel = module.get_function(&layer.op)?;
+                    let A = match matA_ref {Some(a)=> {a}, _=> {panic!("error")}};
+                    let B = match matB_ref {Some(a)=> {a}, _=> {panic!("error")}};
 
                     #[cfg(feature = "tops_backend")]
                     let inputShapeA = DeviceBuffer::from_slice(&[
@@ -282,15 +297,15 @@ pub fn network_test() -> DeviceResult<()> {
                         1i32,
                     ])?;
                     #[cfg(feature = "tops_backend")]
-                    let inputShapeB = DeviceBuffer::from_slice(&[K as i32, K as i32, 1i32, 1i32])?;
+                    let inputShapeB = DeviceBuffer::from_slice(&vec![K as i32, K as i32, 1i32, 1i32])?;
                     #[cfg(feature = "tops_backend")]
-                    let channelInfo = DeviceBuffer::from_slice(&[1i32, 1i32, 1i32, 1i32])?;
+                    let channelInfo = DeviceBuffer::from_slice(&vec![1i32, 1i32, 1i32, 1i32])?;
 
                     unsafe {
                         #[cfg(feature = "tops_backend")]
                         let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
-                            matA.as_device_ptr(),
-                            matB.as_device_ptr(),
+                            A.as_device_ptr(),
+                            B.as_device_ptr(),
                             matConvOut.as_device_ptr(),
                             inputShapeA.as_device_ptr(),
                             inputShapeB.as_device_ptr(),
@@ -299,9 +314,9 @@ pub fn network_test() -> DeviceResult<()> {
 
                         #[cfg(feature = "cuda_backend")]
                         let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
-                            matA.as_device_ptr(),
-                            matB.as_device_ptr(),
-                            matConvOut.as_device_ptr(),
+                            A.as_device_ptr(),
+                            B.as_device_ptr(),
+                            ConvOut.as_device_ptr(),
                             layer.input_size.0 as u32,
                             layer.input_size.1 as u32,
                             K as u32,
@@ -310,17 +325,15 @@ pub fn network_test() -> DeviceResult<()> {
 
                         result?;
                     }
-
-                    std::mem::swap(&mut matA, &mut matConvOut);
+                    matA_ref = Some(&matConvOut);
                     match layer.weight {
                         Some(w) => {
-                            matB = w;
+                            matB_ref = Some(w);
                         }
                         _ => {
-                            // if idx < len - 1 { println!("Failed to get weight!"); break; }
                         }
-                    }
-                    out_ref = Some(&matA);
+                    };
+                    out_ref = Some(&matConvOut);
                     out_size = Some(layer.output_size);
                 }
                 _ => {
@@ -337,7 +350,7 @@ pub fn network_test() -> DeviceResult<()> {
     match out_ref {
         Some(out) => {
             let mut out_host = vec![0.0f32; out.len()];
-            out.copy_to(&mut out_host[0..out.len()])?;
+            out.copy_to(&mut out_host)?;
             match out_size {
                 Some(sz) => {
                     let W = sz.0;

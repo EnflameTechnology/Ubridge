@@ -11,7 +11,6 @@ use uhal::{error::DeviceResult};
 
 pub fn kernel_test() -> DeviceResult<()> {
     println!("******************\ninfo: start kernel test!\n");
-    let _executor = DeviceExecutor::get_gcu_executor(0).unwrap();
     let b = 1;
     let m = 128;
     let k = 4096;

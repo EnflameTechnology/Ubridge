@@ -6,7 +6,7 @@
 #include <tops/tops_runtime.h>
 #include <tops/topsrtc.h>
 #include <tops/half.h>
-#include "utils.h"
+#include "../utils.h"
 //supported activation kernels: relu (0), gelu (1), leaky relu (2), tanh (3)
 
 template <typename T, std::size_t N>

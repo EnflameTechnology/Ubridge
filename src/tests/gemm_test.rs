@@ -51,9 +51,8 @@ struct Layer<'a, T: DeviceCopy> {
 pub fn gemm_test() -> DeviceResult<()> {
     let _device = Api::quick_init(0)?;
     let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
-
-    const B: usize = 16;
-    const M: usize = 16;
+    const B: usize = 1;
+    const M: usize = 1;
     const K: usize = 4096;
     const N: usize = 4096;
 
@@ -68,25 +67,27 @@ pub fn gemm_test() -> DeviceResult<()> {
     let tuner = AtenGemmTuner::new();
     tuner.tuner(&info, &mut tune);
 
-    let mut param = GEMM_OP_PARAS::new(&info, &tune);
-    let ptr_param: *mut GEMM_OP_PARAS = &mut param;
+    let param = GEMM_OP_PARAS::new(&info, &tune);
 
+    let lhs = vec![0.5f32; B * M * K];
+    let rhs = vec![0.5f32; B * K * N];
+    let out = vec![0.0f32; B * M * K];
+    let bias = vec![0.0f32; N];
 
-    std::mem::forget(param);
+    let matA = DeviceBuffer::from_slice(&lhs)?;
+    let matOut = DeviceBuffer::from_slice(&out)?;
+    let matBias = DeviceBuffer::from_slice(&bias)?;
 
     let layers = vec![
         Layer::<f32> {
             op: "gemm",
-            weight: Some(DeviceBuffer::from_slice(&[0.5f32; B * K * N])?),
+            weight: Some(DeviceBuffer::from_slice(&rhs)?),
             input_size: (B as i64, M as i64, K as i64),
             output_size: (B as i64, M as i64, N as i64),
             out_ref: None,
         }, //weight is N x N matric for next layer
     ];
   
-    let mut matA = DeviceBuffer::from_slice(&[0.5f32; B * M * K])?;
-    let mut matOut = DeviceBuffer::from_slice(&[0.0f32; B * M * K])?;
-    let mut matBias = DeviceBuffer::from_slice(&[0.0f32; N])?;
 
     let mut out_ref: Option<&DeviceBuffer<f32>> = None;
     let mut out_size: Option<(i64, i64, i64)> = None;
@@ -108,7 +109,11 @@ pub fn gemm_test() -> DeviceResult<()> {
                                     w.as_device_ptr(),
                                     matOut.as_device_ptr(),
                                     matBias.as_device_ptr(),
-                                    ptr_param
+                                    param.input_dtype, B, M, K, N,
+                                    param.lhs_multicore, param.rhs_multicore, param.batch_multicore,
+                                    param.lhs_transpose, param.rhs_transpose,
+                                    param.alpha, param.beta, param.addmm_beta, param.bias,
+                                    param.sip_m, param.sip_k, param.sip_n
                                 ));
         
                                 result?;
