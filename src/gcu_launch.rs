@@ -30,9 +30,12 @@ impl GcuLaunchConfig {
         let tile_size = 0x8000;
         let mut threads = Self::max_sip_num();
         let mut grids = n/tile_size;
-        
-        if grids <= threads {
-          grids = 1;
+        if grids < 1 { //elements < tile_size
+            grids = 1;
+            threads = 1;
+        } else if grids <= threads {
+            threads = grids;
+            grids = 1;
         } else if grids / threads > 0 {
           grids = grids / threads;
         } else {
@@ -99,6 +102,10 @@ impl GcuLaunchConfig {
           blocksz /= Self::max_sip_num();
         } else {
           perthreads = 1;
+        }
+
+        if blocksz < 1 {
+            blocksz = 1;
         }
 
         Self {
@@ -296,7 +303,7 @@ impl GcuFunction {
         
                 let nul = ptr::null_mut();
                 let shared_mem_bytes = 0;
-                return driv::topsModuleLaunchKernel(
+                let ret = driv::topsModuleLaunchKernel(
                     func, cfg.grid_dim.0, cfg.grid_dim.1, cfg.grid_dim.2,
                     cfg.block_dim.0, cfg.block_dim.1, cfg.block_dim.2,
                     shared_mem_bytes as u32,
@@ -305,6 +312,11 @@ impl GcuFunction {
                     nul as *mut *mut c_void, 
                     // config.as_mut_ptr() as *mut *mut c_void            
                 ).to_result();
+
+                if ret.is_err() {
+                    println!("Error");
+                }
+                return ret;
 
             }
             _=> {}

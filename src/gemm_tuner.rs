@@ -524,7 +524,7 @@ impl AtenGemmTuner {
             );
         }
     
-        println!("TunerSGemmF32");
+        // println!("TunerSGemmF32");
         0
     }
     
@@ -630,7 +630,7 @@ impl AtenGemmTuner {
 
         }
     
-        println!("TunerHGemmF16");
+        // println!("TunerHGemmF16");
         0
     }
 
@@ -763,7 +763,7 @@ impl AtenGemmTuner {
 
             set_split_option!(tune, "general", batch_multicore, lhs_multicore, rhs_multicore, false, false, false, false, false);
         };
-        println!("TunerInt8GemmI8");
+        // println!("TunerInt8GemmI8");
         0
     }
     
