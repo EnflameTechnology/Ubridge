@@ -39,23 +39,6 @@ using namespace tops;
 #define tile_size 0x8000
 #define PING_PONG_SIZE 2
 
-namespace tops {
-template <typename T>
-__device__ __host__ __forceinline__ constexpr int hvlength() {
-  return 128 / sizeof(T);
-}
-
-} // namespace tops
-
-__device__ __forceinline__
-int get_index() {
-    std::size_t blockIndex = blockIdx.z*(gridDim.x*gridDim.y)
-        + blockIdx.y*gridDim.x + blockIdx.x;
-    std::size_t threadIndex = threadIdx.z*(blockDim.x*blockDim.y)
-        + threadIdx.y*blockDim.x + threadIdx.x;
-    return blockIndex*(blockDim.x*blockDim.y*blockDim.z) + threadIndex;
-}
-
 template <typename T, typename OUTT>
 __device__ void cast_kernel(T* in, OUTT* out, int len) {
   tops_dte_ctx_t ctxs_in[PING_PONG_SIZE];
@@ -246,56 +229,56 @@ extern "C" __global__ void FN_NAME( \
 // CAST_OP(__bf16, int8_t, cast_bf16_i8)
 // CAST_OP(__bf16, int16_t, cast_bf16_i16)
 // CAST_OP(__bf16, int32_t, cast_bf16_i32)
-// CAST_OP(__bf16, __fp16, cast_bf16_fp16)
-// CAST_OP(__bf16, float, cast_bf16_fp32)
+// CAST_OP(__bf16, __fp16, cast_bf16_f16)
+// CAST_OP(__bf16, float, cast_bf16_f32)
 
-CAST_OP(__fp16, int8_t, cast_fp16_i8)
-CAST_OP(__fp16, int16_t, cast_fp16_i16)
-CAST_OP(__fp16, int32_t, cast_fp16_i32)
-CAST_OP(__fp16, float, cast_fp16_fp32)
-// CAST_OP(__fp16, __bf16, cast_fp16_bf16)
+CAST_OP(__fp16, int8_t, cast_f16_i8)
+CAST_OP(__fp16, int16_t, cast_f16_i16)
+CAST_OP(__fp16, int32_t, cast_f16_i32)
+CAST_OP(__fp16, float, cast_f16_f32)
+// CAST_OP(__fp16, __bf16, cast_f16_bf16)
 
 CAST_OP(float, int8_t, cast_f32_i8)
 CAST_OP(float, int16_t, cast_f32_i16)
 CAST_OP(float, int32_t, cast_f32_i32)
-CAST_OP(float, __fp16, cast_f32_fp16)
+CAST_OP(float, __fp16, cast_f32_f16)
 // CAST_OP(float, __bf16, cast_f32_bf16)
 
 CAST_OP(int8_t, int16_t, cast_i8_i16)
 CAST_OP(int8_t, int32_t, cast_i8_i32)
-CAST_OP(int8_t, float, cast_i8_fp32)
-CAST_OP(int8_t, __fp16, cast_i8_fp16)
+CAST_OP(int8_t, float, cast_i8_f32)
+CAST_OP(int8_t, __fp16, cast_i8_f16)
 // CAST_OP(int8_t, __bf16, cast_i8_bf16)
 
 CAST_OP(int16_t, int8_t, cast_i16_i8)
 CAST_OP(int16_t, int32_t, cast_i16_i32)
-CAST_OP(int16_t, float, cast_i16_fp32)
-CAST_OP(int16_t, __fp16, cast_i16_fp16)
+CAST_OP(int16_t, float, cast_i16_f32)
+CAST_OP(int16_t, __fp16, cast_i16_f16)
 // CAST_OP(int16_t, __bf16, cast_i16_bf16)
 
 CAST_OP(int32_t, int8_t, cast_i32_i8)
 CAST_OP(int32_t, int16_t, cast_i32_i16)
-CAST_OP(int32_t, float, cast_i32_fp32)
-CAST_OP(int32_t, __fp16, cast_i32_fp16)
+CAST_OP(int32_t, float, cast_i32_f32)
+CAST_OP(int32_t, __fp16, cast_i32_f16)
 // CAST_OP(int32_t, __bf16, cast_i32_bf16)
 
 
 CAST_OP(u_int8_t, u_int16_t, cast_u8_u16)
 CAST_OP(u_int8_t, u_int32_t, cast_u8_u32)
 CAST_OP(u_int8_t, float, cast_u8_f32)
-CAST_OP(u_int8_t, __fp16, cast_u8_fp16)
+CAST_OP(u_int8_t, __fp16, cast_u8_f16)
 // CAST_OP(u_int8_t, __bf16, cast_u8_bf16)
 
 CAST_OP(u_int16_t, u_int8_t, cast_u16_u8)
 CAST_OP(u_int16_t, u_int32_t, cast_u16_u32)
 CAST_OP(u_int16_t, float, cast_u16_f32)
-CAST_OP(u_int16_t, __fp16, cast_u16_fp16)
+CAST_OP(u_int16_t, __fp16, cast_u16_f16)
 // CAST_OP(u_int16_t, __bf16, cast_u16_bf16)
 
 CAST_OP(u_int32_t, u_int8_t, cast_u32_u8)
 CAST_OP(u_int32_t, u_int16_t, cast_u32_u16)
 CAST_OP(u_int32_t, float, cast_u32_f32)
-CAST_OP(u_int32_t, __fp16, cast_u32_fp16)
+CAST_OP(u_int32_t, __fp16, cast_u32_f16)
 // CAST_OP(u_int32_t, __bf16, cast_u32_bf16)
 
 template<typename T, typename OUTT>

@@ -38,23 +38,6 @@ using namespace tops;
 #define tile_size 0x8000
 #define PING_PONG_SIZE 2
 
-namespace tops {
-template <typename T>
-__device__ __host__ __forceinline__ constexpr int hvlength() {
-  return 128 / sizeof(T);
-}
-
-} // namespace tops
-
-__device__ __forceinline__
-int get_index() {
-    std::size_t blockIndex = blockIdx.z*(gridDim.x*gridDim.y)
-        + blockIdx.y*gridDim.x + blockIdx.x;
-    std::size_t threadIndex = threadIdx.z*(blockDim.x*blockDim.y)
-        + threadIdx.y*blockDim.x + threadIdx.x;
-    return blockIndex*(blockDim.x*blockDim.y*blockDim.z) + threadIndex;
-}
-
 enum AFFINE_DATA_TYPE {
     AFFINE_DATA_F32 = 1,
     AFFINE_DATA_FP16 = 2,

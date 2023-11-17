@@ -133,7 +133,7 @@ impl GcuDevice {
         if (_module_name == "unary" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
         || (_module_name == "binary" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
         || (_module_name == "affine" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
-        // || (_module_name == "cast" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
+        || (_module_name == "cast" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
         || _module_name=="gemm"
         {
             match &self.executor.function_map{
@@ -150,7 +150,7 @@ impl GcuDevice {
             }
 
         }
-        Ok(GcuFunction::new(func_name.to_string(), kernel_path.to_string())) //TODO, write kernels
+        Ok(GcuFunction::new(func_name.to_string(), kernel_path.to_string()))
     }
     
     pub fn get_gemm_launch_params(&self, datatype: crate::DATATYPE, b: usize, m: usize, k: usize, n: usize) -> &GEMM_OP_PARAS {
