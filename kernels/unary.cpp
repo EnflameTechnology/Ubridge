@@ -44,15 +44,6 @@ using namespace tops;
 #define tile_size 0x8000
 #define PING_PONG_SIZE 2
 
-__device__ __forceinline__
-int get_index() {
-    std::size_t blockIndex = blockIdx.z*(gridDim.x*gridDim.y)
-        + blockIdx.y*gridDim.x + blockIdx.x;
-    std::size_t threadIndex = threadIdx.z*(blockDim.x*blockDim.y)
-        + threadIdx.y*blockDim.x + threadIdx.x;
-    return blockIndex*(blockDim.x*blockDim.y*blockDim.z) + threadIndex;
-}
-
 
 enum UNARY_TYPE {
     UNARY_TYPE_NEG = 1,
@@ -362,8 +353,6 @@ __device__ void unary_kernel(T* in, T* out, int len, UNARY_TYPE tp) {
   int thread_num = GetThreadNum();
   int thread_id = GetThreadIdx();
 
-  // printf("thread_num =%d, thread_id=%d\n", thread_num, thread_id);
-
   int thread_off_leading = thread_id * tile_size;
   int thread_len_leading =
       N - thread_off_leading >= tile_size ? tile_size : N - thread_off_leading;
@@ -485,43 +474,6 @@ extern "C" __global__ void FN_NAME( \
     unary_kernel<TYPE, VT>(inp, out, numel, TP); \
 } \
 
-// template<typename T>
-// __device__ __forceinline__ T elu_fwd(T x, T alpha) {
-//   if (x > static_cast<T>(0)) {
-//     return x;
-//   }
-//   return alpha * (tops::exp<T>(x) - static_cast<T>(1));
-// }
-
-#define UNARY_OP1(TYPE, VT, FN_NAME, FUNC) \
-extern "C" __global__ void FN_NAME( \
-    const size_t numel, \
-    const size_t num_dims, \
-    const size_t *info, \
-    TYPE param, \
-    TYPE *inp, \
-    TYPE *out) \
-{ \
-    tops_dte_ctx_t ctx; \
-    tops::dte_scope s(ctx); \
-    std::size_t idx = get_index(); \
-    constexpr std::size_t num_len = tops::hvlength<VT>(); \
-    __valigned__ TYPE buffer1[num_len]; \
-    tops::mdspan buf1(tops::Private, &buffer1, num_len); \
-    __valigned__ TYPE buffer2[num_len]; \
-    tops::mdspan buf2(tops::Private, &buffer2, num_len); \
-    tops::mdspan src1(tops::Global, inp + idx * num_len, num_len); \
-    tops::memcpy(ctx, buf1, src1); \
-    const auto &x = tops::vload<VT>(buffer1);  \
-    tops::mdspan dst(tops::Global, out + idx *num_len, num_len); \
-    for (int i = 0; i < num_len; i++) { \
-        buffer2[i] = FUNC; \
-    } \
-    tops::memcpy(ctx, dst, buf2); \
-} \
-
-
-
 UNARY_OP(__bf16, vbfloat, uneg_bf16, UNARY_TYPE_NEG)
 UNARY_OP(__bf16, vbfloat, uexp_bf16, UNARY_TYPE_EXP)
 UNARY_OP(__bf16, vbfloat, ulog_bf16, UNARY_TYPE_LOG)
@@ -583,15 +535,14 @@ UNARY_OP(float, vfloat, uelu_f32, UNARY_TYPE_ELU)
 
 
 int test() {
-  float *lhs_d, *out_d;
+  __fp16 *lhs_d, *out_d;
   int *shape_lhs_d;
-  float *lhs_h, *out_h;
-  std::size_t *tmp = new std::size_t[10];
-  size_t size_lhs = 1024 * 4;
+  __fp16 *lhs_h, *out_h;
+  size_t size_lhs = 64;
   size_t size_out = size_lhs;
   size_t dim = 1;
-  topsHostMalloc((float**)&lhs_h, size_lhs * sizeof(float));
-  topsHostMalloc((float**)&out_h, size_out * sizeof(float));
+  topsHostMalloc((__fp16**)&lhs_h, size_lhs * sizeof(__fp16));
+  topsHostMalloc((__fp16**)&out_h, size_out * sizeof(__fp16));
 
     for (size_t i = 0; i < size_lhs; i++) {
         lhs_h[i] = 0.5f;
@@ -599,28 +550,28 @@ int test() {
     for (size_t i = 0; i < size_out; i++) {
         out_h[i] = 0.0;
     }
-  topsMalloc(&lhs_d, size_lhs * sizeof(float));
-  topsMalloc(&out_d, size_out * sizeof(float));
+  topsMalloc(&lhs_d, size_lhs * sizeof(__fp16));
+  topsMalloc(&out_d, size_out * sizeof(__fp16));
 
   printf("info: copy Host2Device\n");
-  topsMemcpy(lhs_d, lhs_h, size_lhs * sizeof(float),
+  topsMemcpy(lhs_d, lhs_h, size_lhs * sizeof(__fp16),
                   topsMemcpyHostToDevice);
-  topsMemcpy(out_d, out_h, size_out * sizeof(float),
+  topsMemcpy(out_d, out_h, size_out * sizeof(__fp16),
                   topsMemcpyHostToDevice);
-  int grids = size_out/tile_size;
-  int threads = 6;
-  if (grids < 1) {
-    grids = 1;
-  } else if (grids / 6 > 0) {
-    grids = grids / 6;
-  } else {
-    threads = 1;
-  }
+  // int grids = size_out/tile_size;
+  // int threads = 6;
+  // if (grids < 1) {
+  //   grids = 1;
+  // } else if (grids / 6 > 0) {
+  //   grids = grids / 6;
+  // } else {
+  //   threads = 1;
+  // }
 
-  ugelu_f32<<<dim3(grids, 1, 1), dim3(threads, 1, 1)>>>(size_out, lhs_d, out_d);
+  ucopy_f16<<<dim3(1, 1, 1), dim3(1, 12, 1)>>>(size_out, lhs_d, out_d);
 
   printf("info: copy Device2Host\n");
-  topsMemcpy(out_h, out_d, size_out * sizeof(float), topsMemcpyDeviceToHost);
+  topsMemcpy(out_h, out_d, size_out * sizeof(__fp16), topsMemcpyDeviceToHost);
 
   for (size_t j = 0; j < size_out; j++) {
       printf("%.2f, ", out_h[j]);

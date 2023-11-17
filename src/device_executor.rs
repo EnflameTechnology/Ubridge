@@ -187,9 +187,9 @@ impl DeviceExecutor {
         let kernel_platform = "scorpio"; 
 
         let unary_functions = vec![
-            "ucopy", "uneg", "uexp", "ulog", "usin", "ucos", "uabs", "usqr", "usqrt", "ugelu",
-            "urelu",
-        ]; //, "uelu"
+            "ucopy", "uneg", "uexp", "ulog", "usin", "ucos", "uabs", "usqr", "usqrt", "ursqrt", "ugelu",
+            "urelu", "utanh", "urecip", "uelu"
+        ]; 
 
         let binary_functions = vec![
             "badd", "bsub", "bmul", "bdiv", "bmaximum", "bminimum", "mod", "eq", "ne", "ge",

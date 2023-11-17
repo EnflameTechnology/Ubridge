@@ -88,7 +88,8 @@ impl<T: DeviceCopy> GcuSlice<T> {
         
         range.bounds(..self.len).map(|(start, end)| GcuView {
             root: self.buffer.as_device_ptr_ref().as_ref(),
-            ptr: unsafe { self.buffer.as_device_ptr().offset(isize::try_from(start * std::mem::size_of::<T>()).unwrap()).as_raw()},
+            // ptr: unsafe { self.buffer.as_device_ptr().offset(isize::try_from(start * std::mem::size_of::<T>()).unwrap()).as_raw()},
+            ptr: unsafe { self.buffer.as_device_ptr().offset(isize::try_from(start).unwrap()).as_raw()},
             len: end - start,
             marker: PhantomData,
         })

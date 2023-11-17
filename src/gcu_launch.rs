@@ -27,24 +27,24 @@ pub struct GcuLaunchConfig {
 
 impl GcuLaunchConfig {
     pub fn for_num_elems(n: u32) -> Self {
-        let tile_size = 0x8000;
-        let mut threads = Self::max_sip_num();
-        let mut grids = n/tile_size;
-        if grids < 1 { //elements < tile_size
-            grids = 1;
-            threads = 1;
-        } else if grids <= threads {
-            threads = grids;
-            grids = 1;
-        } else if grids / threads > 0 {
-          grids = grids / threads;
-        } else {
-          grids = 1;
-        }
+        // let tile_size = 0x8000;
+        // let mut threads = Self::max_sip_num();
+        // let mut grids = n/tile_size;
+        // if grids < 1 { //elements < tile_size
+        //     grids = 1;
+        //     threads = 1;
+        // } else if grids <= threads {
+        //     threads = grids;
+        //     grids = 1;
+        // } else if grids / threads > 0 {
+        //   grids = grids / threads;
+        // } else {
+        //   grids = 1;
+        // }
       
         Self {
-            grid_dim: (grids, 1, 1),
-            block_dim: (threads, 1, 1),
+            grid_dim: (1, 1, 1),
+            block_dim: (Self::max_sip_num(), 1, 1),
             shared_mem_bytes: 0,
         }
     }
