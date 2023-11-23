@@ -1,6 +1,9 @@
 #ifndef OP_UTILS_
 #define OP_UTILS_
 #include <tops.h>
+#include <cstdint>
+
+using namespace std;
 
 constexpr int MAX_RANK = 4;
 constexpr int MAX_PAVO_CLUSTER_NUM = 4;
@@ -10,6 +13,7 @@ constexpr int MAX_DRD_SIP_NUM = 12;
 constexpr int MAX_SCP_CLUSTER_NUM = 1;
 constexpr int MAX_SCP_SIP_NUM = 12;
 constexpr int SIP_VECTOR_LENGTH = 128;
+#define ALIGN_UP(a, b) (((a + b - 1) / b) * b)
 
 __device__ __forceinline__ int GetBlockNum(void) {
   return (gridDim.x * gridDim.y * gridDim.z);
@@ -40,22 +44,27 @@ __device__ __forceinline__ int GetThreadIdx(void) {
   return blockIdx * threadNumEachBlock + GetThreadIdxInBlock();
 }
 
+__forceinline__ int GetGrids(int total_threads, int sip_number) {
+  int grids = total_threads / sip_number;
+  if (total_threads % sip_number != 0) grids ++;
+  return grids;
+}
 
 // ceiling division of two integers
 template <typename Int_Type, typename Int_Type2 = Int_Type>
-inline constexpr int CeilDiv(Int_Type x, Int_Type2 y) {
+__device__ inline constexpr int CeilDiv(Int_Type x, Int_Type2 y) {
   return (x + y - 1) / y;
 }
 
 // align to a multiple of rhs no less than lhs
 template <typename Int_Type, typename Int_Type2 = Int_Type>
-inline Int_Type AlignUp(Int_Type x, Int_Type2 y) {
+__device__ inline constexpr Int_Type AlignUp(Int_Type x, Int_Type2 y) {
   return CeilDiv(x, y) * y;
 }
 
 // align to a multiple of rhs no more than lhs
 template <typename Int_Type, typename Int_Type2 = Int_Type>
-inline Int_Type AlignDown(Int_Type x, Int_Type2 y) {
+__device__ inline Int_Type AlignDown(Int_Type x, Int_Type2 y) {
   return (x / y) * y;
 }
 
@@ -97,7 +106,21 @@ int get_threadIndex() {
     return threadIndex;
 }
 
-
+__device__ __forceinline__ bool is_contiguous(
+    const size_t num_dims,
+    const size_t *dims,
+    const size_t *strides
+) {
+    size_t acc = 1;
+    for (unsigned int d = 0; d < num_dims; d++) {
+        unsigned int dim_idx = num_dims - 1 - d;
+        if (acc != strides[dim_idx]) {
+            return false;
+        }
+        acc *= dims[dim_idx];
+    }
+    return true;
+}
 
 template <typename T>
 struct DATA {

@@ -8,7 +8,7 @@ macro_rules! eprintln {
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     for kernel in ["unary", "dotllm", 
-        "fill", "binary", "affine", "cast", "gemm"] {
+        "fill", "binary", "affine", "cast", "gemm", "reduce", "ternary", "indexing"] {
         println!("cargo:rerun-if-changed=../kernels/{kernel}.cpp");
     }
     gcu::build_kernels();
@@ -18,7 +18,7 @@ mod gcu {
     pub fn build_kernels() -> () {
         for platform in ["pavo", "dorado", "scorpio"] {
             for kernel in ["unary", "dotllm", 
-                "fill", "binary", "affine", "cast", "gemm"] {
+                "fill", "binary", "affine", "cast", "gemm", "reduce", "ternary", "indexing"] {
                 let in_file = "../kernels/".to_string() + kernel + ".cpp";
                 let in_filename = std::path::Path::new(&in_file);
 

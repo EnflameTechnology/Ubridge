@@ -33,11 +33,17 @@
 #endif
 
 #include "utils.h"
-#include "cast_atomic.h"
 using namespace std;
 using namespace tops;
 #define tile_size 0x8000
 #define PING_PONG_SIZE 2
+
+template <typename T, typename TOUT>
+__device__ void atomic_cast(TOUT* out_ptr, T* src_ptr, 
+                                            unsigned int elements) {
+   convert<TOUT, T>(reinterpret_cast<TOUT*>(out_ptr), src_ptr, elements);
+}
+
 
 template <typename T, typename OUTT>
 __device__ void cast_kernel(T* in, OUTT* out, int len) {
@@ -130,8 +136,10 @@ __device__ void cast_kernel(T* in, OUTT* out, int len) {
 
     // call atomic op here
     if (thread_len > 0) {
-      cast_atomic<T, OUTT, RoundingMode_t::RM_DEFAULT>(reinterpret_cast<OUTT*>(out_buffer), reinterpret_cast<T*>(in_buffer), thread_len);
-
+      atomic_cast<T, OUTT>(reinterpret_cast<OUTT*>(out_buffer[pp_flag]), reinterpret_cast<T*>(in_buffer[pp_flag]), thread_len);
+      // for (int i=0; i< thread_len; i++) {
+      //   printf("in %.2f, out %.2f  ", static_cast<float>(in_buffer[pp_flag][i]), (float)out_buffer[pp_flag][i]);
+      // }
       evs_out[pp_flag] = ctxs_out[pp_flag].trigger();
     }
 
@@ -145,9 +153,6 @@ __device__ void cast_kernel(T* in, OUTT* out, int len) {
       }
 
       if (thread_len_next > 0) {
-        // ctxs_out[pp_flag_prev].set_dst_addr(out + thread_off_next);
-        // ctxs_out[pp_flag_prev].set_src_addr(out_buffer[pp_flag_prev]);
-        // ctxs_out[pp_flag_prev].set_total_size(thread_len_next);
         ctxs_out[pp_flag_prev].config_memcpy(
         tops::mdspan(tops::Global, out + thread_off_next,
                      thread_len_next),
@@ -232,31 +237,31 @@ extern "C" __global__ void FN_NAME( \
 // CAST_OP(__bf16, __fp16, cast_bf16_f16)
 // CAST_OP(__bf16, float, cast_bf16_f32)
 
-CAST_OP(__fp16, int8_t, cast_f16_i8)
+// CAST_OP(__fp16, int8_t, cast_f16_i8)
 CAST_OP(__fp16, int16_t, cast_f16_i16)
 CAST_OP(__fp16, int32_t, cast_f16_i32)
 CAST_OP(__fp16, float, cast_f16_f32)
 // CAST_OP(__fp16, __bf16, cast_f16_bf16)
 
-CAST_OP(float, int8_t, cast_f32_i8)
+// CAST_OP(float, int8_t, cast_f32_i8)
 CAST_OP(float, int16_t, cast_f32_i16)
 CAST_OP(float, int32_t, cast_f32_i32)
 CAST_OP(float, __fp16, cast_f32_f16)
 // CAST_OP(float, __bf16, cast_f32_bf16)
 
-CAST_OP(int8_t, int16_t, cast_i8_i16)
-CAST_OP(int8_t, int32_t, cast_i8_i32)
-CAST_OP(int8_t, float, cast_i8_f32)
-CAST_OP(int8_t, __fp16, cast_i8_f16)
+// CAST_OP(int8_t, int16_t, cast_i8_i16)
+// CAST_OP(int8_t, int32_t, cast_i8_i32)
+// CAST_OP(int8_t, float, cast_i8_f32)
+// CAST_OP(int8_t, __fp16, cast_i8_f16)
 // CAST_OP(int8_t, __bf16, cast_i8_bf16)
 
-CAST_OP(int16_t, int8_t, cast_i16_i8)
+// CAST_OP(int16_t, int8_t, cast_i16_i8)
 CAST_OP(int16_t, int32_t, cast_i16_i32)
 CAST_OP(int16_t, float, cast_i16_f32)
 CAST_OP(int16_t, __fp16, cast_i16_f16)
 // CAST_OP(int16_t, __bf16, cast_i16_bf16)
 
-CAST_OP(int32_t, int8_t, cast_i32_i8)
+// CAST_OP(int32_t, int8_t, cast_i32_i8)
 CAST_OP(int32_t, int16_t, cast_i32_i16)
 CAST_OP(int32_t, float, cast_i32_f32)
 CAST_OP(int32_t, __fp16, cast_i32_f16)
@@ -286,15 +291,15 @@ int test() {
   T *lhs_d; OUTT *out_d;
   int *shape_lhs_d;
   T *lhs_h; OUTT *out_h;
-  size_t size_lhs = 1024;
+  size_t size_lhs = 64*4096;
   size_t size_out = size_lhs;
   size_t dim = 1;
   topsHostMalloc((T**)&lhs_h, size_lhs * sizeof(T));
   topsHostMalloc((T**)&out_h, size_out * sizeof(OUTT));
-    T a = 0.5;
+    // T a = 0.5;
     OUTT zero = 0.0;
     for (size_t i = 0; i < size_lhs; i++) {
-        lhs_h[i] = static_cast<T>(a);
+        lhs_h[i] = static_cast<T>(0.5);
     }
     for (size_t i = 0; i < size_out; i++) {
         out_h[i] = static_cast<OUTT>(zero);
@@ -307,23 +312,16 @@ int test() {
                   topsMemcpyHostToDevice);
   topsMemcpy(out_d, out_h, size_out * sizeof(OUTT),
                   topsMemcpyHostToDevice);
-  int grids = size_out/tile_size;
-  int threads = 6;
-  if (grids < 1) {
-    grids = 1;
-  } else if (grids / 6 > 0) {
-    grids = grids / 6;
-  } else {
-    threads = 1;
-  }
 
-  cast_u32_f32<<<dim3(grids, 1, 1), dim3(threads, 1, 1)>>>(size_out, lhs_d, out_d);
+  cast_f16_f32<<<dim3(1, 1, 1), dim3(12, 1, 1)>>>(size_out, lhs_d, out_d);
 
   printf("info: copy Device2Host\n");
-  topsMemcpy(out_h, out_d, size_out * sizeof(T), topsMemcpyDeviceToHost);
+  topsMemcpy(out_h, out_d, size_out * sizeof(OUTT), topsMemcpyDeviceToHost);
 
   for (size_t j = 0; j < size_out; j++) {
-      printf("%.2f, ", static_cast<OUTT>(out_h[j]));
+      OUTT dif = static_cast<OUTT>(0.5) - static_cast<OUTT>(out_h[j]);
+      if (dif > static_cast<OUTT>(0.0000001f))
+        printf("%.5f, ", dif);
   }
   topsHostFree(lhs_h);
   topsHostFree(out_h);
@@ -333,5 +331,5 @@ int test() {
 }
 
 int main() {
-    return test<u_int32_t, float>();
+    return test<__fp16, float>();
 }
