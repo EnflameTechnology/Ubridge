@@ -197,15 +197,28 @@ impl DeviceExecutor {
         ];
 
         let cast_functions = vec![
-            "cast_f16_i8", "cast_f16_i16", "cast_f16_i32", "cast_f16_f32", 
-            "cast_f32_i8", "cast_f32_i16", "cast_f32_i32", "cast_f32_f16", 
-            "cast_i8_i16", "cast_i8_i32", "cast_i8_f32", "cast_i8_f16", 
-            "cast_i16_i8", "cast_i16_i32", "cast_i16_f32", "cast_i16_f16", 
-            "cast_i32_i8", "cast_i32_i16", "cast_i32_f32", "cast_i32_f16",
+            "cast_f16_i16", "cast_f16_i32", "cast_f16_f32", 
+            "cast_f32_i16", "cast_f32_i32", "cast_f32_f16", 
+            // "cast_i8_i16", "cast_i8_i32", "cast_i8_f32", "cast_i8_f16", "cast_f16_i8", "cast_f32_i8", "cast_i16_i8", "cast_i32_i8", 
+            "cast_i16_i32", "cast_i16_f32", "cast_i16_f16", 
+            "cast_i32_i16", "cast_i32_f32", "cast_i32_f16",
             "cast_u8_u16", "cast_u8_u32", "cast_u8_f32", "cast_u8_f16", 
             "cast_u16_u8", "cast_u16_u32", "cast_u16_f32", "cast_u16_f16",
             "cast_u32_u8", "cast_u32_u16", "cast_u32_f32", "cast_u32_f16"
         ];
+
+        let reduce_functions = vec!["fast_min_f32", "fast_min_f16","fast_min_i8",
+            "fast_max_f32", "fast_max_f16","fast_max_i8",
+            "fast_sum_f32", "fast_sum_f16","fast_sum_i8"];
+
+        let where_functions = vec!["where_i64_f32", "where_i64_f64", "where_i64_u8", "where_i64_u32", "where_i64_i64",
+            "where_u32_f32", "where_u32_f64", "where_u32_u8", "where_u32_u32", "where_u32_i64",
+            "where_u8_f32", "where_u8_f64", "where_u8_u8", "where_u8_u32", "where_u8_i64"];
+
+        let index_functions = vec!["is_i64_bf16", "is_u32_bf16", "is_u8_bf16", "is_i64_f16", "is_u32_f16",
+            "is_u8_f16", "is_i64_f32", "is_i64_f64", "is_i64_u8", "is_i64_u32",
+            "is_i64_i64", "is_u32_f32", "is_u32_f64", "is_u32_u8", "is_u32_i64", "is_u32_u32", 
+            "is_u8_f32", "is_u8_f64", "is_u8_u8", "is_u8_u32", "is_u8_i64"];
 
         let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
         match get_kernels(device_id, kernel_platform) {
@@ -225,6 +238,11 @@ impl DeviceExecutor {
                                 function_map.insert(name, Arc::new(function));
                             }
                         }
+
+                        let name = format!("{}_u8", "ucopy");
+                        println!("Load function {}", name);
+                        let function = _module_map[module].get_function(&name).unwrap();
+                        function_map.insert(name, Arc::new(function));
                     } else if module == "binary" {
                         for dt in ["bf16", "f16", "f32"] {
                             for func in &binary_functions {
@@ -266,6 +284,24 @@ impl DeviceExecutor {
                             println!("Load function {}", name);
                             let function = _module_map[module].get_function(&name).unwrap();
                             function_map.insert(name, Arc::new(function));
+                        }
+                    } else if module == "reduce" {
+                        for func in &reduce_functions {
+                            println!("Load function {}", func);
+                            let function = _module_map[module].get_function(&func).unwrap();
+                            function_map.insert(func.to_string(), Arc::new(function));
+                        }
+                    } else if module == "ternary" {
+                        for func in &where_functions {
+                            println!("Load function {}", func);
+                            let function = _module_map[module].get_function(&func).unwrap();
+                            function_map.insert(func.to_string(), Arc::new(function));
+                        }
+                    } else if module == "indexing" {
+                        for func in &index_functions {
+                            println!("Load function {}", func);
+                            let function = _module_map[module].get_function(&func).unwrap();
+                            function_map.insert(func.to_string(), Arc::new(function));
                         }
                     }
                     else {

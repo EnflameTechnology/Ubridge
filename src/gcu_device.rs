@@ -134,6 +134,9 @@ impl GcuDevice {
         || (_module_name == "binary" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
         || (_module_name == "affine" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
         || (_module_name == "cast" && self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
+        || (_module_name == "reduce" && self.executor.has_function(_module_name.to_string(), func_name.to_string()))
+        || (_module_name == "ternary" && self.executor.has_function(_module_name.to_string(), func_name.to_string()))
+        || (_module_name == "indexing" && self.executor.has_function(_module_name.to_string(), func_name.to_string()))
         || _module_name=="gemm"
         {
             match &self.executor.function_map{
@@ -149,6 +152,8 @@ impl GcuDevice {
                 _=> {}
             }
 
+        } else {
+            println!("Kernel {} not found!", func_name);
         }
         Ok(GcuFunction::new(func_name.to_string(), kernel_path.to_string()))
     }

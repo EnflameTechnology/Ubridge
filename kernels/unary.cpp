@@ -18,7 +18,7 @@
 #include <tops/topsrtc.h>
 #include <tops/half.h>
 #include <tops/bfloat.h>
-
+#include <string>
 #include <tops/tops_runtime.h>
 #include <tops/topsrtc.h>
 #include <krt/scalar.h>
@@ -26,7 +26,6 @@
 #include <krt/dispatch.h>
 #include <krt/leaptr.h>
 #include <krt/vector_infra.h>
-
 #if __GCU_ARCH__ < 300 
 #include "pavo/vector_impl.h"
 #include "pavo/vector_mask_impl.h"
@@ -150,7 +149,6 @@ __device__ __forceinline__ void unary_atomic(T* in, T* out, int len, UNARY_TYPE 
 {
   tops_dte_ctx_t ctx;
   ctx.init();
-  #if __GCU_ARCH__ >= 300 
   switch (tp) {
     case UNARY_TYPE_NEG:
       {
@@ -237,105 +235,6 @@ __device__ __forceinline__ void unary_atomic(T* in, T* out, int len, UNARY_TYPE 
     default:
       break;
     }
-  #endif
-
-  #if __GCU_ARCH__ < 300 
-  printf("len {%d}, type {%d}", len, tp);
-  constexpr int vlen = tops::hvlength<VT>();
-
-  generic_ptr src_addr = reinterpret_cast<generic_ptr>(in);
-  generic_ptr dst_addr = reinterpret_cast<generic_ptr>(out);
-
-  constexpr int bpe = sizeof(T);
-  constexpr int vec_elems =
-      sizeof(typename tops::unified_scalar<T>::type) * TOPS_VECTOR_LENGTH / bpe;
-  using vtype = typename tops::scalar_to_vector<T, vec_elems>::type;
-
-  // auto src_leaptr = leaptr<T>(src_addr, 1);
-  leaptr<vtype> src_leaptr = simple_leaptr<vtype>(src_addr);
-  leaptr<vtype> dst_leaptr = simple_leaptr<vtype>(dst_addr);
-
-  int group_num = (len + vec_elems - 1) / vec_elems;
-
-  vtype src, dst;
-
-  for (int i = 0; i < group_num; i++) {
-    src = src_leaptr.load();
-    switch (tp) {
-    case UNARY_TYPE_NEG:
-      {
-        dst = tops::vneg<VT>(src);
-        break;
-      }
-    case UNARY_TYPE_EXP:
-      {
-        dst = tops::vexp<VT>(src);
-        break;
-      }
-    case UNARY_TYPE_LOG:
-      {
-        dst = tops::vlog<VT>(src);
-        break;
-      }
-    case UNARY_TYPE_SIN:
-      {
-        dst = tops::vsin<vbfloat>(src);
-        break;
-      }
-    case UNARY_TYPE_COS:
-      {
-        dst = tops::vcos<VT>(src);
-        break;
-      }
-    case UNARY_TYPE_ABS:
-      {
-        dst = tops::vabs<VT>(src);
-        break;
-      }
-    case UNARY_TYPE_MUL:
-      {
-        dst = tops::vneg<VT>(src);
-        break;
-      }
-    case UNARY_TYPE_SQUARE:
-      {
-        dst = tops::vmul<VT>(src, src);
-        break;
-      }
-    case UNARY_TYPE_SQRT:
-      {
-        dst = tops::vsqrt<VT>(src);
-        break;
-      }
-    case UNARY_TYPE_GELU:
-      {
-        dst = tops::vgelu<VT>(src);
-        break;
-      }
-    case UNARY_TYPE_RELU:
-      {
-        dst = tops::vmax<VT>(src, tops::vzero<VT>());
-        break;
-      }
-    // case UNARY_TYPE_ELU:
-    //   break;
-    case UNARY_TYPE_COPY:
-      {
-        dst = src;
-        break;
-      }
-    default:
-      break;
-    }
-
-    dst_leaptr.store(dst);
-  }
-
-
-// UNARY_OP1(tops::bfloat, vbfloat, uelu_bf16, elu_fwd(x[i], param))
-#endif
-
-
 }
 
 
@@ -434,6 +333,10 @@ __device__ void unary_kernel(T* in, T* out, int len, UNARY_TYPE tp) {
     if (thread_len > 0) {
       unary_atomic<T, VT>(in_buffer[pp_flag], out_buffer[pp_flag],
                                thread_len, tp);
+      // printf("\nUnary buffer: ");
+      // for (int j=0; j<thread_len; j++) {
+      //   printf("in %.5f, out %.5f   ", static_cast<float>(in_buffer[pp_flag][j]), static_cast<float>(out_buffer[pp_flag][j]));
+      // }
       evs_out[pp_flag] = ctxs_out[pp_flag].trigger();
     }
 
@@ -447,9 +350,6 @@ __device__ void unary_kernel(T* in, T* out, int len, UNARY_TYPE tp) {
       }
 
       if (thread_len_next > 0) {
-        // ctxs_out[pp_flag_prev].set_dst_addr(out + thread_off_next);
-        // ctxs_out[pp_flag_prev].set_src_addr(out_buffer[pp_flag_prev]);
-        // ctxs_out[pp_flag_prev].set_total_size(thread_len_next);
         ctxs_out[pp_flag_prev].config_memcpy(
         tops::mdspan(tops::Global, out + thread_off_next,
                      thread_len_next),
@@ -488,7 +388,6 @@ UNARY_OP(__bf16, vbfloat, urelu_bf16, UNARY_TYPE_RELU)
 UNARY_OP(__bf16, vbfloat, usilu_bf16, UNARY_TYPE_SILU) 
 UNARY_OP(__bf16, vbfloat, utanh_bf16, UNARY_TYPE_TANH) 
 UNARY_OP(__bf16, vbfloat, urecip_bf16, UNARY_TYPE_RECIP) 
-UNARY_OP(__bf16, vbfloat, ucopy_bf16, UNARY_TYPE_COPY) 
 UNARY_OP(__bf16, vbfloat, uelu_bf16, UNARY_TYPE_ELU) 
 
 UNARY_OP(__fp16, vhalf, uneg_f16, UNARY_TYPE_NEG)
@@ -505,7 +404,6 @@ UNARY_OP(__fp16, vhalf, urelu_f16, UNARY_TYPE_RELU)
 UNARY_OP(__fp16, vhalf, usilu_f16, UNARY_TYPE_SILU)
 UNARY_OP(__fp16, vhalf, utanh_f16, UNARY_TYPE_TANH)
 UNARY_OP(__fp16, vhalf, urecip_f16, UNARY_TYPE_RECIP)
-UNARY_OP(__fp16, vhalf, ucopy_f16, UNARY_TYPE_COPY)
 UNARY_OP(__fp16, vhalf, uelu_f16, UNARY_TYPE_ELU)
 
 
@@ -523,16 +421,175 @@ UNARY_OP(float, vfloat, urelu_f32, UNARY_TYPE_RELU)
 UNARY_OP(float, vfloat, usilu_f32, UNARY_TYPE_SILU)
 UNARY_OP(float, vfloat, utanh_f32, UNARY_TYPE_TANH)
 UNARY_OP(float, vfloat, urecip_f32, UNARY_TYPE_RECIP)
-UNARY_OP(float, vfloat, ucopy_f32, UNARY_TYPE_COPY)
 UNARY_OP(float, vfloat, uelu_f32, UNARY_TYPE_ELU)
 
+#define PRINTHELPER(ARRAY, SZ, MSG) \
+  printf(MSG); \
+  for (int i=0; i< SZ; i++) \
+    printf("%d, ", ARRAY[i]); \
+  printf("\n") \
+
+#define PRINTHELPER 
+template <typename T, int SRCRANK, int DSTRANK>
+__device__ void unary_kernel_non_contiguous(T* in, T* out, const size_t op_type, const size_t origin_numel, 
+        const size_t numel, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_strides) {
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx); 
+    // bool is_src_dense = is_non_overlapping_dense(origin_num_dims, dims_and_strides, 
+    //         dims_and_strides + origin_num_dims, dims_and_strides + 2 * origin_num_dims);
+    // bool is_dst_dense = is_non_overlapping_dense(num_dims, dims_and_strides + origin_num_dims * 3, 
+    //         dims_and_strides + origin_num_dims * 3 + num_dims, dims_and_strides + origin_num_dims * 3 + 2 * num_dims);
+    // bool is_same_perm = (origin_num_dims==num_dims)?is_same_array(num_dims, dims_and_strides + 2 * origin_num_dims,  
+    //                         dims_and_strides + origin_num_dims * 3 + 2 * num_dims) : true;
+  // if (is_src_dense && is_dst_dense && origin_numel == numel && !is_same_perm) { //transpose pattern
+  // } else if (!is_src_dense && is_dst_dense && is_any_zero(origin_num_dims, dims_and_strides + origin_num_dims)) { //broadcasting pattern
+  // } else if (!is_src_dense && is_dst_dense && origin_numel >= numel ) { //slice pattern
+  // else if (is_src_dense && !is_dst_dense && origin_numel <= numel) {//deslice pattern
+  //     printf("\ndeslice pattern %d!\n", numel);
+  // } else if (origin_num_dims == num_dims && //linear copy pattern
+  //           is_same_array(num_dims, dims_and_strides,  dims_and_strides + origin_num_dims * 3) && 
+  //           is_same_array(num_dims, dims_and_strides + origin_num_dims,  dims_and_strides + origin_num_dims * 3 + num_dims)) {
+  //     printf("\nLinear copy pattern %d!\n", numel);
+  // } 
+
+    int dst_shape[DSTRANK];
+    int dst_layout[DSTRANK];
+    for (int j = 0; j < num_dims; ++j) {
+      dst_shape[j] = dims_and_strides[j + 3 * origin_num_dims];
+      dst_layout[j] = dims_and_strides[3 * origin_num_dims + 2 * num_dims + j];
+    }
+    PRINTHELPER(dst_shape, DSTRANK, "\ndst_shape = ");
+
+    if (op_type == 1 && origin_num_dims > 0) {
+        int src_shape[SRCRANK];
+        int src_layout[SRCRANK];
+        for (int j = 0; j < origin_num_dims; ++j) {
+          src_shape[j] = dims_and_strides[j];
+          src_layout[j] = dims_and_strides[2 * origin_num_dims + j];
+        }
+        PRINTHELPER(src_shape, origin_num_dims, "\nsrc_shape = ");
+        PRINTHELPER(src_layout, origin_num_dims, "\nsrc layout = ");
+        PRINTHELPER(dst_layout, num_dims, "\ntranspose pattern, dst layout = ");
+        tops::mdspan src_mem(tops::Global, in, src_shape);
+        tops::mdspan dst_mem(tops::Global, out, dst_shape);
+        tops::transpose(ctx, dst_mem, src_mem, src_layout); //Optimization required!
+    } else if (op_type == 2) { //TODO, broadcast pattern
+      if (origin_num_dims > 0) {
+        int src_shape[SRCRANK];
+        int src_layout[SRCRANK];
+        for (int j = 0; j < SRCRANK; ++j) {
+          src_shape[j] = dims_and_strides[j];
+          src_layout[j] = dims_and_strides[2 * SRCRANK + j];
+        }
+        PRINTHELPER(src_shape, SRCRANK, "\nsrc_shape = ");
+        PRINTHELPER(src_layout, SRCRANK, "\nsrc layout = ");
+      } else {
+        // printf("\nsrc_shape = %d!", 0);
+      }
+      
+      PRINTHELPER(dst_shape, DSTRANK, "\nbroadcasting pattern, dst shape = ");
+
+    } else if (op_type == 3) { //TODO purmutation pattern
+        // printf("\npurmute pattern %d!\n", numel);
+        PRINTHELPER(dst_layout, DSTRANK, "\npurmute pattern, dst layout = ");
+
+    } else if (op_type == 4) { //TODO narrow pattern
+        PRINTHELPER(dst_shape, DSTRANK, "\nnarrow pattern, dst shape = ");
+    } else {
+        printf("\nNot supported pattern type %d!\n", op_type);
+    }
+
+}
+
+#define UNARY_COPY_OP(TYPE, VT, FN_NAME, TP) \
+extern "C" __global__ void FN_NAME( \
+    const size_t origin_numel, \
+    const size_t numel, \
+    const size_t origin_num_dims, \
+    const size_t num_dims, \
+    size_t *dims_and_strides, \
+    const size_t op_type, \
+    TYPE *inp, \
+    TYPE *out) \
+{ \
+    bool cont = true; \
+    __local__ __valigned__ size_t info[128]; \
+    tops_dte_ctx_t ctx; \
+    tops::dte_scope s(ctx); \
+    if (dims_and_strides) { \
+      tops::mdspan srcInfo(tops::Global, dims_and_strides, origin_num_dims * 3 + num_dims * 3); \
+      tops::mdspan dstInfo(tops::Private, info, origin_num_dims * 3 + num_dims * 3); \
+      tops::memcpy(ctx, dstInfo, srcInfo); \
+    } \
+    if (num_dims==2) {\
+      if (origin_num_dims == 2)\
+        unary_kernel_non_contiguous<TYPE, 2, 2>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 3)\
+        unary_kernel_non_contiguous<TYPE, 3, 2>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 4)\
+        unary_kernel_non_contiguous<TYPE, 4, 2>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 5)\
+        unary_kernel_non_contiguous<TYPE, 5, 2>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims <= 1)\
+        unary_kernel_non_contiguous<TYPE, 1, 2>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+    } else if (num_dims==3) {\
+      if (origin_num_dims == 3)\
+        unary_kernel_non_contiguous<TYPE, 3, 3>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 4)\
+        unary_kernel_non_contiguous<TYPE, 4, 3>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 5)\
+        unary_kernel_non_contiguous<TYPE, 5, 3>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 2)\
+        unary_kernel_non_contiguous<TYPE, 2, 3>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims <= 1)\
+        unary_kernel_non_contiguous<TYPE, 1, 3>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+    } else if (num_dims == 4) {\
+      if (origin_num_dims == 5)\
+        unary_kernel_non_contiguous<TYPE, 5, 4>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 4)\
+        unary_kernel_non_contiguous<TYPE, 4, 4>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 3)\
+        unary_kernel_non_contiguous<TYPE, 3, 4>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 2)\
+        unary_kernel_non_contiguous<TYPE, 2, 4>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims <= 1)\
+        unary_kernel_non_contiguous<TYPE, 1, 4>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+    } else if (num_dims==5) {\
+      if (origin_num_dims <= 1)\
+        unary_kernel_non_contiguous<TYPE, 1, 5>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 2)\
+        unary_kernel_non_contiguous<TYPE, 2, 5>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 3)\
+        unary_kernel_non_contiguous<TYPE, 3, 5>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 4)\
+        unary_kernel_non_contiguous<TYPE, 4, 5>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 5)\
+        unary_kernel_non_contiguous<TYPE, 5, 5>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+    } else if (num_dims==1) {\
+      if (origin_num_dims <= 1)\
+        unary_kernel_non_contiguous<TYPE, 1, 1>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 2)\
+        unary_kernel_non_contiguous<TYPE, 2, 1>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 3)\
+        unary_kernel_non_contiguous<TYPE, 3, 1>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 4)\
+        unary_kernel_non_contiguous<TYPE, 4, 1>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+      else if (origin_num_dims == 5)\
+        unary_kernel_non_contiguous<TYPE, 5, 1>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+    }\ 
+} \
+
+
+UNARY_COPY_OP(__bf16, vbfloat, ucopy_bf16, UNARY_TYPE_COPY) 
+UNARY_COPY_OP(__fp16, vhalf, ucopy_f16, UNARY_TYPE_COPY)
+UNARY_COPY_OP(float, vfloat, ucopy_f32, UNARY_TYPE_COPY)
+UNARY_COPY_OP(u_int8_t, vuchar, ucopy_u8, UNARY_TYPE_COPY)
+UNARY_COPY_OP(u_int32_t, vuint, ucopy_u32, UNARY_TYPE_COPY)
+UNARY_COPY_OP(double, vfloatx2, ucopy_f64, UNARY_TYPE_COPY)
 
 // UNARY_OP(int8_t, vchar, ucopy_i8, UNARY_TYPE_COPY)
 // UNARY_OP(u_int8_t, vuchar, ucopy_u8, UNARY_TYPE_COPY)
 // UNARY_OP(int32_t, vint, ucopy_i32, UNARY_TYPE_COPY)
-// UNARY_OP(u_int32_t, vuint, ucopy_u32, UNARY_TYPE_COPY)
-// UNARY_OP(double, vfloatx2, ucopy_f64, UNARY_TYPE_COPY)
-
 
 int test() {
   __fp16 *lhs_d, *out_d;
@@ -568,7 +625,7 @@ int test() {
   //   threads = 1;
   // }
 
-  ucopy_f16<<<dim3(1, 1, 1), dim3(1, 12, 1)>>>(size_out, lhs_d, out_d);
+  // ucopy_f16<<<dim3(1, 1, 1), dim3(1, 12, 1)>>>(size_out, lhs_d, out_d);
 
   printf("info: copy Device2Host\n");
   topsMemcpy(out_h, out_d, size_out * sizeof(__fp16), topsMemcpyDeviceToHost);

@@ -654,21 +654,15 @@ extern "C" __global__ void FN_NAME( \
       tops::mdspan srcInfo(tops::Global, dims_and_strides, num_dims * 3); \
       tops::mdspan dstInfo(tops::Private, info, num_dims * 3); \
       tops::memcpy(ctx, dstInfo, srcInfo); \
-      for (int i=0; i< num_dims * 3; i++) \
-        printf("%d ", info[i]); \
       lhs_cont = is_contiguous(num_dims, info, info + 1 * num_dims); \
       rhs_cont = is_contiguous(num_dims, info, info + 2 * num_dims); \
     } \
-    printf("Contiguous: left %d, right %d\n", lhs_cont, rhs_cont); \
     if (lhs_cont && rhs_cont) { \
       binary_kernel<TYPE, TYPE_OUT>(lhs, rhs, out, numel, TP); \
     } else if (lhs_cont) { \
-      binary_kernel_right<TYPE, TYPE_OUT>(lhs, rhs, out, numel, num_dims, info, TP); \
     } else { \
-      assert(false); \
     } \
 } \
-
 
 BINARY_OP(__bf16, __bf16, badd_bf16, BINARY_TYPE_ADD)
 BINARY_OP(__bf16, __bf16, bsub_bf16, BINARY_TYPE_SUB)

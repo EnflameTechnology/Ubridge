@@ -19,7 +19,7 @@
 #include <tops/bfloat.h>
 #include "gemm_general.h"
 #include "tops/tops_runtime.h"
-#include "op_aten_gemm_tuner.h"
+// #include "op_aten_gemm_tuner.h"
 #include "utils.h"
 #include "dot_core_kernels.h"
 
@@ -28,7 +28,25 @@ using namespace std;
 #define TEMPLATE_ALIGN_UP(a, b) (((a + b - 1) / b) * b)
 #define L1_ALIGN_SIZE (128)
 #define tile_size 1024
-
+typedef enum {
+  TOPSOP_DATA_NONE = -1,  /**< TOPSOP_DATA_NONE -1  */
+  TOPSOP_DATA_I8 = 0,     /**< TOPSOP_DATA_I8 0  */
+  TOPSOP_DATA_U8,         /**< TOPSOP_DATA_U8 1  */
+  TOPSOP_DATA_I16,        /**< TOPSOP_DATA_I16 2  */
+  TOPSOP_DATA_U16,        /**< TOPSOP_DATA_U16 3  */
+  TOPSOP_DATA_FP16,       /**< TOPSOP_DATA_FP16 4  */
+  TOPSOP_DATA_BF16,       /**< TOPSOP_DATA_BF16 5  */
+  TOPSOP_DATA_I32,        /**< TOPSOP_DATA_I32 6  */
+  TOPSOP_DATA_U32,        /**< TOPSOP_DATA_U32 7  */
+  TOPSOP_DATA_FP32,       /**< TOPSOP_DATA_FP32 8  */
+  TOPSOP_DATA_EF32,       /**< TOPSOP_DATA_EF32 9  */
+  TOPSOP_DATA_TF32,       /**< TOPSOP_DATA_TF32 10  */
+  TOPSOP_DATA_I64,        /**< TOPSOP_DATA_I64 11  */
+  TOPSOP_DATA_U64,        /**< TOPSOP_DATA_U64 12  */
+  TOPSOP_DATA_F64,        /**< TOPSOP_DATA_F64 13  */
+  TOPSOP_DATA_PRED,       /**< TOPSOP_DATA_PRED 14  */
+  TOPSOP_DATA_I4,         /**< TOPSOP_DATA_I4 15  */
+} topsopDataType_t;
 
 template <typename T>
 __device__ void gemm_kernel(T *lhs, T *rhs, T *out, T *bias,
@@ -480,108 +498,108 @@ extern "C" __global__ void gemm_i8(int8_t *in_a, int8_t *in_b,
 }
 
 int main(void) {
-  topsError_t err = topsSuccess;
-  // Print the vector length to be used, and compute its size
-  int ITERATION = 20;
-  int b = 13;
-  int m = 13;
-  int n = 4096;
-  int k = 4096;
-  bool check = false;
-  DATA<__fp16> data(b, m, k, n, 8, check);
+  // topsError_t err = topsSuccess;
+  // // Print the vector length to be used, and compute its size
+  // int ITERATION = 20;
+  // int b = 13;
+  // int m = 13;
+  // int n = 4096;
+  // int k = 4096;
+  // bool check = false;
+  // DATA<__fp16> data(b, m, k, n, 8, check);
 
-  AtenGemmInfo info;
-  info.data_type = TOPSOP_DATA_FP16;
-  info.out_data_type = TOPSOP_DATA_FP16;
-  info.is_batch = true;
-  info.batch = b;
-  info.M = m;
-  info.K = k;
-  info.N = n;
-  info.transa = false;
-  info.transb = false;
-  AtenGemmTune tune;
-  AtenGemmTuner tuner;
-  tuner.Tuner(info, &tune);
-  GEMM_OP_PARAS gemm_op_para_;
-  printf("Tuning results: csb_batch (%d), sip_batch (%d), lhs_csb_k (%d), rhs_csb_k (%d), \
-          lhs_csb_m (%d), rhs_csb_n (%d), sip_m (%d), sip_k (%d), sip_n (%d), batch_multicore (%d), \
-          lhs_multicore (%d), rhs_multicore (%d), cdma_lhs_pingpong (%d), sdma_rhs_pingpong (%d)\n",
-          tune.csb_batch, tune.sip_batch, tune.lhs_csb_k, tune.rhs_csb_k, tune.lhs_csb_m, tune.rhs_csb_n, 
-          tune.sip_m, tune.sip_k, tune.sip_n, tune.batch_multicore, tune.lhs_multicore, tune.rhs_multicore,
-           tune.cdma_lhs_pingpong, tune.cdma_rhs_pingpong, tune.sdma_lhs_pingpong, tune.sdma_rhs_pingpong);
-    // gemm_op_para_.input_dtype = info.data_type;  // 0
-    // gemm_op_para_.output_dtype = info.out_data_type;
-    // gemm_op_para_.csb_batch = tune.csb_batch;
-    // gemm_op_para_.sip_batch = tune.sip_batch;
-    // gemm_op_para_.lhs_csb_k = tune.lhs_csb_k;
-    // gemm_op_para_.rhs_csb_k = tune.rhs_csb_k;  // 5
-    // gemm_op_para_.lhs_csb_m = tune.lhs_csb_m;
-    // gemm_op_para_.rhs_csb_n = tune.rhs_csb_n;
-    // gemm_op_para_.sip_m = tune.sip_m;
-    // gemm_op_para_.sip_k = tune.sip_k;
-    // gemm_op_para_.sip_n = tune.sip_n;  // 10
-    // gemm_op_para_.batch_multicore = tune.batch_multicore;
-    // gemm_op_para_.lhs_multicore = tune.lhs_multicore;
-    // gemm_op_para_.rhs_multicore = tune.rhs_multicore;
-    // gemm_op_para_.lhs_pingpong = tune.cdma_lhs_pingpong;
-    // gemm_op_para_.rhs_pingpong = tune.cdma_rhs_pingpong;
-    // gemm_op_para_.sdma_lhs_pingpong = tune.sdma_lhs_pingpong;  // 15
-    // gemm_op_para_.sdma_rhs_pingpong = tune.sdma_rhs_pingpong;
-    // gemm_op_para_.rhs_repeat_copy = tune.rhs_repeatcopy;
-    // gemm_op_para_.lhs_transpose = tune.lhs_tranpose;
-    // gemm_op_para_.rhs_transpose = tune.rhs_tranpose;
-    // gemm_op_para_.out_transpose = tune.out_tranpose;  // 20
-    // gemm_op_para_.alpha = 1.0;
-    // gemm_op_para_.beta = 0.0;
-    // gemm_op_para_.coef = static_cast<float>(0);
-    // gemm_op_para_.act_mode = TOPSOP_ACTIVATION_NONE;
-    // gemm_op_para_.bias = 0;
-    // gemm_op_para_.act_mode = 0;
+  // AtenGemmInfo info;
+  // info.data_type = TOPSOP_DATA_FP16;
+  // info.out_data_type = TOPSOP_DATA_FP16;
+  // info.is_batch = true;
+  // info.batch = b;
+  // info.M = m;
+  // info.K = k;
+  // info.N = n;
+  // info.transa = false;
+  // info.transb = false;
+  // AtenGemmTune tune;
+  // AtenGemmTuner tuner;
+  // tuner.Tuner(info, &tune);
+  // GEMM_OP_PARAS gemm_op_para_;
+  // printf("Tuning results: csb_batch (%d), sip_batch (%d), lhs_csb_k (%d), rhs_csb_k (%d), \
+  //         lhs_csb_m (%d), rhs_csb_n (%d), sip_m (%d), sip_k (%d), sip_n (%d), batch_multicore (%d), \
+  //         lhs_multicore (%d), rhs_multicore (%d), cdma_lhs_pingpong (%d), sdma_rhs_pingpong (%d)\n",
+  //         tune.csb_batch, tune.sip_batch, tune.lhs_csb_k, tune.rhs_csb_k, tune.lhs_csb_m, tune.rhs_csb_n, 
+  //         tune.sip_m, tune.sip_k, tune.sip_n, tune.batch_multicore, tune.lhs_multicore, tune.rhs_multicore,
+  //          tune.cdma_lhs_pingpong, tune.cdma_rhs_pingpong, tune.sdma_lhs_pingpong, tune.sdma_rhs_pingpong);
+  //   // gemm_op_para_.input_dtype = info.data_type;  // 0
+  //   // gemm_op_para_.output_dtype = info.out_data_type;
+  //   // gemm_op_para_.csb_batch = tune.csb_batch;
+  //   // gemm_op_para_.sip_batch = tune.sip_batch;
+  //   // gemm_op_para_.lhs_csb_k = tune.lhs_csb_k;
+  //   // gemm_op_para_.rhs_csb_k = tune.rhs_csb_k;  // 5
+  //   // gemm_op_para_.lhs_csb_m = tune.lhs_csb_m;
+  //   // gemm_op_para_.rhs_csb_n = tune.rhs_csb_n;
+  //   // gemm_op_para_.sip_m = tune.sip_m;
+  //   // gemm_op_para_.sip_k = tune.sip_k;
+  //   // gemm_op_para_.sip_n = tune.sip_n;  // 10
+  //   // gemm_op_para_.batch_multicore = tune.batch_multicore;
+  //   // gemm_op_para_.lhs_multicore = tune.lhs_multicore;
+  //   // gemm_op_para_.rhs_multicore = tune.rhs_multicore;
+  //   // gemm_op_para_.lhs_pingpong = tune.cdma_lhs_pingpong;
+  //   // gemm_op_para_.rhs_pingpong = tune.cdma_rhs_pingpong;
+  //   // gemm_op_para_.sdma_lhs_pingpong = tune.sdma_lhs_pingpong;  // 15
+  //   // gemm_op_para_.sdma_rhs_pingpong = tune.sdma_rhs_pingpong;
+  //   // gemm_op_para_.rhs_repeat_copy = tune.rhs_repeatcopy;
+  //   // gemm_op_para_.lhs_transpose = tune.lhs_tranpose;
+  //   // gemm_op_para_.rhs_transpose = tune.rhs_tranpose;
+  //   // gemm_op_para_.out_transpose = tune.out_tranpose;  // 20
+  //   // gemm_op_para_.alpha = 1.0;
+  //   // gemm_op_para_.beta = 0.0;
+  //   // gemm_op_para_.coef = static_cast<float>(0);
+  //   // gemm_op_para_.act_mode = TOPSOP_ACTIVATION_NONE;
+  //   // gemm_op_para_.bias = 0;
+  //   // gemm_op_para_.act_mode = 0;
 
 
 
-  __fp16 *h_bias =
-      reinterpret_cast<__fp16 *>(aligned_alloc(4096, n * sizeof(__fp16)));
-  for (int i=0; i< n; i++) {
-    h_bias[i] = 0.0;
-  }
-  __fp16 *d_Bias = NULL;
-  CHECK(topsMalloc(reinterpret_cast<void **>(&d_Bias), n * sizeof(__fp16)));
-  CHECK(
-      topsMemcpy(d_Bias, h_bias, n * sizeof(__fp16), topsMemcpyHostToDevice));
-
-  printf("call kernel!!!!!!!!!!!!!\n");
-  float time = 0.0;
-  float total_time = 0.0;
-  topsEvent_t start, stop;
-  for (int i=0; i< ITERATION; i++) {
-    CHECK(topsEventCreate(&start));
-    CHECK(topsEventCreate(&stop));
-
-    CHECK(topsEventRecord(start));
-
-    gemm_f16<<<1, 12>>>(data.lhs_d, data.rhs_d, data.out_d, d_Bias, info.data_type, b, m, k, n, tune.lhs_multicore, tune.rhs_multicore,
-      tune.batch_multicore, tune.lhs_tranpose, tune.rhs_tranpose, 1.0, 0.0, 0.0, 0, tune.sip_m, tune.sip_k, tune.sip_n);
-    CHECK(topsEventRecord(stop));
-    CHECK(topsEventSynchronize(stop));
-    CHECK(topsEventElapsedTime(&time, start, stop));
-    total_time += time;
-  }
-  printf("Time costs %.2f ms\n", total_time/ITERATION);
-
-  CHECK(topsGetLastError());
-  CHECK(topsMemcpy(data.out_h, data.out_d, data.size_out*sizeof(__fp16),
-    topsMemcpyDeviceToHost));
-  
-  //CPU/GPU check_data
-  if (check) { 
-    printf("Compare with CPU data...\n");
-    check_data<__fp16>(data.out_h, data.expected, b * m * n);
-  }
-
-  // for (int j=0; j< b * m * n; j++ ){
-  //   printf("%.2f ", data.out_h[j]);
+  // __fp16 *h_bias =
+  //     reinterpret_cast<__fp16 *>(aligned_alloc(4096, n * sizeof(__fp16)));
+  // for (int i=0; i< n; i++) {
+  //   h_bias[i] = 0.0;
   // }
+  // __fp16 *d_Bias = NULL;
+  // CHECK(topsMalloc(reinterpret_cast<void **>(&d_Bias), n * sizeof(__fp16)));
+  // CHECK(
+  //     topsMemcpy(d_Bias, h_bias, n * sizeof(__fp16), topsMemcpyHostToDevice));
+
+  // printf("call kernel!!!!!!!!!!!!!\n");
+  // float time = 0.0;
+  // float total_time = 0.0;
+  // topsEvent_t start, stop;
+  // for (int i=0; i< ITERATION; i++) {
+  //   CHECK(topsEventCreate(&start));
+  //   CHECK(topsEventCreate(&stop));
+
+  //   CHECK(topsEventRecord(start));
+
+  //   gemm_f16<<<1, 12>>>(data.lhs_d, data.rhs_d, data.out_d, d_Bias, info.data_type, b, m, k, n, tune.lhs_multicore, tune.rhs_multicore,
+  //     tune.batch_multicore, tune.lhs_tranpose, tune.rhs_tranpose, 1.0, 0.0, 0.0, 0, tune.sip_m, tune.sip_k, tune.sip_n);
+  //   CHECK(topsEventRecord(stop));
+  //   CHECK(topsEventSynchronize(stop));
+  //   CHECK(topsEventElapsedTime(&time, start, stop));
+  //   total_time += time;
+  // }
+  // printf("Time costs %.2f ms\n", total_time/ITERATION);
+
+  // CHECK(topsGetLastError());
+  // CHECK(topsMemcpy(data.out_h, data.out_d, data.size_out*sizeof(__fp16),
+  //   topsMemcpyDeviceToHost));
+  
+  // //CPU/GPU check_data
+  // if (check) { 
+  //   printf("Compare with CPU data...\n");
+  //   check_data<__fp16>(data.out_h, data.expected, b * m * n);
+  // }
+
+  // // for (int j=0; j< b * m * n; j++ ){
+  // //   printf("%.2f ", data.out_h[j]);
+  // // }
   return 0;
 }

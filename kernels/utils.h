@@ -2,6 +2,11 @@
 #define OP_UTILS_
 #include <tops.h>
 #include <cstdint>
+#include <vector>
+#include <mutex>
+#include <algorithm>
+#include <functional>
+#include <numeric>
 
 using namespace std;
 
@@ -120,6 +125,41 @@ __device__ __forceinline__ bool is_contiguous(
         acc *= dims[dim_idx];
     }
     return true;
+}
+
+
+__device__ __forceinline__  bool is_non_overlapping_dense(size_t ndim, size_t* dims, size_t* strides, size_t* perm) {
+  if (ndim == 1) {
+    return strides[0] == 1;
+  }
+  if (ndim >= 2) {
+    for (int i = 0; i < ndim - 1; ++i) {
+      int idx = perm[i];
+      int r_idx = perm[i + 1];
+      if (strides[idx] != strides[r_idx] * dims[r_idx]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+__device__ __forceinline__ bool is_same_array(size_t rank, size_t*src_perm, size_t* dst_perm) {
+  for (int i=0; i< rank; i++) {
+    if (src_perm[i] != dst_perm[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+__device__ __forceinline__ bool is_any_zero(size_t rank, size_t* strides) {
+    for (int i = 0; i < rank; ++i) {
+      if (strides[i] == 0) {
+        return true;
+      }
+    }
+    return false;
 }
 
 template <typename T>

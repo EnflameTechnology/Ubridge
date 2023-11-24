@@ -49,6 +49,14 @@ impl GcuLaunchConfig {
         }
     }
 
+    pub fn for_ucopy() -> Self {
+        Self {
+            grid_dim: (1, 1, 1),
+            block_dim: (1, 1, 1),
+            shared_mem_bytes: 0,
+        }
+    }
+
     #[cfg(feature = "scorpio")]
     pub fn max_sip_num() -> u32 {
         12
