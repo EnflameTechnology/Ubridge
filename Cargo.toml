@@ -19,9 +19,9 @@ float_eq = { version = "0.7.0"}
 num-traits = { version = "0.2.16"}
 
 [features]
-default= ["tops_backend", "gcu-kernels"]
+default= ["tops_backend", "gcu-kernels/scorpio"]
 cuda = ["cuda_backend"]
-tops = ["tops_backend", "gcu-kernels"]
-dorado = ["tops_backend", "gcu-kernels"]
-scorpio = ["tops_backend", "gcu-kernels"]
+tops = ["tops_backend", "gcu-kernels/pavo"]
+dorado = ["tops_backend", "gcu-kernels/dorado"]
+scorpio = ["tops_backend", "gcu-kernels/scorpio"]
 

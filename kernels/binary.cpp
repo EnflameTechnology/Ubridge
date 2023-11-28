@@ -353,16 +353,6 @@ __device__ void binary_kernel_right(T* in_a, T* in_b, TO* out, int element_num, 
       }
     }
 
-    // tops::mdspan hbm_in21(tops::Global, in_b, N);
-    // tops::mdspan l1_in21(tops::Private, in_buffer2, N);
-    // tops_dte_ctx_t ctx;
-    // tops::dte_scope s(ctx);
-
-    // tops::memcpy(ctx, l1_in21, hbm_in21);
-
-    //       for (int j=0; j<N; j++) {
-    //         printf("%.5f ", in_buffer2[j]);
-    //       }
           
     tops_dte_ctx_t ctxs_in[2];
     tops_dte_ctx_t ctxs_out;
@@ -404,7 +394,6 @@ __device__ void binary_kernel_right(T* in_a, T* in_b, TO* out, int element_num, 
                   reinterpret_cast<T*>(in_buffer1),
                   reinterpret_cast<T*>(in_buffer2),
                   dim_size, tp);
-                }
             } else {
               binary_scalar_atomic2<T, TO>(
                   reinterpret_cast<TO*>(out_buffer),
@@ -458,6 +447,7 @@ __device__ void binary_kernel_right(T* in_a, T* in_b, TO* out, int element_num, 
           ctxs_out.set_dst_offset(0, idx);
           ctxs_out.trigger_and_wait();
       }
+    }
 
 }
 
@@ -660,8 +650,8 @@ extern "C" __global__ void FN_NAME( \
     if (lhs_cont && rhs_cont) { \
       binary_kernel<TYPE, TYPE_OUT>(lhs, rhs, out, numel, TP); \
     } else if (lhs_cont) { \
-    } else { \
-    } \
+      binary_kernel_right<TYPE, TYPE_OUT>(lhs, rhs, out, numel, num_dims, info, TP); \
+    }\
 } \
 
 BINARY_OP(__bf16, __bf16, badd_bf16, BINARY_TYPE_ADD)

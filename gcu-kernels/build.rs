@@ -16,7 +16,16 @@ fn main() {
 
 mod gcu {
     pub fn build_kernels() -> () {
-        for platform in ["pavo", "dorado", "scorpio"] {
+        #[cfg(feature = "tops_backend")]
+        let platform = "pavo"; //default kernel path
+
+        #[cfg(feature = "dorado")]
+        let platform = "dorado"; 
+
+        #[cfg(feature = "scorpio")]
+        let platform = "scorpio"; 
+
+        // for platform in ["pavo", "dorado", "scorpio"] {
             for kernel in ["unary", "dotllm", 
                 "fill", "binary", "affine", "cast", "gemm", "reduce", "ternary", "indexing"] {
                 let in_file = "../kernels/".to_string() + kernel + ".cpp";
@@ -45,7 +54,7 @@ mod gcu {
                     let _ = command.spawn().expect("failed").wait_with_output();
                 }
             }
-        }
+        // }
         
     }
 }

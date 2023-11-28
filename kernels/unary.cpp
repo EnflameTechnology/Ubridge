@@ -435,23 +435,6 @@ __device__ void unary_kernel_non_contiguous(T* in, T* out, const size_t op_type,
         const size_t numel, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_strides) {
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx); 
-    // bool is_src_dense = is_non_overlapping_dense(origin_num_dims, dims_and_strides, 
-    //         dims_and_strides + origin_num_dims, dims_and_strides + 2 * origin_num_dims);
-    // bool is_dst_dense = is_non_overlapping_dense(num_dims, dims_and_strides + origin_num_dims * 3, 
-    //         dims_and_strides + origin_num_dims * 3 + num_dims, dims_and_strides + origin_num_dims * 3 + 2 * num_dims);
-    // bool is_same_perm = (origin_num_dims==num_dims)?is_same_array(num_dims, dims_and_strides + 2 * origin_num_dims,  
-    //                         dims_and_strides + origin_num_dims * 3 + 2 * num_dims) : true;
-  // if (is_src_dense && is_dst_dense && origin_numel == numel && !is_same_perm) { //transpose pattern
-  // } else if (!is_src_dense && is_dst_dense && is_any_zero(origin_num_dims, dims_and_strides + origin_num_dims)) { //broadcasting pattern
-  // } else if (!is_src_dense && is_dst_dense && origin_numel >= numel ) { //slice pattern
-  // else if (is_src_dense && !is_dst_dense && origin_numel <= numel) {//deslice pattern
-  //     printf("\ndeslice pattern %d!\n", numel);
-  // } else if (origin_num_dims == num_dims && //linear copy pattern
-  //           is_same_array(num_dims, dims_and_strides,  dims_and_strides + origin_num_dims * 3) && 
-  //           is_same_array(num_dims, dims_and_strides + origin_num_dims,  dims_and_strides + origin_num_dims * 3 + num_dims)) {
-  //     printf("\nLinear copy pattern %d!\n", numel);
-  // } 
-
     int dst_shape[DSTRANK];
     int dst_layout[DSTRANK];
     for (int j = 0; j < num_dims; ++j) {
@@ -474,20 +457,28 @@ __device__ void unary_kernel_non_contiguous(T* in, T* out, const size_t op_type,
         tops::mdspan dst_mem(tops::Global, out, dst_shape);
         tops::transpose(ctx, dst_mem, src_mem, src_layout); //Optimization required!
     } else if (op_type == 2) { //TODO, broadcast pattern
-      if (origin_num_dims > 0) {
-        int src_shape[SRCRANK];
-        int src_layout[SRCRANK];
-        for (int j = 0; j < SRCRANK; ++j) {
-          src_shape[j] = dims_and_strides[j];
-          src_layout[j] = dims_and_strides[2 * SRCRANK + j];
+      int src_shape[DSTRANK];
+      for (int j = DSTRANK - 1; j >=0; j--) {
+        if (j - (DSTRANK - SRCRANK) < 0) {
+          src_shape[j] = 1;
+        } else {
+          src_shape[j] = dims_and_strides[j - (DSTRANK - SRCRANK)];
         }
-        PRINTHELPER(src_shape, SRCRANK, "\nsrc_shape = ");
-        PRINTHELPER(src_layout, SRCRANK, "\nsrc layout = ");
-      } else {
-        // printf("\nsrc_shape = %d!", 0);
       }
-      
+      PRINTHELPER(src_shape, DSTRANK, "\nsrc_shape = ");
       PRINTHELPER(dst_shape, DSTRANK, "\nbroadcasting pattern, dst shape = ");
+
+      // if (origin_num_dims > 0) {
+        // PRINTHELPER(src_layout, SRCRANK, "\nsrc layout = ");
+      tops::mdspan src_mem(tops::Global, in, src_shape);
+      tops::mdspan dst_mem(tops::Global, out, dst_shape);
+      tops::broadcast(ctx, dst_mem, src_mem);
+      // } else {
+        // printf("\nsrc_shape = %d!", 0);
+        // tops::mdspan dst_mem(tops::Global, out, dst_shape);
+        // tops::memset(ctx, dst_mem, in[0]);
+      // }
+      
 
     } else if (op_type == 3) { //TODO purmutation pattern
         // printf("\npurmute pattern %d!\n", numel);
@@ -495,6 +486,15 @@ __device__ void unary_kernel_non_contiguous(T* in, T* out, const size_t op_type,
 
     } else if (op_type == 4) { //TODO narrow pattern
         PRINTHELPER(dst_shape, DSTRANK, "\nnarrow pattern, dst shape = ");
+        int src_shape[SRCRANK];
+        int offsets[SRCRANK];
+        for (int j = 0; j < SRCRANK; ++j) {
+          src_shape[j] = dims_and_strides[j];
+          offsets[j] = 0;
+        }
+        tops::mdspan src_mem(tops::Global, in, src_shape);
+        tops::mdspan dst_mem(tops::Global, out, dst_shape);
+        tops::slice(ctx, dst_mem, src_mem, offsets);
     } else {
         printf("\nNot supported pattern type %d!\n", op_type);
     }
