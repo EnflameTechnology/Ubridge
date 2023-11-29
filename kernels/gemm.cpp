@@ -22,12 +22,11 @@
 // #include "op_aten_gemm_tuner.h"
 #include "utils.h"
 #include "dot_core_kernels.h"
-
+#include "include/common/atomic_op.h"
 using namespace std;
 #define MAX_NUM 1571840
 #define TEMPLATE_ALIGN_UP(a, b) (((a + b - 1) / b) * b)
 #define L1_ALIGN_SIZE (128)
-#define tile_size 1024
 typedef enum {
   TOPSOP_DATA_NONE = -1,  /**< TOPSOP_DATA_NONE -1  */
   TOPSOP_DATA_I8 = 0,     /**< TOPSOP_DATA_I8 0  */
@@ -48,8 +47,8 @@ typedef enum {
   TOPSOP_DATA_I4,         /**< TOPSOP_DATA_I4 15  */
 } topsopDataType_t;
 
-template <typename T>
-__device__ void gemm_kernel(T *lhs, T *rhs, T *out, T *bias,
+template <typename Type1, typename Type2>
+__device__ void gemm_kernel(Type1 *lhs, Type2 *rhs, Type1 *out, Type1 *bias,
       int input_dtype, int input_batch,
       int input_m, int input_k, int input_n,
       int lhs_multicore, int rhs_multicore, int batch_multicore,
@@ -58,7 +57,7 @@ __device__ void gemm_kernel(T *lhs, T *rhs, T *out, T *bias,
       int sip_m, int sip_k, int sip_n) {
   int thread_num = GetThreadNum();
   int thread_id = GetThreadIdx();
-  // printf("thread_num =%d, thread_id=%d\n", thread_num, thread_id);
+  // CCPRINTF("thread_num =%d, thread_id=%d\n", thread_num, thread_id);
 
   int sip_cnt_raw = thread_num;
   int sip_idx = thread_id;
@@ -100,20 +99,21 @@ __device__ void gemm_kernel(T *lhs, T *rhs, T *out, T *bias,
   tops::event e_b;
 
   auto data_type = input_dtype;
+  auto weight_data_type = input_dtype;
   auto B = input_batch;
   auto M = input_m;
   auto K = input_k;
   auto N = input_n;
   auto transa = lhs_transpose;
   auto transb = rhs_transpose;
+  int enable_act = 0;
   auto M_SIP = sip_m;
   auto N_SIP = sip_n;
   auto K_SIP = sip_k;
-
-  // printf("gemm para %lu\n", sizeof(para));
-  // printf("[%d] gemm param  is [%d,%d,%d,%d], %d,%d,%d,%d,%d, [%d,%d,%d]\n", data_type, B,M, K, N,
-  //         lhs_multicore, rhs_multicore,
-  //         transa,transb, enable_bais, sip_m, sip_n, sip_k);
+  // CCPRINTF("gemm para %lu,%d\n", sizeof(para), enable_act);
+  // CCPRINTF("gemm param  is %d,%d,%d,%d,%d,%d,%d,%d,%f,%f,%f,%d\n", B,M, N,K,
+  // lhs_multicore, rhs_multicore,
+  // transa,transb, alpha,beta, addmm_beta,enable_bais);
   int32_t hbm_lhs_shape[4] = {1, B, M, K};
   int32_t hbm_rhs_shape[4] = {1, B, K, N};
   int32_t hbm_out_shape[4] = {1, B, M, N};
@@ -134,57 +134,58 @@ __device__ void gemm_kernel(T *lhs, T *rhs, T *out, T *bias,
 
   int32_t sip_bias_shape[1] = {N};
   int32_t sip_lhs_size = sip_lhs_shape[0] * sip_lhs_shape[1] *
-                         sip_lhs_shape[2] * sip_lhs_shape[3] * sizeof(T);
+                         sip_lhs_shape[2] * sip_lhs_shape[3] * sizeof(Type1);
   int32_t sip_rhs_size = sip_rhs_shape[0] * sip_rhs_shape[1] *
-                         sip_rhs_shape[2] * sip_rhs_shape[3] * sizeof(T);
+                         sip_rhs_shape[2] * sip_rhs_shape[3] * sizeof(Type1);
   int32_t sip_out_size = sip_out_shape[0] * sip_out_shape[1] *
-                         sip_out_shape[2] * sip_out_shape[3] * sizeof(T);
+                         sip_out_shape[2] * sip_out_shape[3] * sizeof(Type1);
   int32_t sip_lhs_trans_size = sip_lhs_trans_shape[0] * sip_lhs_trans_shape[1] *
                                sip_lhs_trans_shape[2] * sip_lhs_trans_shape[3] *
-                               sizeof(T);
+                               sizeof(Type1);
   int32_t sip_rhs_trans_size = sip_rhs_trans_shape[0] * sip_rhs_trans_shape[1] *
                                sip_rhs_trans_shape[2] * sip_rhs_trans_shape[3] *
-                               sizeof(T);
+                               sizeof(Type1);
 
   tops::mdspan hbm_lhs(tops::Global, lhs, hbm_lhs_shape);
   tops::mdspan hbm_rhs(tops::Global, rhs, hbm_rhs_shape);
   tops::mdspan hbm_out(tops::Global, out, hbm_out_shape);
+  // tops::mdspan hbm_pre_gelu(tops::Global, pre_gelu, hbm_out_shape);
   tops::mdspan hbm_bias(tops::Global, bias, N);
   __local__ __valigned__ char buffer_sip[MAX_NUM];
 
   // float *buffer_sip_lhs0 = buffer_sip;
-  T *buffer_sip_lhs0_trans =
-      reinterpret_cast<T *>(reinterpret_cast<char *>(buffer_sip));
-  T *buffer_sip_lhs1_trans = reinterpret_cast<T *>(
+  Type1 *buffer_sip_lhs0_trans =
+      reinterpret_cast<Type1 *>(reinterpret_cast<char *>(buffer_sip));
+  Type1 *buffer_sip_lhs1_trans = reinterpret_cast<Type1 *>(
       (reinterpret_cast<char *>(buffer_sip_lhs0_trans)) +
       TEMPLATE_ALIGN_UP(sip_lhs_trans_size, L1_ALIGN_SIZE));
-  T *buffer_sip_rhs0_trans = reinterpret_cast<T *>(
+  Type2 *buffer_sip_rhs0_trans = reinterpret_cast<Type2 *>(
       (reinterpret_cast<char *>(buffer_sip_lhs1_trans)) +
       TEMPLATE_ALIGN_UP(sip_lhs_trans_size, L1_ALIGN_SIZE));
-  T *buffer_sip_rhs1_trans = reinterpret_cast<T *>(
+  Type2 *buffer_sip_rhs1_trans = reinterpret_cast<Type2 *>(
       (reinterpret_cast<char *>(buffer_sip_rhs0_trans)) +
       TEMPLATE_ALIGN_UP(sip_rhs_trans_size, L1_ALIGN_SIZE));
-  T *buffer_sip_lhs0 = reinterpret_cast<T *>(
+  Type1 *buffer_sip_lhs0 = reinterpret_cast<Type1 *>(
       (reinterpret_cast<char *>(buffer_sip_rhs1_trans)) +
       TEMPLATE_ALIGN_UP(sip_rhs_trans_size, L1_ALIGN_SIZE));
-  T *buffer_sip_lhs1 =
-      reinterpret_cast<T *>((reinterpret_cast<char *>(buffer_sip_lhs0)) +
-                            TEMPLATE_ALIGN_UP(sip_lhs_size, L1_ALIGN_SIZE));
-  T *buffer_sip_rhs0 =
-      reinterpret_cast<T *>((reinterpret_cast<char *>(buffer_sip_lhs1)) +
-                            TEMPLATE_ALIGN_UP(sip_lhs_size, L1_ALIGN_SIZE));
-  T *buffer_sip_rhs1 =
-      reinterpret_cast<T *>((reinterpret_cast<char *>(buffer_sip_rhs0)) +
-                            TEMPLATE_ALIGN_UP(sip_rhs_size, L1_ALIGN_SIZE));
-  T *buffer_sip_out0 =
-      reinterpret_cast<T *>((reinterpret_cast<char *>(buffer_sip_rhs1)) +
-                            TEMPLATE_ALIGN_UP(sip_rhs_size, L1_ALIGN_SIZE));
-  T *buffer_sip_out1 =
-      reinterpret_cast<T *>((reinterpret_cast<char *>(buffer_sip_out0)) +
-                            TEMPLATE_ALIGN_UP(sip_out_size, L1_ALIGN_SIZE));
-  T *buffer_sip_bias0 =
-      reinterpret_cast<T *>((reinterpret_cast<char *>(buffer_sip_out1)) +
-                            TEMPLATE_ALIGN_UP(sip_out_size, L1_ALIGN_SIZE));
+  Type1 *buffer_sip_lhs1 =
+      reinterpret_cast<Type1 *>((reinterpret_cast<char *>(buffer_sip_lhs0)) +
+                                TEMPLATE_ALIGN_UP(sip_lhs_size, L1_ALIGN_SIZE));
+  Type2 *buffer_sip_rhs0 =
+      reinterpret_cast<Type2 *>((reinterpret_cast<char *>(buffer_sip_lhs1)) +
+                                TEMPLATE_ALIGN_UP(sip_lhs_size, L1_ALIGN_SIZE));
+  Type2 *buffer_sip_rhs1 =
+      reinterpret_cast<Type2 *>((reinterpret_cast<char *>(buffer_sip_rhs0)) +
+                                TEMPLATE_ALIGN_UP(sip_rhs_size, L1_ALIGN_SIZE));
+  Type1 *buffer_sip_out0 =
+      reinterpret_cast<Type1 *>((reinterpret_cast<char *>(buffer_sip_rhs1)) +
+                                TEMPLATE_ALIGN_UP(sip_rhs_size, L1_ALIGN_SIZE));
+  Type1 *buffer_sip_out1 =
+      reinterpret_cast<Type1 *>((reinterpret_cast<char *>(buffer_sip_out0)) +
+                                TEMPLATE_ALIGN_UP(sip_out_size, L1_ALIGN_SIZE));
+  Type1 *buffer_sip_bias0 =
+      reinterpret_cast<Type1 *>((reinterpret_cast<char *>(buffer_sip_out1)) +
+                                TEMPLATE_ALIGN_UP(sip_out_size, L1_ALIGN_SIZE));
 
   long lhs_addr = (long)buffer_sip_lhs0;
   long rhs_addr = (long)buffer_sip_rhs0;
@@ -195,17 +196,25 @@ __device__ void gemm_kernel(T *lhs, T *rhs, T *out, T *bias,
   int32_t b_sdma_wait = 0;
   int32_t o_sdma_wait = 0;
 
+  int weight_offset = 0;
+  if ((data_type == TOPSOP_DATA_FP16) && (weight_data_type == TOPSOP_DATA_I8)) {
+    weight_offset = K_SIP * N_SIP;
+  }
   tops::mdspan sip_lhs0(tops::Private, buffer_sip_lhs0, sip_lhs_shape);
   tops::mdspan sip_lhs1(tops::Private, buffer_sip_lhs1, sip_lhs_shape);
-  tops::mdspan sip_rhs0(tops::Private, buffer_sip_rhs0, sip_rhs_shape);
-  tops::mdspan sip_rhs1(tops::Private, buffer_sip_rhs1, sip_rhs_shape);
+  tops::mdspan sip_rhs0(tops::Private, buffer_sip_rhs0 + weight_offset,
+                        sip_rhs_shape);
+  tops::mdspan sip_rhs1(tops::Private, buffer_sip_rhs1 + weight_offset,
+                        sip_rhs_shape);
   tops::mdspan sip_lhs0_trans(tops::Private, buffer_sip_lhs0_trans,
                               sip_lhs_trans_shape);
   tops::mdspan sip_lhs1_trans(tops::Private, buffer_sip_lhs1_trans,
                               sip_lhs_trans_shape);
-  tops::mdspan sip_rhs0_trans(tops::Private, buffer_sip_rhs0_trans,
+  tops::mdspan sip_rhs0_trans(tops::Private,
+                              buffer_sip_rhs0_trans + weight_offset,
                               sip_rhs_trans_shape);
-  tops::mdspan sip_rhs1_trans(tops::Private, buffer_sip_rhs1_trans,
+  tops::mdspan sip_rhs1_trans(tops::Private,
+                              buffer_sip_rhs1_trans + weight_offset,
                               sip_rhs_trans_shape);
   tops::mdspan sip_out0(tops::Private, buffer_sip_out0, sip_out_shape);
   tops::mdspan sip_out1(tops::Private, buffer_sip_out1, sip_out_shape);
@@ -243,15 +252,20 @@ __device__ void gemm_kernel(T *lhs, T *rhs, T *out, T *bias,
   auto N_SIP_LOOP_CNT =
       rhs_multicore == 1 ? loop_len_this_sip : N_SIP_LOOP_CNT_TASKS;
   auto Batch_SIP_LOOP_CNT = (batch_multicore == 1) ? loop_len_this_sip : B;
-  // printf("param is %d,%d,%d,%d,%d,%d,%d,%d,%d\n", M, N, K, M_SIP, N_SIP,
-  // K_SIP,M_SIP_LOOP_CNT,  N_SIP_LOOP_CNT, K_SIP_LOOP_CNT);
 
   if (sip_idx < sip_num_used) {
+    // CCPRINTF("sip parallel: batch_split_flag: %d, lhs_split_flag: %d,
+    // rhs_split_flag: %d, sip_num_used: %d\n",
+    //         batch_multicore, lhs_multicore, rhs_multicore, sip_num_used);
+    // CCPRINTF("param is M: %d, N: %d, K: %d, M_SIP: %d, N_SIP: %d, K_SIP: %d\n
+    // Batch_SIP_LOOP_CNT: %d, M_SIP_LOOP_CNT: %d, N_SIP_LOOP_CNT: %d,
+    // K_SIP_LOOP_CNT: %d\n",
+    //       M, N, K, M_SIP, N_SIP, K_SIP, Batch_SIP_LOOP_CNT, M_SIP_LOOP_CNT,
+    //       N_SIP_LOOP_CNT, K_SIP_LOOP_CNT);
     if (enable_bais) {
       // tops::slice(ctx_bias, sip_bias0, hbm_bias,{0});
       tops::memcpy(ctx_bias, sip_bias0, hbm_bias);
     }
-
     for (auto b_idx = 0; b_idx < Batch_SIP_LOOP_CNT; b_idx++) {
       auto m_hbm_offset = (lhs_multicore == 1) ? sip_idx * M_SIP : 0;
       auto n_hbm_offset = (rhs_multicore == 1) ? sip_idx * N_SIP : 0;
@@ -280,8 +294,16 @@ __device__ void gemm_kernel(T *lhs, T *rhs, T *out, T *bias,
         e_rhs_0 = tops::transpose_async(ctx_rhs_0, sip_rhs0, sip_rhs0_trans,
                                         {0, 1, 3, 2});
       }
-      e_b = tops::slice_async(ctx_b, sip_out0, hbm_out,
-                              {0, batch_offset, m_hbm_offset, n_hbm_offset});
+      bool flag_no_beta = true;
+      int *tmp_beta = reinterpret_cast<int *>(&beta);
+      flag_no_beta = ((*tmp_beta) == 0);
+      if (flag_no_beta) {
+        e_b = tops::memset_async(ctx_b, sip_out0, (Type1)0.0);
+      } else {
+        e_b = tops::slice_async(ctx_b, sip_out0, hbm_out,
+                                {0, batch_offset, m_hbm_offset, n_hbm_offset});
+      }
+
       l_sdma_wait = 1;
       r_sdma_wait = 1;
       b_sdma_wait = 1;
@@ -304,7 +326,9 @@ __device__ void gemm_kernel(T *lhs, T *rhs, T *out, T *bias,
               ((osdma_task_mn_idx % 2) == 0) ? &sip_out0 : &sip_out1;
           out_addr = (long)((osdma_task_mn_idx % 2) == 0 ? buffer_sip_out0
                                                          : buffer_sip_out1);
-
+          auto pre_gelu_buffer =
+              ((osdma_task_mn_idx % 2) == 0 ? buffer_sip_out0
+                                            : buffer_sip_out1);
           for (auto k_sip_idx = 0; k_sip_idx < K_SIP_LOOP_CNT; k_sip_idx++) {
             auto k_sip_offset = k_sip_idx * K_SIP;
             auto sdma_task_mnc_idx =
@@ -401,20 +425,29 @@ __device__ void gemm_kernel(T *lhs, T *rhs, T *out, T *bias,
               r_sdma_wait = 1;
             }
             if ((next_n_sip_offset < N) && (next_m_sip_offset < M) &&
-                ((next_n_sip_offset != n_sip_offset) ||
-                 (next_m_sip_offset != m_sip_offset))) {
-              e_b = tops::slice_async(
-                  ctx_b, *next_out_sip, hbm_out,
-                  {0, batch_offset, next_m_sip_offset, next_n_sip_offset});
+                (next_k_sip_offset == 0)) {
+              if (flag_no_beta) {
+                e_b = tops::memset_async(ctx_b, *next_out_sip, (Type1)0.0);
+              } else {
+                e_b = tops::slice_async(
+                    ctx_b, *next_out_sip, hbm_out,
+                    {0, batch_offset, next_m_sip_offset, next_n_sip_offset});
+              }
+              // CCPRINTF("beta: %f, beta == 0: %d\n", beta, beta == 0);
+              // e_b =  tops::memset_async(ctx_b, *next_out_sip, (Type1)0.0);
+
               b_sdma_wait = 1;
             }
+
             auto nacc_flag = k_sip_idx == 0 ? 1 : 0;
             auto store_flag = k_sip_idx + 1 == K_SIP_LOOP_CNT ? 1 : 0;
             lhs_addr = long((sdma_task_mnc_idx % 2) == 0 ? buffer_sip_lhs0
                                                          : buffer_sip_lhs1);
-            rhs_addr = long((sdma_task_mnc_idx % 2) == 0 ? buffer_sip_rhs0
-                                                         : buffer_sip_rhs1);
-            // printf("input lhs,rhs,out is %f,%f,%f\n",
+            auto next_buffer_sip_rhs = (sdma_task_mnc_idx % 2) == 0
+                                           ? buffer_sip_rhs0
+                                           : buffer_sip_rhs1;
+            rhs_addr = long(next_buffer_sip_rhs);
+            // CCPRINTF("input lhs,rhs,out is %f,%f,%f\n",
             // buffer_sip_lhs0[0],buffer_sip_rhs0[0],buffer_sip_out0[0]);
             if (data_type == TOPSOP_DATA_FP32) {
               c_func_sgemm_general(lhs_addr, rhs_addr, out_addr, M_SIP, N_SIP,
@@ -422,10 +455,21 @@ __device__ void gemm_kernel(T *lhs, T *rhs, T *out, T *bias,
                                    beta, addmm_beta, enable_bais, bias_addr,
                                    n_sip_offset);
             } else if (data_type == TOPSOP_DATA_FP16) {
-              c_func_hgemm_general(lhs_addr, rhs_addr, out_addr, M_SIP, N_SIP,
-                                   K_SIP, nacc_flag, store_flag, 0, 0, alpha,
-                                   beta, addmm_beta, enable_bais, bias_addr,
-                                   n_sip_offset);
+              if (weight_data_type == TOPSOP_DATA_I8) {
+                convert(reinterpret_cast<__fp16 *>(next_buffer_sip_rhs),
+                        reinterpret_cast<char *>(next_buffer_sip_rhs +
+                                                 K_SIP * N_SIP),
+                        K_SIP * N_SIP);
+                c_func_hgemm_general(lhs_addr, rhs_addr, out_addr, M_SIP, N_SIP,
+                                     K_SIP, nacc_flag, store_flag, 0, 0, alpha,
+                                     beta, addmm_beta, enable_bais, bias_addr,
+                                     n_sip_offset);
+              } else {
+                c_func_hgemm_general(lhs_addr, rhs_addr, out_addr, M_SIP, N_SIP,
+                                     K_SIP, nacc_flag, store_flag, 0, 0, alpha,
+                                     beta, addmm_beta, enable_bais, bias_addr,
+                                     n_sip_offset);
+              }
             } else if (data_type == TOPSOP_DATA_I8) {
               c_func_gemm_general_int8(lhs_addr, rhs_addr, out_addr, M_SIP,
                                        N_SIP, K_SIP, nacc_flag, store_flag, 0,
@@ -437,14 +481,23 @@ __device__ void gemm_kernel(T *lhs, T *rhs, T *out, T *bias,
                                     beta, addmm_beta, enable_bais, bias_addr,
                                     n_sip_offset);
             }
-          }
+          }  // K loop
+          // if (enable_act == 1) {
+          //   // call act + store
+          //   e_out = tops::deslice_async(
+          //       ctx_out, hbm_pre_gelu, *cur_out_sip,
+          //       {0, batch_offset, m_sip_offset, n_sip_offset});
+          //   tops::wait(e_out);
+          //   gelu_wrapper(pre_gelu_buffer, pre_gelu_buffer, M_SIP * N_SIP);
+          // }
           e_out = tops::deslice_async(
               ctx_out, hbm_out, *cur_out_sip,
               {0, batch_offset, m_sip_offset, n_sip_offset});
           tops::wait(e_out);
-        }
-      }
-    }
+        }  // N loop
+      }    // M loop
+    }      // batch loop
+
   }
 }
 
@@ -456,7 +509,7 @@ extern "C" __global__ void gemm_f32(float *in_a, float *in_b,
                                             int lhs_transpose, int rhs_transpose,
                                             float alpha, float beta, float addmm_beta, int enable_bais,
                                             int sip_m, int sip_k, int sip_n) {
-      gemm_kernel<float>(in_a, in_b, out, bias, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
+      gemm_kernel<float, float>(in_a, in_b, out, bias, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
       lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, enable_bais, sip_m, sip_k, sip_n);
 }
 
@@ -467,7 +520,7 @@ extern "C" __global__ void gemm_f16(__fp16 *in_a, __fp16 *in_b, __fp16 *out,  __
                                                 int lhs_transpose, int rhs_transpose,
                                                 float alpha, float beta, float addmm_beta, int enable_bais,
                                                 int sip_m, int sip_k, int sip_n) {
-      gemm_kernel<__fp16>(in_a, in_b, out, bias, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
+      gemm_kernel<__fp16, __fp16>(in_a, in_b, out, bias, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
       lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, enable_bais, sip_m, sip_k, sip_n);
 }
 
@@ -481,7 +534,7 @@ extern "C" __global__ void gemm_bf16(tops::bfloat *in_a,
                                                   int lhs_transpose, int rhs_transpose,
                                                   float alpha, float beta, float addmm_beta, int enable_bais,
                                                   int sip_m, int sip_k, int sip_n) {
-      gemm_kernel<tops::bfloat>(in_a, in_b, out, bias, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
+      gemm_kernel<tops::bfloat, tops::bfloat>(in_a, in_b, out, bias, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
       lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, enable_bais, sip_m, sip_k, sip_n);
 }
 
@@ -493,7 +546,7 @@ extern "C" __global__ void gemm_i8(int8_t *in_a, int8_t *in_b,
                                             int lhs_transpose, int rhs_transpose,
                                             float alpha, float beta, float addmm_beta, int enable_bais,
                                             int sip_m, int sip_k, int sip_n) {
-      gemm_kernel<int8_t>(in_a, in_b, out, bias, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
+      gemm_kernel<int8_t, int8_t>(in_a, in_b, out, bias, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
       lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, enable_bais, sip_m, sip_k, sip_n);
 }
 

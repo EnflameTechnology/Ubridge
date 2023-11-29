@@ -27,43 +27,6 @@ where
 {
     (x / y) * y
 }
-
-#[derive(Default)]
-struct GemmOpParas {
-    input_dtype: i32,
-    output_dtype: i32,
-    csb_batch: i32,
-    sip_batch: i32,
-    lhs_csb_k: i32,
-    rhs_csb_k: i32,
-    lhs_csb_m: i32,
-    rhs_csb_n: i32,
-    sip_m: i32,
-    sip_k: i32,
-    sip_n: i32,
-    batch_multicore: i32,
-    lhs_multicore: i32,
-    rhs_multicore: i32,
-    lhs_pingpong: i32,
-    rhs_pingpong: i32,
-    sdma_lhs_pingpong: i32,
-    sdma_rhs_pingpong: i32,
-    rhs_repeat_copy: i32,
-    lhs_transpose: i32,
-    rhs_transpose: i32,
-    out_transpose: i32,
-    alpha: f32,
-    beta: f32,
-    addmm_beta: f32,
-    coef: f32,
-    act_mode: i32,
-    bias: i32,
-    input_batch: i32,
-    input_m: i32,
-    input_k: i32,
-    input_n: i32,
-}
-
 // Gemm Begin
 macro_rules! init_split {
     ($info: ident, $tune: ident) => {
@@ -133,7 +96,7 @@ impl AtenGemmInfo {
             K : K as i64,
             N : N as i64,
             transa : false,
-            transb : false,
+            transb : true,
         }
     }
 }
@@ -149,7 +112,7 @@ impl Default for AtenGemmInfo {
             K : 4096,
             N : 4096,
             transa : false,
-            transb : false,
+            transb : true,
         }
     }
 }  
@@ -282,8 +245,8 @@ impl GEMM_OP_PARAS {
             sdma_lhs_pingpong: tune.sdma_lhs_pingpong as i32,  // 15
             sdma_rhs_pingpong: tune.sdma_rhs_pingpong as i32,
             rhs_repeat_copy: tune.rhs_repeatcopy as i32,
-            lhs_transpose: tune.lhs_tranpose as i32,
-            rhs_transpose: tune.rhs_tranpose as i32,
+            lhs_transpose: info.transa as i32,
+            rhs_transpose: info.transb as i32,
             out_transpose: tune.out_tranpose as i32,  // 20
             alpha: 1.0,
             beta: 0.0,

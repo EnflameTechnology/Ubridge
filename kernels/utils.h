@@ -18,6 +18,28 @@ constexpr int MAX_DRD_SIP_NUM = 12;
 constexpr int MAX_SCP_CLUSTER_NUM = 1;
 constexpr int MAX_SCP_SIP_NUM = 12;
 constexpr int SIP_VECTOR_LENGTH = 128;
+#if defined(__GCU_ARCH__) && (__GCU_ARCH__ == 200)
+  constexpr static int VDMEM_SIZE = 0x80000;
+#elif defined(__AGCU_ARCH__) && (__AGCU_ARCH__ == 200)
+  constexpr static int VDMEM_SIZE = 0x80000;
+#elif defined(__GCU_ARCH__) || defined(__AGCU_ARCH__)
+  constexpr static int VDMEM_SIZE = 0x100000;
+#else
+  constexpr static int VDMEM_SIZE = 0x80000;
+#endif
+
+#if defined(__GCU_ARCH__) && (__GCU_ARCH__ == 300)
+#if !defined(__AGCU_ARCH__)
+  constexpr static int VDMEM_REAL_SIZE = 0x180000;
+#elif defined(__AGCU_ARCH__) && (__AGCU_ARCH__ == 300)
+  constexpr static int VDMEM_REAL_SIZE = 0x180000;
+#else
+  constexpr static int VDMEM_REAL_SIZE = VDMEM_SIZE;
+#endif
+#else
+  constexpr static int VDMEM_REAL_SIZE = VDMEM_SIZE;
+#endif
+
 #define ALIGN_UP(a, b) (((a + b - 1) / b) * b)
 
 __device__ __forceinline__ int GetBlockNum(void) {
@@ -69,7 +91,7 @@ __device__ inline constexpr Int_Type AlignUp(Int_Type x, Int_Type2 y) {
 
 // align to a multiple of rhs no more than lhs
 template <typename Int_Type, typename Int_Type2 = Int_Type>
-__device__ inline Int_Type AlignDown(Int_Type x, Int_Type2 y) {
+__device__ inline constexpr Int_Type AlignDown(Int_Type x, Int_Type2 y) {
   return (x / y) * y;
 }
 

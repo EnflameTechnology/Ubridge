@@ -30,8 +30,7 @@
 
 using namespace std;
 
-#define VDRAM_SIZE 0x80000
-#define TILE_SIZE (VDRAM_SIZE / 6)
+#define TILE_SIZE AlignDown(((VDMEM_SIZE) / 6), 256)
 #define TILE_LEN_BPE4 (TILE_SIZE >> 2)
 #define TILE_LEN_BPE2 (TILE_SIZE >> 1)
 #define TILE_LEN_BPE1 (TILE_SIZE)
@@ -611,10 +610,10 @@ __device__ void binary_kernel(T* in_a, T* in_b, TO* out, int N,
 
       if (thread_len_next > 0) {
         ctxs_out[pp_flag_prev].config_memcpy(
-          tops::mdspan(tops::Global, out + thread_off_next,
-                      thread_len_next),
-          tops::mdspan(tops::Private, out_buffer[pp_flag_prev],
-                      thread_len_next));
+            tops::mdspan(tops::Global, out + thread_off_next, thread_len_next),
+            tops::mdspan(tops::Private,
+                         reinterpret_cast<TO*>(out_buffer[pp_flag_prev]),
+                         thread_len_next));
       }
     }
     pp_flag = 1 - pp_flag;

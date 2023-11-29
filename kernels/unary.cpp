@@ -40,7 +40,7 @@
 #include "utils.h"
 using namespace std;
 using namespace tops;
-#define tile_size 0x8000
+#define tile_size (VDMEM_SIZE / 32)
 #define PING_PONG_SIZE 2
 
 
@@ -319,9 +319,6 @@ __device__ void unary_kernel(T* in, T* out, int len, UNARY_TYPE tp) {
     }
 
     if (thread_len_next2 > 0) {
-      // ctxs_in[pp_flag].set_dst_addr(in_buffer[pp_flag]);
-      // ctxs_in[pp_flag].set_src_addr(in + thread_off_next2);
-      // ctxs_in[pp_flag].set_total_size(thread_len_next2);
       ctxs_in[pp_flag].config_memcpy(
         tops::mdspan(tops::Private, in_buffer[pp_flag],
                      thread_len_next2),
@@ -333,10 +330,6 @@ __device__ void unary_kernel(T* in, T* out, int len, UNARY_TYPE tp) {
     if (thread_len > 0) {
       unary_atomic<T, VT>(in_buffer[pp_flag], out_buffer[pp_flag],
                                thread_len, tp);
-      // printf("\nUnary buffer: ");
-      // for (int j=0; j<thread_len; j++) {
-      //   printf("in %.5f, out %.5f   ", static_cast<float>(in_buffer[pp_flag][j]), static_cast<float>(out_buffer[pp_flag][j]));
-      // }
       evs_out[pp_flag] = ctxs_out[pp_flag].trigger();
     }
 
@@ -429,7 +422,7 @@ UNARY_OP(float, vfloat, uelu_f32, UNARY_TYPE_ELU)
     printf("%d, ", ARRAY[i]); \
   printf("\n") \
 
-#define PRINTHELPER 
+// #define PRINTHELPER 
 template <typename T, int SRCRANK, int DSTRANK>
 __device__ void unary_kernel_non_contiguous(T* in, T* out, const size_t op_type, const size_t origin_numel, 
         const size_t numel, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_strides) {
@@ -441,7 +434,7 @@ __device__ void unary_kernel_non_contiguous(T* in, T* out, const size_t op_type,
       dst_shape[j] = dims_and_strides[j + 3 * origin_num_dims];
       dst_layout[j] = dims_and_strides[3 * origin_num_dims + 2 * num_dims + j];
     }
-    PRINTHELPER(dst_shape, DSTRANK, "\ndst_shape = ");
+    // PRINTHELPER(dst_shape, DSTRANK, "\ndst_shape = ");
 
     if (op_type == 1 && origin_num_dims > 0) {
         int src_shape[SRCRANK];
@@ -450,13 +443,13 @@ __device__ void unary_kernel_non_contiguous(T* in, T* out, const size_t op_type,
           src_shape[j] = dims_and_strides[j];
           src_layout[j] = dims_and_strides[2 * origin_num_dims + j];
         }
-        PRINTHELPER(src_shape, origin_num_dims, "\nsrc_shape = ");
-        PRINTHELPER(src_layout, origin_num_dims, "\nsrc layout = ");
-        PRINTHELPER(dst_layout, num_dims, "\ntranspose pattern, dst layout = ");
+        // PRINTHELPER(src_shape, origin_num_dims, "\nsrc_shape = ");
+        // PRINTHELPER(src_layout, origin_num_dims, "\nsrc layout = ");
+        // PRINTHELPER(dst_layout, num_dims, "\ntranspose pattern, dst layout = ");
         tops::mdspan src_mem(tops::Global, in, src_shape);
         tops::mdspan dst_mem(tops::Global, out, dst_shape);
         tops::transpose(ctx, dst_mem, src_mem, src_layout); //Optimization required!
-    } else if (op_type == 2) { //TODO, broadcast pattern
+    } else if (op_type == 2) { 
       int src_shape[DSTRANK];
       for (int j = DSTRANK - 1; j >=0; j--) {
         if (j - (DSTRANK - SRCRANK) < 0) {
@@ -465,27 +458,17 @@ __device__ void unary_kernel_non_contiguous(T* in, T* out, const size_t op_type,
           src_shape[j] = dims_and_strides[j - (DSTRANK - SRCRANK)];
         }
       }
-      PRINTHELPER(src_shape, DSTRANK, "\nsrc_shape = ");
-      PRINTHELPER(dst_shape, DSTRANK, "\nbroadcasting pattern, dst shape = ");
-
-      // if (origin_num_dims > 0) {
-        // PRINTHELPER(src_layout, SRCRANK, "\nsrc layout = ");
+      // PRINTHELPER(src_shape, DSTRANK, "\nsrc_shape = ");
+      // PRINTHELPER(dst_shape, DSTRANK, "\nbroadcasting pattern, dst shape = ");
       tops::mdspan src_mem(tops::Global, in, src_shape);
       tops::mdspan dst_mem(tops::Global, out, dst_shape);
       tops::broadcast(ctx, dst_mem, src_mem);
-      // } else {
-        // printf("\nsrc_shape = %d!", 0);
-        // tops::mdspan dst_mem(tops::Global, out, dst_shape);
-        // tops::memset(ctx, dst_mem, in[0]);
-      // }
-      
-
     } else if (op_type == 3) { //TODO purmutation pattern
         // printf("\npurmute pattern %d!\n", numel);
         PRINTHELPER(dst_layout, DSTRANK, "\npurmute pattern, dst layout = ");
 
-    } else if (op_type == 4) { //TODO narrow pattern
-        PRINTHELPER(dst_shape, DSTRANK, "\nnarrow pattern, dst shape = ");
+    } else if (op_type == 4) {
+        // PRINTHELPER(dst_shape, DSTRANK, "\nnarrow pattern, dst shape = ");
         int src_shape[SRCRANK];
         int offsets[SRCRANK];
         for (int j = 0; j < SRCRANK; ++j) {
