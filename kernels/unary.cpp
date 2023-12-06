@@ -425,56 +425,68 @@ UNARY_OP(float, vfloat, uelu_f32, UNARY_TYPE_ELU)
 // #define PRINTHELPER 
 template <typename T, int SRCRANK, int DSTRANK>
 __device__ void unary_kernel_non_contiguous(T* in, T* out, const size_t op_type, const size_t origin_numel, 
-        const size_t numel, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_strides) {
+        const size_t numel, const size_t start_offset, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_layout) {
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx); 
     int dst_shape[DSTRANK];
     int dst_layout[DSTRANK];
     for (int j = 0; j < num_dims; ++j) {
-      dst_shape[j] = dims_and_strides[j + 3 * origin_num_dims];
-      dst_layout[j] = dims_and_strides[3 * origin_num_dims + 2 * num_dims + j];
+      dst_shape[j] = dims_and_layout[j + 2 * origin_num_dims];
+      dst_layout[j] = dims_and_layout[2 * origin_num_dims + num_dims + j];
     }
+    
     // PRINTHELPER(dst_shape, DSTRANK, "\ndst_shape = ");
 
     if (op_type == 1 && origin_num_dims > 0) {
         int src_shape[SRCRANK];
         int src_layout[SRCRANK];
         for (int j = 0; j < origin_num_dims; ++j) {
-          src_shape[j] = dims_and_strides[j];
-          src_layout[j] = dims_and_strides[2 * origin_num_dims + j];
+          src_shape[j] = dims_and_layout[j];
+          src_layout[j] = dims_and_layout[origin_num_dims + j];
         }
         // PRINTHELPER(src_shape, origin_num_dims, "\nsrc_shape = ");
         // PRINTHELPER(src_layout, origin_num_dims, "\nsrc layout = ");
         // PRINTHELPER(dst_layout, num_dims, "\ntranspose pattern, dst layout = ");
         tops::mdspan src_mem(tops::Global, in, src_shape);
         tops::mdspan dst_mem(tops::Global, out, dst_shape);
-        tops::transpose(ctx, dst_mem, src_mem, src_layout); //Optimization required!
+        tops::transpose(ctx, dst_mem, src_mem, dst_layout); //Optimization required!
     } else if (op_type == 2) { 
       int src_shape[DSTRANK];
       for (int j = DSTRANK - 1; j >=0; j--) {
         if (j - (DSTRANK - SRCRANK) < 0) {
           src_shape[j] = 1;
         } else {
-          src_shape[j] = dims_and_strides[j - (DSTRANK - SRCRANK)];
+          src_shape[j] = dims_and_layout[j - (DSTRANK - SRCRANK)];
         }
       }
       // PRINTHELPER(src_shape, DSTRANK, "\nsrc_shape = ");
       // PRINTHELPER(dst_shape, DSTRANK, "\nbroadcasting pattern, dst shape = ");
-      tops::mdspan src_mem(tops::Global, in, src_shape);
-      tops::mdspan dst_mem(tops::Global, out, dst_shape);
-      tops::broadcast(ctx, dst_mem, src_mem);
+
+      if (origin_numel == 1) {
+        tops::mdspan src_mem(tops::Global, in, 1);
+        tops::mdspan dst_mem(tops::Global, out, numel);
+        tops::broadcast(ctx, dst_mem, src_mem);
+      } else {
+        tops::mdspan src_mem(tops::Global, in, src_shape);
+        tops::mdspan dst_mem(tops::Global, out, dst_shape);
+        tops::broadcast(ctx, dst_mem, src_mem);
+      }
+
     } else if (op_type == 3) { //TODO purmutation pattern
         // printf("\npurmute pattern %d!\n", numel);
-        PRINTHELPER(dst_layout, DSTRANK, "\npurmute pattern, dst layout = ");
+        // PRINTHELPER(dst_layout, DSTRANK, "\npurmute pattern, dst layout = ");
 
     } else if (op_type == 4) {
         // PRINTHELPER(dst_shape, DSTRANK, "\nnarrow pattern, dst shape = ");
         int src_shape[SRCRANK];
         int offsets[SRCRANK];
         for (int j = 0; j < SRCRANK; ++j) {
-          src_shape[j] = dims_and_strides[j];
-          offsets[j] = 0;
+          src_shape[j] = dims_and_layout[j];
+          offsets[j] = src_shape[j]==dst_shape[j]?0:start_offset;
         }
+        // PRINTHELPER(src_shape, DSTRANK, "\nnarrow pattern, src shape = ");
+        // PRINTHELPER(offsets, DSTRANK, "\noffsets = ");
+
         tops::mdspan src_mem(tops::Global, in, src_shape);
         tops::mdspan dst_mem(tops::Global, out, dst_shape);
         tops::slice(ctx, dst_mem, src_mem, offsets);
@@ -488,9 +500,10 @@ __device__ void unary_kernel_non_contiguous(T* in, T* out, const size_t op_type,
 extern "C" __global__ void FN_NAME( \
     const size_t origin_numel, \
     const size_t numel, \
+    const size_t start_offset, \
     const size_t origin_num_dims, \
     const size_t num_dims, \
-    size_t *dims_and_strides, \
+    size_t *dims_and_layout, \
     const size_t op_type, \
     TYPE *inp, \
     TYPE *out) \
@@ -499,66 +512,66 @@ extern "C" __global__ void FN_NAME( \
     __local__ __valigned__ size_t info[128]; \
     tops_dte_ctx_t ctx; \
     tops::dte_scope s(ctx); \
-    if (dims_and_strides) { \
-      tops::mdspan srcInfo(tops::Global, dims_and_strides, origin_num_dims * 3 + num_dims * 3); \
-      tops::mdspan dstInfo(tops::Private, info, origin_num_dims * 3 + num_dims * 3); \
+    if (dims_and_layout) { \
+      tops::mdspan srcInfo(tops::Global, dims_and_layout, origin_num_dims * 2 + num_dims * 2); \
+      tops::mdspan dstInfo(tops::Private, info, origin_num_dims * 2 + num_dims * 2); \
       tops::memcpy(ctx, dstInfo, srcInfo); \
     } \
     if (num_dims==2) {\
       if (origin_num_dims == 2)\
-        unary_kernel_non_contiguous<TYPE, 2, 2>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 2, 2>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 3)\
-        unary_kernel_non_contiguous<TYPE, 3, 2>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 3, 2>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 4)\
-        unary_kernel_non_contiguous<TYPE, 4, 2>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 4, 2>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 5)\
-        unary_kernel_non_contiguous<TYPE, 5, 2>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 5, 2>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims <= 1)\
-        unary_kernel_non_contiguous<TYPE, 1, 2>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 1, 2>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
     } else if (num_dims==3) {\
       if (origin_num_dims == 3)\
-        unary_kernel_non_contiguous<TYPE, 3, 3>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 3, 3>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 4)\
-        unary_kernel_non_contiguous<TYPE, 4, 3>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 4, 3>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 5)\
-        unary_kernel_non_contiguous<TYPE, 5, 3>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 5, 3>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 2)\
-        unary_kernel_non_contiguous<TYPE, 2, 3>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 2, 3>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims <= 1)\
-        unary_kernel_non_contiguous<TYPE, 1, 3>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 1, 3>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
     } else if (num_dims == 4) {\
       if (origin_num_dims == 5)\
-        unary_kernel_non_contiguous<TYPE, 5, 4>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 5, 4>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 4)\
-        unary_kernel_non_contiguous<TYPE, 4, 4>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 4, 4>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 3)\
-        unary_kernel_non_contiguous<TYPE, 3, 4>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 3, 4>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 2)\
-        unary_kernel_non_contiguous<TYPE, 2, 4>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 2, 4>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims <= 1)\
-        unary_kernel_non_contiguous<TYPE, 1, 4>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 1, 4>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
     } else if (num_dims==5) {\
       if (origin_num_dims <= 1)\
-        unary_kernel_non_contiguous<TYPE, 1, 5>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 1, 5>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 2)\
-        unary_kernel_non_contiguous<TYPE, 2, 5>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 2, 5>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 3)\
-        unary_kernel_non_contiguous<TYPE, 3, 5>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 3, 5>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 4)\
-        unary_kernel_non_contiguous<TYPE, 4, 5>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 4, 5>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 5)\
-        unary_kernel_non_contiguous<TYPE, 5, 5>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 5, 5>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
     } else if (num_dims==1) {\
       if (origin_num_dims <= 1)\
-        unary_kernel_non_contiguous<TYPE, 1, 1>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 1, 1>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 2)\
-        unary_kernel_non_contiguous<TYPE, 2, 1>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 2, 1>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 3)\
-        unary_kernel_non_contiguous<TYPE, 3, 1>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 3, 1>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 4)\
-        unary_kernel_non_contiguous<TYPE, 4, 1>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 4, 1>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 5)\
-        unary_kernel_non_contiguous<TYPE, 5, 1>(inp, out, op_type, origin_numel, numel, origin_num_dims, num_dims, info); \
+        unary_kernel_non_contiguous<TYPE, 5, 1>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
     }\ 
 } \
 

@@ -251,7 +251,7 @@ impl GcuDevice {
         src: &Src,
         dst: &mut Dst,
     ) -> DeviceResult<()> {
-        assert_eq!(src.len(), dst.len());
+        assert!(src.len() <= dst.len());
         // self.bind_to_thread()?;
         if self.is_async {
             unsafe { driv::topsMemcpyDtoDAsync(
