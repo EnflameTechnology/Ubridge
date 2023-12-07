@@ -200,6 +200,9 @@ impl DeviceExecutor {
             "cast_f16_i16", "cast_f16_i32", "cast_f16_f32", 
             "cast_f32_i16", "cast_f32_i32", "cast_f32_f16", 
             // "cast_i8_i16", "cast_i8_i32", "cast_i8_f32", "cast_i8_f16", "cast_f16_i8", "cast_f32_i8", "cast_i16_i8", "cast_i32_i8", 
+            "cast_bf16_i16", "cast_bf16_i32", "cast_bf16_f16", "cast_bf16_f32", 
+            "cast_f16_bf16", "cast_f32_bf16", "cast_i16_bf16", "cast_i32_bf16", 
+            "cast_u8_bf16", "cast_u16_bf16", "cast_u32_bf16",
             "cast_i16_i32", "cast_i16_f32", "cast_i16_f16", 
             "cast_i32_i16", "cast_i32_f32", "cast_i32_f16",
             "cast_u8_u16", "cast_u8_u32", "cast_u8_f32", "cast_u8_f16", 
@@ -207,9 +210,9 @@ impl DeviceExecutor {
             "cast_u32_u8", "cast_u32_u16", "cast_u32_f32", "cast_u32_f16"
         ];
 
-        let reduce_functions = vec!["fast_min_f32", "fast_min_f16","fast_min_i8",
-            "fast_max_f32", "fast_max_f16","fast_max_i8",
-            "fast_sum_f32", "fast_sum_f16","fast_sum_i8"];
+        let reduce_functions = vec!["fast_min_f32", "fast_min_f16","fast_min_i8","fast_min_bf16",
+            "fast_max_f32", "fast_max_f16", "fast_max_i8", "fast_max_bf16",
+            "fast_sum_f32", "fast_sum_f16", "fast_sum_i8", "fast_sum_bf16"];
 
         let where_functions = vec!["where_i64_f32", "where_i64_f64", "where_i64_u8", "where_i64_u32", "where_i64_i64",
             "where_u32_f32", "where_u32_f64", "where_u32_u8", "where_u32_u32", "where_u32_i64",

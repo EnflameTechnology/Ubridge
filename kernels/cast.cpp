@@ -35,7 +35,8 @@
 #include "utils.h"
 using namespace std;
 using namespace tops;
-#define tile_size 0x8000
+// #define tile_size 0x8000
+#define TILE_SIZE AlignDown(((VDMEM_SIZE) / 32), 256)
 #define PING_PONG_SIZE 2
 
 template <typename T, typename TOUT>
@@ -52,8 +53,8 @@ __device__ void cast_kernel(T* in, OUTT* out, int len) {
   tops_dte_ctx_t ctxs_cp;
   tops::event evs_in[PING_PONG_SIZE];
   tops::event evs_out[PING_PONG_SIZE];
-  __local__ __valigned__ T in_buffer[PING_PONG_SIZE][tile_size];
-  __local__ __valigned__ OUTT out_buffer[PING_PONG_SIZE][tile_size];
+  __local__ __valigned__ T in_buffer[PING_PONG_SIZE][TILE_SIZE];
+  __local__ __valigned__ OUTT out_buffer[PING_PONG_SIZE][TILE_SIZE];
 
   int N = len;
   tops::mdspan output(tops::Global, out, N);
@@ -61,15 +62,15 @@ __device__ void cast_kernel(T* in, OUTT* out, int len) {
   int thread_num = GetThreadNum();
   int thread_id = GetThreadIdx();
 
-  int thread_off_leading = thread_id * tile_size;
+  int thread_off_leading = thread_id * TILE_SIZE;
   int thread_len_leading =
-      N - thread_off_leading >= tile_size ? tile_size : N - thread_off_leading;
-  int thread_step = tile_size * thread_num;
+      N - thread_off_leading >= TILE_SIZE ? TILE_SIZE : N - thread_off_leading;
+  int thread_step = TILE_SIZE * thread_num;
 
   int thread_off_leading_next = thread_off_leading + thread_step;
   int thread_remain_leading = N - thread_off_leading_next;
   int thread_len_leading_next =
-      thread_remain_leading >= tile_size ? tile_size : thread_remain_leading;
+      thread_remain_leading >= TILE_SIZE ? TILE_SIZE : thread_remain_leading;
 
   int pp_flag = 0;
   tops::dte_scope s_in0(ctxs_in[0]);
@@ -110,9 +111,9 @@ __device__ void cast_kernel(T* in, OUTT* out, int len) {
     int pp_flag_prev = 1 - pp_flag;
     int thread_off_next = i + thread_step;
     int thread_remain_next = N - thread_off_next;
-    int thread_len = N - i >= tile_size ? tile_size : N - i;
+    int thread_len = N - i >= TILE_SIZE ? TILE_SIZE : N - i;
     int thread_len_next =
-        thread_remain_next >= tile_size ? tile_size : thread_remain_next;
+        thread_remain_next >= TILE_SIZE ? TILE_SIZE : thread_remain_next;
     if (thread_len_next > 0) {
       evs_in[pp_flag_next] = ctxs_in[pp_flag_next].trigger();
     }
@@ -120,7 +121,7 @@ __device__ void cast_kernel(T* in, OUTT* out, int len) {
     int thread_off_next2 = i + thread_step * 2;
     int thread_remain_next2 = N - thread_off_next2;
     int thread_len_next2 =
-        thread_remain_next2 >= tile_size ? tile_size : thread_remain_next2;
+        thread_remain_next2 >= TILE_SIZE ? TILE_SIZE : thread_remain_next2;
 
     if (thread_len > 0) {
       evs_in[pp_flag].wait();
@@ -147,7 +148,7 @@ __device__ void cast_kernel(T* in, OUTT* out, int len) {
       int thread_off_prev = i - thread_step;
       int thread_remain_prev = N - thread_off_prev;
       int thread_len_prev =
-          thread_remain_prev >= tile_size ? tile_size : thread_remain_prev;
+          thread_remain_prev >= TILE_SIZE ? TILE_SIZE : thread_remain_prev;
       if (thread_len_prev > 0) {
         evs_out[pp_flag_prev].wait();
       }
@@ -232,22 +233,22 @@ extern "C" __global__ void FN_NAME( \
  */
 
 // CAST_OP(__bf16, int8_t, cast_bf16_i8)
-// CAST_OP(__bf16, int16_t, cast_bf16_i16)
-// CAST_OP(__bf16, int32_t, cast_bf16_i32)
-// CAST_OP(__bf16, __fp16, cast_bf16_f16)
-// CAST_OP(__bf16, float, cast_bf16_f32)
+CAST_OP(__bf16, int16_t, cast_bf16_i16)
+CAST_OP(__bf16, int32_t, cast_bf16_i32)
+CAST_OP(__bf16, __fp16, cast_bf16_f16)
+CAST_OP(__bf16, float, cast_bf16_f32)
 
 // CAST_OP(__fp16, int8_t, cast_f16_i8)
 CAST_OP(__fp16, int16_t, cast_f16_i16)
 CAST_OP(__fp16, int32_t, cast_f16_i32)
 CAST_OP(__fp16, float, cast_f16_f32)
-// CAST_OP(__fp16, __bf16, cast_f16_bf16)
+CAST_OP(__fp16, __bf16, cast_f16_bf16)
 
 // CAST_OP(float, int8_t, cast_f32_i8)
 CAST_OP(float, int16_t, cast_f32_i16)
 CAST_OP(float, int32_t, cast_f32_i32)
 CAST_OP(float, __fp16, cast_f32_f16)
-// CAST_OP(float, __bf16, cast_f32_bf16)
+CAST_OP(float, __bf16, cast_f32_bf16)
 
 // CAST_OP(int8_t, int16_t, cast_i8_i16)
 // CAST_OP(int8_t, int32_t, cast_i8_i32)
@@ -259,32 +260,32 @@ CAST_OP(float, __fp16, cast_f32_f16)
 CAST_OP(int16_t, int32_t, cast_i16_i32)
 CAST_OP(int16_t, float, cast_i16_f32)
 CAST_OP(int16_t, __fp16, cast_i16_f16)
-// CAST_OP(int16_t, __bf16, cast_i16_bf16)
+CAST_OP(int16_t, __bf16, cast_i16_bf16)
 
 // CAST_OP(int32_t, int8_t, cast_i32_i8)
 CAST_OP(int32_t, int16_t, cast_i32_i16)
 CAST_OP(int32_t, float, cast_i32_f32)
 CAST_OP(int32_t, __fp16, cast_i32_f16)
-// CAST_OP(int32_t, __bf16, cast_i32_bf16)
+CAST_OP(int32_t, __bf16, cast_i32_bf16)
 
 
 CAST_OP(u_int8_t, u_int16_t, cast_u8_u16)
 CAST_OP(u_int8_t, u_int32_t, cast_u8_u32)
 CAST_OP(u_int8_t, float, cast_u8_f32)
 CAST_OP(u_int8_t, __fp16, cast_u8_f16)
-// CAST_OP(u_int8_t, __bf16, cast_u8_bf16)
+CAST_OP(u_int8_t, __bf16, cast_u8_bf16)
 
 CAST_OP(u_int16_t, u_int8_t, cast_u16_u8)
 CAST_OP(u_int16_t, u_int32_t, cast_u16_u32)
 CAST_OP(u_int16_t, float, cast_u16_f32)
 CAST_OP(u_int16_t, __fp16, cast_u16_f16)
-// CAST_OP(u_int16_t, __bf16, cast_u16_bf16)
+CAST_OP(u_int16_t, __bf16, cast_u16_bf16)
 
 CAST_OP(u_int32_t, u_int8_t, cast_u32_u8)
 CAST_OP(u_int32_t, u_int16_t, cast_u32_u16)
 CAST_OP(u_int32_t, float, cast_u32_f32)
 CAST_OP(u_int32_t, __fp16, cast_u32_f16)
-// CAST_OP(u_int32_t, __bf16, cast_u32_bf16)
+CAST_OP(u_int32_t, __bf16, cast_u32_bf16)
 
 template<typename T, typename OUTT>
 int test() {

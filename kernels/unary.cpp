@@ -40,8 +40,9 @@
 #include "utils.h"
 using namespace std;
 using namespace tops;
-#define tile_size (VDMEM_SIZE / 32)
+// #define tile_size (VDMEM_SIZE / 32)
 #define PING_PONG_SIZE 2
+#define TILE_SIZE AlignDown(((VDMEM_SIZE) / 32), 256)
 
 
 enum UNARY_TYPE {
@@ -244,23 +245,23 @@ __device__ void unary_kernel(T* in, T* out, int len, UNARY_TYPE tp) {
   tops_dte_ctx_t ctxs_out[PING_PONG_SIZE];
   tops::event evs_in[PING_PONG_SIZE];
   tops::event evs_out[PING_PONG_SIZE];
-  __local__ __valigned__ T in_buffer[PING_PONG_SIZE][tile_size];
-  __local__ __valigned__ T out_buffer[PING_PONG_SIZE][tile_size];
+  __local__ __valigned__ T in_buffer[PING_PONG_SIZE][TILE_SIZE];
+  __local__ __valigned__ T out_buffer[PING_PONG_SIZE][TILE_SIZE];
   int N = len;
   tops::mdspan output(tops::Global, out, N);
 
   int thread_num = GetThreadNum();
   int thread_id = GetThreadIdx();
 
-  int thread_off_leading = thread_id * tile_size;
+  int thread_off_leading = thread_id * TILE_SIZE;
   int thread_len_leading =
-      N - thread_off_leading >= tile_size ? tile_size : N - thread_off_leading;
-  int thread_step = tile_size * thread_num;
+      N - thread_off_leading >= TILE_SIZE ? TILE_SIZE : N - thread_off_leading;
+  int thread_step = TILE_SIZE * thread_num;
 
   int thread_off_leading_next = thread_off_leading + thread_step;
   int thread_remain_leading = N - thread_off_leading_next;
   int thread_len_leading_next =
-      thread_remain_leading >= tile_size ? tile_size : thread_remain_leading;
+      thread_remain_leading >= TILE_SIZE ? TILE_SIZE : thread_remain_leading;
 
   int pp_flag = 0;
   tops::dte_scope s_in0(ctxs_in[0]);
@@ -302,9 +303,9 @@ __device__ void unary_kernel(T* in, T* out, int len, UNARY_TYPE tp) {
     int pp_flag_prev = 1 - pp_flag;
     int thread_off_next = i + thread_step;
     int thread_remain_next = N - thread_off_next;
-    int thread_len = N - i >= tile_size ? tile_size : N - i;
+    int thread_len = N - i >= TILE_SIZE ? TILE_SIZE : N - i;
     int thread_len_next =
-        thread_remain_next >= tile_size ? tile_size : thread_remain_next;
+        thread_remain_next >= TILE_SIZE ? TILE_SIZE : thread_remain_next;
     if (thread_len_next > 0) {
       evs_in[pp_flag_next] = ctxs_in[pp_flag_next].trigger();
     }
@@ -312,7 +313,7 @@ __device__ void unary_kernel(T* in, T* out, int len, UNARY_TYPE tp) {
     int thread_off_next2 = i + thread_step * 2;
     int thread_remain_next2 = N - thread_off_next2;
     int thread_len_next2 =
-        thread_remain_next2 >= tile_size ? tile_size : thread_remain_next2;
+        thread_remain_next2 >= TILE_SIZE ? TILE_SIZE : thread_remain_next2;
 
     if (thread_len > 0) {
       evs_in[pp_flag].wait();
@@ -337,7 +338,7 @@ __device__ void unary_kernel(T* in, T* out, int len, UNARY_TYPE tp) {
       int thread_off_prev = i - thread_step;
       int thread_remain_prev = N - thread_off_prev;
       int thread_len_prev =
-          thread_remain_prev >= tile_size ? tile_size : thread_remain_prev;
+          thread_remain_prev >= TILE_SIZE ? TILE_SIZE : thread_remain_prev;
       if (thread_len_prev > 0) {
         evs_out[pp_flag_prev].wait();
       }

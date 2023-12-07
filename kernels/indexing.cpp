@@ -22,6 +22,7 @@
 #include "tops/tops_runtime.h"
 #include "utils.h"
 using namespace std;
+#define TILE_SIZE AlignDown(((VDMEM_SIZE) / 16), 256)
 
 template <typename ID_TYPENAME, typename T>
 __device__ void index_select_kernel(const size_t id_numel,
