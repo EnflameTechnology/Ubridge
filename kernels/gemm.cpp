@@ -24,7 +24,7 @@
 #include "dot_core_kernels.h"
 #include "include/common/atomic_op.h"
 using namespace std;
-#define MAX_NUM 1571840
+#define MAX_NUM 1540096 - 1024
 #define TEMPLATE_ALIGN_UP(a, b) (((a + b - 1) / b) * b)
 #define L1_ALIGN_SIZE (128)
 typedef enum {

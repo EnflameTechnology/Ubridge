@@ -284,7 +284,12 @@ impl_launch!(
 );
 
 impl_launch!(
-    [A, B, C, D, E, F, G, H, I, J, K,   L, M,  N,  O,  P,  Q,   R, S,  T,  U],
+    [A, B, C, D, E, F, G, H, I, J, K,   L, M,  N,  O,  P,  Q,   R, S],
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+);
+
+impl_launch!(
+    [A, B, C, D, E, F, G, H, I, J, K,   L, M,  N,  O,  P,  Q,   R, S, T, U],
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 );
 
@@ -322,7 +327,7 @@ impl GcuFunction {
                 ).to_result();
 
                 if ret.is_err() {
-                    println!("Error");
+                    println!("Launch Error for function {}", self.name);
                 }
                 return ret;
 

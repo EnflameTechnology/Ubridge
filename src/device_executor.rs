@@ -263,10 +263,12 @@ impl DeviceExecutor {
                             function_map.insert(name, Arc::new(function));
                         }
                     } else if module == "matmul" {
-                        let name = "matmul_f32";
-                        println!("Load function matmul_f32");
-                        let function = _module_map[module].get_function(&name).unwrap();
-                        function_map.insert(name.to_string(), Arc::new(function));
+                        for dt in ["i8", "bf16", "f16", "f32"] {
+                            let name = format!("{}_{}", module, dt);
+                            println!("Load function {}", name);
+                            let function = _module_map[module].get_function(&name).unwrap();
+                            function_map.insert(name, Arc::new(function));
+                        }
                     } 
                     else if module == "affine" {
                         for dt in ["bf16", "f16", "f32"] {
