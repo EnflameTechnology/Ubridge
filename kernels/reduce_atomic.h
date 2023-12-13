@@ -6,14 +6,14 @@
 #include "tops/tops_runtime.h"
 #include "utils.h"
 using namespace std;
-
+#include "include/common/atomic_op.h"
 
 template <typename TYPE>
-__device__ void atomic_reduce_max(TYPE* dst_ptr, TYPE* src_ptr,
+__forceinline__ __device__ void atomic_reduce_max(TYPE* dst_ptr, TYPE* src_ptr,
                                             unsigned int channel_align) {}
 
 template <>
-__device__ void  atomic_reduce_max(float* dst_ptr, float* src_ptr,
+__forceinline__ __device__ void  atomic_reduce_max(float* dst_ptr, float* src_ptr,
                                             unsigned int channel_align) {
   dst_ptr[0] = src_ptr[0];
   for (int i=1; i< channel_align; i++) {
@@ -25,7 +25,7 @@ __device__ void  atomic_reduce_max(float* dst_ptr, float* src_ptr,
 }
 
 template <>
-__device__ void  atomic_reduce_max(tops::half* dst_ptr, tops::half* src_ptr,
+__forceinline__ __device__ void  atomic_reduce_max(tops::half* dst_ptr, tops::half* src_ptr,
                                             unsigned int channel_align) {
   dst_ptr[0] = src_ptr[0];
   for (int i=1; i< channel_align; i++) {
@@ -37,7 +37,7 @@ __device__ void  atomic_reduce_max(tops::half* dst_ptr, tops::half* src_ptr,
 }
 
 template <>
-__device__ void  atomic_reduce_max(int8_t* dst_ptr, int8_t* src_ptr,
+__forceinline__ __device__ void  atomic_reduce_max(int8_t* dst_ptr, int8_t* src_ptr,
                                             unsigned int channel_align) {
   dst_ptr[0] = src_ptr[0];
   for (int i=1; i< channel_align; i++) {
@@ -49,11 +49,11 @@ __device__ void  atomic_reduce_max(int8_t* dst_ptr, int8_t* src_ptr,
 }
 
 template <typename TYPE>
-__device__ void atomic_reduce_min(TYPE* dst_ptr, TYPE* src_ptr,
+__forceinline__ __device__ void atomic_reduce_min(TYPE* dst_ptr, TYPE* src_ptr,
                                             unsigned int channel_align) {}
 
 template <>
-__device__ void  atomic_reduce_min(float* dst_ptr, float* src_ptr,
+__forceinline__ __device__ void  atomic_reduce_min(float* dst_ptr, float* src_ptr,
                                             unsigned int channel_align) {
   dst_ptr[0] = src_ptr[0];
   for (int i=1; i< channel_align; i++) {
@@ -65,7 +65,7 @@ __device__ void  atomic_reduce_min(float* dst_ptr, float* src_ptr,
 }
 
 template <>
-__device__ void  atomic_reduce_min(tops::half* dst_ptr, tops::half* src_ptr,
+__forceinline__ __device__ void  atomic_reduce_min(tops::half* dst_ptr, tops::half* src_ptr,
                                             unsigned int channel_align) {
   dst_ptr[0] = src_ptr[0];
   for (int i=1; i< channel_align; i++) {
@@ -77,7 +77,7 @@ __device__ void  atomic_reduce_min(tops::half* dst_ptr, tops::half* src_ptr,
 }
 
 template <>
-__device__ void  atomic_reduce_min(int8_t* dst_ptr, int8_t* src_ptr,
+__forceinline__ __device__ void  atomic_reduce_min(int8_t* dst_ptr, int8_t* src_ptr,
                                             unsigned int channel_align) {
   dst_ptr[0] = src_ptr[0];
   for (int i=1; i< channel_align; i++) {
@@ -90,12 +90,12 @@ __device__ void  atomic_reduce_min(int8_t* dst_ptr, int8_t* src_ptr,
 
 
 template <typename TYPE>
-__device__ void atomic_reduce_sum(TYPE* dst_ptr, TYPE* src_ptr,
+__forceinline__ __device__ void atomic_reduce_sum(TYPE* dst_ptr, TYPE* src_ptr,
                                             unsigned int channel_align) {}
 
 
 template <>
-__device__ void  atomic_reduce_sum(float* dst_ptr, float* src_ptr,
+__forceinline__ __device__ void  atomic_reduce_sum(float* dst_ptr, float* src_ptr,
                                             unsigned int channel_align) {
   dst_ptr[0] = src_ptr[0];
   for (int i=1; i< channel_align; i++) {
@@ -104,7 +104,7 @@ __device__ void  atomic_reduce_sum(float* dst_ptr, float* src_ptr,
 }
 
 template <>
-__device__ void  atomic_reduce_sum(tops::half* dst_ptr, tops::half* src_ptr,
+__forceinline__ __device__ void  atomic_reduce_sum(tops::half* dst_ptr, tops::half* src_ptr,
                                             unsigned int channel_align) {
   dst_ptr[0] = src_ptr[0];
   for (int i=1; i< channel_align; i++) {
@@ -113,7 +113,7 @@ __device__ void  atomic_reduce_sum(tops::half* dst_ptr, tops::half* src_ptr,
 }
 
 template <>
-__device__ void  atomic_reduce_sum(int8_t* dst_ptr, int8_t* src_ptr,
+__forceinline__ __device__ void  atomic_reduce_sum(int8_t* dst_ptr, int8_t* src_ptr,
                                             unsigned int channel_align) {
   dst_ptr[0] = src_ptr[0];
   for (int i=1; i< channel_align; i++) {

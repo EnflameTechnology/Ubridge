@@ -65,7 +65,7 @@ enum UNARY_TYPE {
 };
 
 template <typename T>
-__device__ void gelu_kernel(T* output, T* input, int num) {
+__device__ __forceinline__ void gelu_kernel(T* output, T* input, int num) {
   using vtype = typename scalar_to_vector<T,
                                           TOPS_VECTOR_LENGTH>::type;
   const int vlength = vector_length<vtype>::value;
@@ -81,7 +81,7 @@ __device__ void gelu_kernel(T* output, T* input, int num) {
 }
 
 template <typename T, typename VT>
-__device__ void relu_kernel(T* output, T* input, int num) {
+__device__ __forceinline__ void relu_kernel(T* output, T* input, int num) {
   using vtype = typename scalar_to_vector<T,
                                           TOPS_VECTOR_LENGTH>::type;
   const int vlength = vector_length<vtype>::value;

@@ -40,14 +40,14 @@ using namespace tops;
 #define PING_PONG_SIZE 2
 
 template <typename T, typename TOUT>
-__device__ void atomic_cast(TOUT* out_ptr, T* src_ptr, 
+__device__ __forceinline__ void atomic_cast(TOUT* out_ptr, T* src_ptr, 
                                             unsigned int elements) {
    convert<TOUT, T>(reinterpret_cast<TOUT*>(out_ptr), src_ptr, elements);
 }
 
 
 template <typename T, typename OUTT>
-__device__ void cast_kernel(T* in, OUTT* out, int len) {
+__device__ __forceinline__ void cast_kernel(T* in, OUTT* out, int len) {
   tops_dte_ctx_t ctxs_in[PING_PONG_SIZE];
   tops_dte_ctx_t ctxs_out[PING_PONG_SIZE];
   tops_dte_ctx_t ctxs_cp;

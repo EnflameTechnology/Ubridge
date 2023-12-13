@@ -25,7 +25,7 @@
 #define tile_size 1024
 using namespace std;
 
-__device__ void init_tid_off_arr(int dim_size, int *tid_off_arr,
+__device__ __forceinline__ void init_tid_off_arr(int dim_size, int *tid_off_arr,
                                  int &thread_num) {
   for (int i = 0; i < thread_num; i++) {
     tid_off_arr[i] = 0;
@@ -46,7 +46,7 @@ __device__ void init_tid_off_arr(int dim_size, int *tid_off_arr,
 }
 
 template <typename T>
-__device__ void fill__Kernel(T *output, int total_size, T value, int bpe) {
+__device__ __forceinline__ void fill__Kernel(T *output, int total_size, T value, int bpe) {
   int thread_num = GetThreadNum();
   int thread_id = GetThreadIdx();
   tops_dte_ctx_t ctx;

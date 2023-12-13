@@ -241,7 +241,6 @@ impl DeviceExecutor {
                                 function_map.insert(name, Arc::new(function));
                             }
                         }
-
                         let name = format!("{}_u8", "ucopy");
                         println!("Load function {}", name);
                         let function = _module_map[module].get_function(&name).unwrap();
@@ -255,8 +254,8 @@ impl DeviceExecutor {
                                 function_map.insert(name, Arc::new(function));
                             }
                         }
-                    } else if module == "dotllm" {
-                        for dt in ["bf16", "f16", "f32"] {
+                    } else if module == "fill" {
+                        for dt in ["bf16", "f16", "f32", "f64", "i32", "i16", "i8", "bool"] {
                             let name = format!("{}_{}", module, dt);
                             println!("Load function {}", name);
                             let function = _module_map[module].get_function(&name).unwrap();
@@ -283,14 +282,7 @@ impl DeviceExecutor {
                             let function = _module_map[module].get_function(&func).unwrap();
                             function_map.insert(func.to_string(), Arc::new(function));
                         }
-                    } else if module == "gemm" {
-                        for dt in ["i8", "bf16", "f16", "f32"] {
-                            let name = format!("{}_{}", module, dt);
-                            println!("Load function {}", name);
-                            let function = _module_map[module].get_function(&name).unwrap();
-                            function_map.insert(name, Arc::new(function));
-                        }
-                    } else if module == "reduce" {
+                    }  else if module == "reduce" {
                         for func in &reduce_functions {
                             println!("Load function {}", func);
                             let function = _module_map[module].get_function(&func).unwrap();
@@ -311,8 +303,6 @@ impl DeviceExecutor {
                     }
                     else {
                         println!("Module not load: {}", module);
-                        // let function = _module_map[module].get_function(&module).unwrap();
-                        // function_map.insert(module.clone(), Arc::new(function));
                     }
                 }
 

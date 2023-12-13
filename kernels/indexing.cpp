@@ -25,7 +25,7 @@ using namespace std;
 #define TILE_SIZE AlignDown(((VDMEM_SIZE) / 16), 256)
 
 template <typename ID_TYPENAME, typename T>
-__device__ void index_select_kernel(const size_t id_numel,
+__device__ __forceinline__ void index_select_kernel(const size_t id_numel,
     ID_TYPENAME *ids, T *inp, T *out,
     const size_t left_size, const size_t dim_size, const size_t right_size) {
     int thread_id = GetThreadIdx();

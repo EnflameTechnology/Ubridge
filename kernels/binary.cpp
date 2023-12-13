@@ -320,7 +320,7 @@ __device__ __forceinline__ void binary_atomic2(TO* out, T* lhs, T* rhs, unsigned
 }
 
 template <typename T, typename TO>
-__device__ void binary_kernel_right(T* in_a, T* in_b, TO* out, int element_num,  const size_t num_dims,  size_t *dims_and_strides, BINARY_TYPE tp) 
+__device__ __forceinline__ void binary_kernel_right(T* in_a, T* in_b, TO* out, int element_num,  const size_t num_dims,  size_t *dims_and_strides, BINARY_TYPE tp) 
 {
     int dim_size = dims_and_strides[num_dims - 1];
     int thread_id = GetThreadIdx();
@@ -451,7 +451,7 @@ __device__ void binary_kernel_right(T* in_a, T* in_b, TO* out, int element_num, 
 }
 
 template <typename T, typename TO>
-__device__ void binary_kernel(T* in_a, T* in_b, TO* out, int N, 
+__device__ __forceinline__ void binary_kernel(T* in_a, T* in_b, TO* out, int N, 
         BINARY_TYPE tp) {
   tops_dte_ctx_t ctxs_in[OPERAND_NUM][PING_PONG_SIZE];
   tops_dte_ctx_t ctxs_out[PING_PONG_SIZE];

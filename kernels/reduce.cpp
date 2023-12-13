@@ -33,7 +33,7 @@ enum REDUCE_TYPE {
 };
 
 template <typename T>
-__device__ void reduce_kernel(T* in, T* out, const size_t element_num, const size_t reduce_dim_size, REDUCE_TYPE tp) {
+__forceinline__ __device__ void reduce_kernel(T* in, T* out, const size_t element_num, const size_t reduce_dim_size, REDUCE_TYPE tp) {
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNumEachBlock();
 

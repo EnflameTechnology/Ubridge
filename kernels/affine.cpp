@@ -46,7 +46,7 @@ enum AFFINE_DATA_TYPE {
 
 
 template <typename T, typename VT>
-__device__ void affine_kernel(T* in, T* out, int len, float mulv, float addv, AFFINE_DATA_TYPE tp) {
+__device__ __forceinline__ void affine_kernel(T* in, T* out, int len, float mulv, float addv, AFFINE_DATA_TYPE tp) {
   tops_dte_ctx_t ctxs_in[PING_PONG_SIZE];
   tops_dte_ctx_t ctxs_out[PING_PONG_SIZE];
   tops_dte_ctx_t ctxs_cp;

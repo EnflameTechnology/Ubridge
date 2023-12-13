@@ -26,7 +26,7 @@ using namespace std;
 #define TILE_SIZE AlignDown(((VDMEM_SIZE) / 32), 256)
 
 template <typename ID_TYPENAME, typename T>
-__device__ void atomic_where(ID_TYPENAME* ids_ptr, T* src_ptr1, T* src_ptr2, 
+__device__ __forceinline__ void atomic_where(ID_TYPENAME* ids_ptr, T* src_ptr1, T* src_ptr2, 
                                             T* dst_ptr,
                                             unsigned int elements) {
     for (int i=0 ;i< elements; i++) {
@@ -36,7 +36,7 @@ __device__ void atomic_where(ID_TYPENAME* ids_ptr, T* src_ptr1, T* src_ptr2,
 }
 
 template <typename ID_TYPENAME, typename T>
-__device__ void where_kernel(ID_TYPENAME* ids, T* in1, T* in2, T* out, const size_t element_num) {
+__device__ __forceinline__ void where_kernel(ID_TYPENAME* ids, T* in1, T* in2, T* out, const size_t element_num) {
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNumEachBlock();
     // const int BLOCK_SIZE = TILE_SIZE;

@@ -21,7 +21,6 @@
 #include "tops/tops_runtime.h"
 // #include "op_aten_gemm_tuner.h"
 #include "utils.h"
-#include "dot_core_kernels.h"
 #include "include/common/atomic_op.h"
 
 using namespace std;
@@ -50,7 +49,7 @@ typedef enum {
 
 
 template <typename lhs_t, typename rhs_t>
-__device__ void matmul_kernel(lhs_t *lhs, rhs_t *rhs, rhs_t *out,
+__device__ __forceinline__ void matmul_kernel(lhs_t *lhs, rhs_t *rhs, rhs_t *out,
       int input_dtype, int input_batch,
       int input_m, int input_k, int input_n,
       int lhs_multicore, int rhs_multicore, int batch_multicore,
