@@ -17,6 +17,7 @@ use std::{
 };
 use std::path::Path;
 use crate::gemm_tuner::{AtenGemmTuner, AtenGemmInfo, AtenGemmTune, GEMM_OP_PARAS};
+use crate::prelude::GcuLaunchConfig;
 
 //Tops backend
 #[cfg(feature = "tops_backend")]
@@ -48,6 +49,7 @@ pub struct GcuDevice {
     executor: Arc<&'static mut DeviceExecutor>,
     is_async: bool,
     prop: driv::topsDeviceProp_t,
+    pub launch_cfg: GcuLaunchConfig,
     pub tuner: AtenGemmTuner,
 }
 
@@ -102,6 +104,11 @@ impl GcuDevice {
                     executor: Arc::new(gcu_executor),
                     is_async: !eager_mode,
                     prop: prop,
+                    launch_cfg:  GcuLaunchConfig {
+                        grid_dim: (1, 1, 1),
+                        block_dim: (prop.maxThreadsPerBlock as u32, 1, 1),
+                        shared_mem_bytes: 0,
+                    },
                     tuner: AtenGemmTuner::new(),
                 }))
             }

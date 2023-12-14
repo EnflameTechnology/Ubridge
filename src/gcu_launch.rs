@@ -215,7 +215,7 @@ pub unsafe trait GcuLaunchAsync<Params> {
     ///
     /// **If you launch a kernel or drop a value on a different stream
     /// this may not hold**
-    unsafe fn launch(self, cfg: GcuLaunchConfig, params: Params) -> DeviceResult<()>;
+    unsafe fn launch(self, cfg: &GcuLaunchConfig, params: Params) -> DeviceResult<()>;
 
     /// Launch the function on a stream concurrent to the device's default
     /// work stream.
@@ -229,7 +229,7 @@ pub unsafe trait GcuLaunchAsync<Params> {
     unsafe fn launch_on_stream(
         self,
         stream: &Stream,
-        cfg: GcuLaunchConfig,
+        cfg: &GcuLaunchConfig,
         params: Params,
     ) -> DeviceResult<()>;
 }
@@ -240,22 +240,22 @@ unsafe impl<$($Vars: DeviceCopy),*> GcuLaunchAsync<($($Vars, )*)> for GcuFunctio
     #[inline(always)]
     unsafe fn launch(
         self,
-        cfg: GcuLaunchConfig,
+        cfg: &GcuLaunchConfig,
         args: ($($Vars, )*)
     ) -> DeviceResult<()> {
         let params = &mut [$(args.$Idx.as_kernel_param(), )*];
-        self.launch_async_impl(cfg, params)
+        self.launch_async_impl(&cfg, params)
     }
 
     #[inline(always)]
     unsafe fn launch_on_stream(
         self,
         stream: &Stream,
-        cfg: GcuLaunchConfig,
+        cfg: &GcuLaunchConfig,
         args: ($($Vars, )*)
     ) -> DeviceResult<()> {
         let params = &mut [$(args.$Idx.as_kernel_param(), )*];
-        self.par_launch_async_impl(stream, cfg, params)
+        self.par_launch_async_impl(stream, &cfg, params)
     }
 }
     };
@@ -298,7 +298,7 @@ impl GcuFunction {
     #[inline(always)]
     unsafe fn launch_async_impl(
         self,
-        cfg: GcuLaunchConfig,
+        cfg: &GcuLaunchConfig,
         params: &mut [*mut std::ffi::c_void],
     ) -> DeviceResult<()> {
         match self.func {
@@ -350,7 +350,7 @@ impl GcuFunction {
     unsafe fn par_launch_async_impl(
         self,
         _stream: &Stream,
-        _cfg: GcuLaunchConfig,
+        _cfg: &GcuLaunchConfig,
         _params: &mut [*mut std::ffi::c_void],
     ) -> DeviceResult<()> {
         // self.device.bind_to_thread()?;
