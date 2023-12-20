@@ -26,24 +26,15 @@
 #include <krt/dispatch.h>
 #include <krt/leaptr.h>
 #include <krt/vector_infra.h>
-#if __GCU_ARCH__ < 300 
-#include "pavo/vector_impl.h"
-#include "pavo/vector_mask_impl.h"
-#include "pavo/perfmon_impl.h"
-#endif
+#include <krt/mmu.h>
 
-#if __GCU_ARCH__ >= 300
 #include "include/common/atomic_op.h"
-// #include "/home/kernel/atomicop_pkg/src/include/common/atomic_op.h"
-#endif
-
 #include "utils.h"
+#include "utils/vector_ex.h"
 using namespace std;
 using namespace tops;
-// #define tile_size (VDMEM_SIZE / 32)
 #define PING_PONG_SIZE 2
 #define TILE_SIZE AlignDown(((VDMEM_SIZE) / 32), 256)
-
 
 enum UNARY_TYPE {
     UNARY_TYPE_NEG = 1,
@@ -420,11 +411,13 @@ UNARY_OP(float, vfloat, uelu_f32, UNARY_TYPE_ELU)
 #define PRINTHELPER(ARRAY, SZ, MSG) \
   printf(MSG); \
   for (int i=0; i< SZ; i++) \
-    printf("%d, ", ARRAY[i]); \
+    printf("%d, ", (int)ARRAY[i]); \
   printf("\n") \
 
+
 // #define PRINTHELPER 
-template <typename T, int SRCRANK, int DSTRANK>
+#if 0
+template <typename T, int SRCRANK, int DSTRANK, int BPE>
 __device__ void unary_kernel_non_contiguous(T* in, T* out, const size_t op_type, const size_t origin_numel, 
         const size_t numel, const size_t start_offset, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_layout) {
     tops_dte_ctx_t ctx;
@@ -497,7 +490,342 @@ __device__ void unary_kernel_non_contiguous(T* in, T* out, const size_t op_type,
 
 }
 
-#define UNARY_COPY_OP(TYPE, VT, FN_NAME, TP) \
+#endif
+
+__device__ __forceinline__ unsigned int get_strided_index(
+    unsigned int idx,
+    const int num_dims,
+    const int *dims,
+    const int *strides
+) {
+    unsigned int strided_i = 0;
+    for (unsigned int d = 0; d < num_dims; d++) {
+        unsigned int dim_idx = num_dims - 1 - d;
+        strided_i += (idx % dims[dim_idx]) * strides[dim_idx];
+        idx /= dims[dim_idx];
+    }
+    return strided_i;
+}
+
+template <int RANK>
+__device__ __forceinline__ VecIndexType get_batch_strided_index(VecIndexType indexes, VecIndexType dst_shape[], VecIndexType dst_strides[]) {
+    auto results = vbroadcast<VecIndexType>((unsigned int)0);
+    VecIndexType vec_rem[RANK];
+    vec_rem[0] = indexes;
+    #pragma clang loop unroll(enable)
+    for (int i = 0; i < RANK; i++) {
+      unsigned int dim_idx = RANK - 1 - i;
+      results = vadd(vmul(vrem(vec_rem[i], dst_shape[dim_idx]), dst_strides[dim_idx]), results); 
+      vec_rem[i + 1] = vdiv(vec_rem[i], dst_shape[dim_idx]);
+    }
+    return results;
+}
+
+
+template <typename T, int SRCRANK, int DSTRANK, int BPE>
+__device__ void ucopy_single_thread(T* in, T* out, const size_t op_type, const size_t origin_numel, 
+        const size_t numel, const size_t start_offset, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_strides) {
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx); 
+    int src_dim[SRCRANK];
+    int src_strides[SRCRANK];
+    int dst_dim[DSTRANK];
+    int dst_strides[DSTRANK];
+    for (int j = 0; j < origin_num_dims; ++j) {
+      src_dim[j] = dims_and_strides[j];
+      src_strides[j] = dims_and_strides[origin_num_dims + j];
+    }
+
+    for (int j = 0; j < num_dims; ++j) {
+      dst_dim[j] = dims_and_strides[j + 2 * origin_num_dims];
+      dst_strides[j] = dims_and_strides[2 * origin_num_dims + num_dims + j];
+    }
+    int in_total_size = origin_numel;
+    int out_total_size = numel;
+
+    int thread_id = GetThreadIdx();
+    int MAX_THREADS = GetThreadNumEachBlock();
+    int blockId = blockIdx.y * gridDim.x + blockIdx.x;
+    int threadId = blockId * blockDim.x + threadIdx.x;
+
+    if (op_type == 4 && threadId == 0) { 
+        int src_shape[SRCRANK];
+        int offsets[SRCRANK];
+        for (int j = 0; j < SRCRANK; ++j) {
+          src_shape[j] = dims_and_strides[j];
+          offsets[j] = src_shape[j]==dst_dim[j]?0:start_offset;
+        }
+        tops::mdspan src_mem(tops::Global, in, src_shape);
+        tops::mdspan dst_mem(tops::Global, out, dst_dim);
+        tops::slice(ctx, dst_mem, src_mem, offsets);
+
+    } else if (threadId == 0) {
+
+      int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
+      int out_map_size = AlignUp(out_total_size, NUMS_SPLIT) * sizeof(T);
+      auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
+      auto dst_l3_addr = map_mem(reinterpret_cast<generic_ptr>(out), out_map_size);
+
+      T* dst_l3 = reinterpret_cast<T*>(dst_l3_addr);
+      T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
+      for (int i = 0; i < out_total_size; i++) {
+          unsigned int strided_i = get_strided_index(i, num_dims, dst_dim, dst_strides);
+          if (strided_i < in_total_size) {
+            dst_l3[i] = src_l3[strided_i];
+          } 
+      }
+      unmap_mem(src_l3_addr);
+      unmap_mem(dst_l3_addr);
+    }
+}
+
+
+template <typename T, int SRCRANK, int DSTRANK, int BPE>
+__device__ void ucopy_multithread(T* in, T* out, const size_t op_type, const size_t origin_numel, 
+        const size_t numel, const size_t start_offset, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_strides) {
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx); 
+    int src_dim[SRCRANK];
+    int src_strides[SRCRANK];
+    int dst_dim[DSTRANK];
+    int dst_strides[DSTRANK];
+    for (int j = 0; j < origin_num_dims; ++j) {
+      src_dim[j] = dims_and_strides[j];
+      src_strides[j] = dims_and_strides[origin_num_dims + j];
+    }
+
+    for (int j = 0; j < num_dims; ++j) {
+      dst_dim[j] = dims_and_strides[j + 2 * origin_num_dims];
+      dst_strides[j] = dims_and_strides[2 * origin_num_dims + num_dims + j];
+    }
+    int in_total_size = origin_numel;
+    int out_total_size = numel;
+
+    int thread_id = GetThreadIdx();
+    int MAX_THREADS = GetThreadNumEachBlock();
+    int blockId = blockIdx.y * gridDim.x + blockIdx.x;
+    int threadId = blockId * blockDim.x + threadIdx.x;
+
+    if (op_type == 4 && threadId == 0) { 
+        int src_shape[SRCRANK];
+        int offsets[SRCRANK];
+        for (int j = 0; j < SRCRANK; ++j) {
+          src_shape[j] = dims_and_strides[j];
+          offsets[j] = src_shape[j]==dst_dim[j]?0:start_offset;
+        }
+        tops::mdspan src_mem(tops::Global, in, src_shape);
+        tops::mdspan dst_mem(tops::Global, out, dst_dim);
+        tops::slice(ctx, dst_mem, src_mem, offsets);
+
+    } else {
+      int N = out_total_size;
+      int THREAD_STEP = 1;
+      int thread_step = 1;
+      if (N > MAX_THREADS) {
+        THREAD_STEP = N / MAX_THREADS;
+        thread_step = THREAD_STEP;
+        if (N % MAX_THREADS != 0) {
+          if (thread_id == MAX_THREADS - 1) {
+            thread_step += N % MAX_THREADS; //last thread also process remains
+          }
+        }
+      }
+
+      int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
+      int out_map_size = AlignUp(out_total_size, NUMS_SPLIT) * sizeof(T);
+      auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
+      auto dst_l3_addr = map_mem(reinterpret_cast<generic_ptr>(out), out_map_size);
+
+      T* dst_l3 = reinterpret_cast<T*>(dst_l3_addr);
+      T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
+      for (int i = 0; i < thread_step; i++) {
+        size_t idx = thread_id * THREAD_STEP + i;
+        // if (idx < N) {
+            unsigned int strided_i = get_strided_index(idx, num_dims, dst_dim, dst_strides);
+            // if (strided_i < in_total_size) {
+              dst_l3[idx] = src_l3[strided_i];
+            // } 
+        // }
+      }
+      unmap_mem(src_l3_addr);
+      unmap_mem(dst_l3_addr);
+    }
+}
+
+template <typename T, int SRCRANK, int DSTRANK, int BPE>
+__device__ void ucopy_multithread_cache(T* in, T* out, const size_t op_type, const size_t origin_numel, 
+        const size_t numel, const size_t start_offset, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_strides) {
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx); 
+    int src_dim[SRCRANK];
+    int src_strides[SRCRANK];
+    int dst_dim[DSTRANK];
+    int dst_strides[DSTRANK];
+    for (int j = 0; j < origin_num_dims; ++j) {
+      src_dim[j] = dims_and_strides[j];
+      src_strides[j] = dims_and_strides[origin_num_dims + j];
+    }
+
+    for (int j = 0; j < num_dims; ++j) {
+      dst_dim[j] = dims_and_strides[j + 2 * origin_num_dims];
+      dst_strides[j] = dims_and_strides[2 * origin_num_dims + num_dims + j];
+    }
+    int in_total_size = origin_numel;
+    int out_total_size = numel;
+
+    int thread_id = GetThreadIdx();
+    int MAX_THREADS = GetThreadNumEachBlock();
+    int blockId = blockIdx.y * gridDim.x + blockIdx.x;
+    int threadId = blockId * blockDim.x + threadIdx.x;
+
+    if (op_type == 4 && threadId == 0) { 
+        int src_shape[SRCRANK];
+        int offsets[SRCRANK];
+        for (int j = 0; j < SRCRANK; ++j) {
+          src_shape[j] = dims_and_strides[j];
+          offsets[j] = src_shape[j]==dst_dim[j]?0:start_offset;
+        }
+        tops::mdspan src_mem(tops::Global, in, src_shape);
+        tops::mdspan dst_mem(tops::Global, out, dst_dim);
+        tops::slice(ctx, dst_mem, src_mem, offsets);
+
+    } else {
+      tops_dte_ctx_t ctx;
+      tops::dte_scope s(ctx); 
+      const int TILESIZE = 4096;
+      __local__ __valigned__ T buffer[TILESIZE];
+      tops::mdspan out_hbm(tops::Global, out, out_total_size);
+      int N = out_total_size;
+      int THREAD_STEP = 1;
+      int thread_step = 1;
+      if (N > MAX_THREADS) {
+        THREAD_STEP = N / MAX_THREADS;
+        thread_step = THREAD_STEP;
+        if (N % MAX_THREADS != 0) {
+          if (thread_id == MAX_THREADS - 1) {
+            thread_step += N % MAX_THREADS; //last thread also process remains
+          }
+        }
+      }
+
+      int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
+      auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
+      T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
+      for (int i = 0; i < thread_step; i+=TILESIZE) {
+        int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i;
+        int offset = thread_id * THREAD_STEP + i;
+        for (int j = 0; j< bufsize; j++) {
+          size_t idx = offset + j;
+          unsigned int strided_i = get_strided_index(idx, num_dims, dst_dim, dst_strides);
+          buffer[j] = src_l3[strided_i];
+        }
+        tops::mdspan buffer_l1(tops::Private, buffer, bufsize);
+        tops::deslice(ctx, out_hbm, buffer_l1, {offset});
+      }
+      unmap_mem(src_l3_addr);
+    }
+}
+
+#if 0
+template <typename T, int SRCRANK, int DSTRANK, int BPE>
+__device__ void ucopy_multithread_gather(T* in, T* out, const size_t op_type, const size_t origin_numel, 
+        const size_t numel, const size_t start_offset, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_strides) {
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx); 
+    int src_dim[SRCRANK];
+    int src_strides[SRCRANK];
+    int dst_dim[DSTRANK];
+    int dst_strides[DSTRANK];
+    for (int j = 0; j < origin_num_dims; ++j) {
+      src_dim[j] = dims_and_strides[j];
+      src_strides[j] = dims_and_strides[origin_num_dims + j];
+    }
+
+    for (int j = 0; j < num_dims; ++j) {
+      dst_dim[j] = dims_and_strides[j + 2 * origin_num_dims];
+      dst_strides[j] = dims_and_strides[2 * origin_num_dims + num_dims + j];
+    }
+    int in_total_size = origin_numel;
+    int out_total_size = numel;
+
+    int thread_id = GetThreadIdx();
+    int MAX_THREADS = GetThreadNumEachBlock();
+    int blockId = blockIdx.y * gridDim.x + blockIdx.x;
+    int threadId = blockId * blockDim.x + threadIdx.x;
+
+    if (op_type == 4 && threadId == 0) { 
+        int src_shape[SRCRANK];
+        int offsets[SRCRANK];
+        for (int j = 0; j < SRCRANK; ++j) {
+          src_shape[j] = dims_and_strides[j];
+          offsets[j] = src_shape[j]==dst_dim[j]?0:start_offset;
+        }
+        tops::mdspan src_mem(tops::Global, in, src_shape);
+        tops::mdspan dst_mem(tops::Global, out, dst_dim);
+        tops::slice(ctx, dst_mem, src_mem, offsets);
+
+    } else {
+      tops_dte_ctx_t ctx;
+      tops::dte_scope s(ctx); 
+      const int TILESIZE = TOPS_VECTOR_LENGTH / sizeof(T);
+      __local__ __valigned__ T buffer[1024];
+      tops::mdspan out_hbm(tops::Global, out, out_total_size);
+      int N = out_total_size;
+      int THREAD_STEP = 1;
+      int thread_step = 1;
+      if (N > MAX_THREADS) {
+        THREAD_STEP = N / MAX_THREADS;
+        thread_step = THREAD_STEP;
+        if (N % MAX_THREADS != 0) {
+          if (thread_id == MAX_THREADS - 1) {
+            thread_step += N % MAX_THREADS; //last thread also process remains
+          }
+        }
+      }
+
+      int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
+      auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
+      T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
+      va16u32x4 vec_dst_shape[DSTRANK];
+      va16u32x4 vec_dst_strides[DSTRANK];
+      for (int i = 0; i < DSTRANK; ++i) {
+        vec_dst_shape[i] = vbroadcast<va16u32x4>((unsigned int)dst_dim[i]);
+        vec_dst_strides[i] = vbroadcast<va16u32x4>((unsigned int)dst_strides[i]);
+      }
+
+      auto vec_srt_start = vbroadcast<va16u32x4>((unsigned int)0);
+      auto vec_srt_end = vbroadcast<va16u32x4>((unsigned int)in_total_size);
+
+      for (int i = 0; i < thread_step; i+=TILESIZE) {
+        int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i;
+        int offset = thread_id * THREAD_STEP + i;
+
+        auto indexes = viota<va16u32x4>((unsigned int)offset);
+        auto strided_indexes = get_batch_strided_index<DSTRANK>(indexes, vec_dst_shape, vec_dst_strides);
+        // using ResultValueType = typename scalar_to_vector<T, TOPS_VECTOR_LENGTH / sizeof(T)>::type;
+        using ResultValueType = FixedVecValueType<BPE>;
+        auto mask_ge = vge<vbool64_t>(strided_indexes, vec_srt_start);
+        auto mask_lt = vlt<vbool64_t>(strided_indexes, vec_srt_end);
+        auto mask = mask_and(mask_ge, mask_lt);
+
+        auto vec_bpe = vbroadcast<va16u32x4>((unsigned int)sizeof(T));
+        auto offsets = vmul(strided_indexes, vec_bpe);
+        ResultValueType result;
+        result = vgather_t(mask, src_l3, offsets, result);
+
+        auto output = vload<ResultValueType>(buffer);
+        output = vselect_t(mask, result, output);
+        // vstore(output, buffer); //TODO
+        // vstore(result, buffer);
+        // tops::mdspan buffer_l1(tops::Private, buffer, bufsize);
+        // tops::deslice(ctx, out_hbm, buffer_l1, {offset});
+      }
+      unmap_mem(src_l3_addr);
+    }
+}
+#endif
+
+#define UNARY_COPY_OP(KERNEL, TYPE, VT, FN_NAME, BPE) \
 extern "C" __global__ void FN_NAME( \
     const size_t origin_numel, \
     const size_t numel, \
@@ -520,69 +848,58 @@ extern "C" __global__ void FN_NAME( \
     } \
     if (num_dims==2) {\
       if (origin_num_dims == 2)\
-        unary_kernel_non_contiguous<TYPE, 2, 2>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 2, 2, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 3)\
-        unary_kernel_non_contiguous<TYPE, 3, 2>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 3, 2, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 4)\
-        unary_kernel_non_contiguous<TYPE, 4, 2>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 4, 2, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 5)\
-        unary_kernel_non_contiguous<TYPE, 5, 2>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 5, 2, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims <= 1)\
-        unary_kernel_non_contiguous<TYPE, 1, 2>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 1, 2, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
     } else if (num_dims==3) {\
       if (origin_num_dims == 3)\
-        unary_kernel_non_contiguous<TYPE, 3, 3>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 3, 3, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 4)\
-        unary_kernel_non_contiguous<TYPE, 4, 3>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 4, 3, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 5)\
-        unary_kernel_non_contiguous<TYPE, 5, 3>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 5, 3, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 2)\
-        unary_kernel_non_contiguous<TYPE, 2, 3>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 2, 3, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims <= 1)\
-        unary_kernel_non_contiguous<TYPE, 1, 3>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 1, 3, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
     } else if (num_dims == 4) {\
       if (origin_num_dims == 5)\
-        unary_kernel_non_contiguous<TYPE, 5, 4>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 5, 4, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 4)\
-        unary_kernel_non_contiguous<TYPE, 4, 4>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 4, 4, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 3)\
-        unary_kernel_non_contiguous<TYPE, 3, 4>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 3, 4, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 2)\
-        unary_kernel_non_contiguous<TYPE, 2, 4>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 2, 4, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims <= 1)\
-        unary_kernel_non_contiguous<TYPE, 1, 4>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 1, 4, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
     } else if (num_dims==5) {\
       if (origin_num_dims <= 1)\
-        unary_kernel_non_contiguous<TYPE, 1, 5>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 1, 5, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 2)\
-        unary_kernel_non_contiguous<TYPE, 2, 5>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 2, 5, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 3)\
-        unary_kernel_non_contiguous<TYPE, 3, 5>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 3, 5, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 4)\
-        unary_kernel_non_contiguous<TYPE, 4, 5>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+        KERNEL<TYPE, 4, 5, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
       else if (origin_num_dims == 5)\
-        unary_kernel_non_contiguous<TYPE, 5, 5>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-    } else if (num_dims==1) {\
-      if (origin_num_dims <= 1)\
-        unary_kernel_non_contiguous<TYPE, 1, 1>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 2)\
-        unary_kernel_non_contiguous<TYPE, 2, 1>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 3)\
-        unary_kernel_non_contiguous<TYPE, 3, 1>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 4)\
-        unary_kernel_non_contiguous<TYPE, 4, 1>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 5)\
-        unary_kernel_non_contiguous<TYPE, 5, 1>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-    }\ 
+        KERNEL<TYPE, 5, 5, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
+    } \
 } \
 
 
-UNARY_COPY_OP(__bf16, vbfloat, ucopy_bf16, UNARY_TYPE_COPY) 
-UNARY_COPY_OP(__fp16, vhalf, ucopy_f16, UNARY_TYPE_COPY)
-UNARY_COPY_OP(float, vfloat, ucopy_f32, UNARY_TYPE_COPY)
-UNARY_COPY_OP(u_int8_t, vuchar, ucopy_u8, UNARY_TYPE_COPY)
-UNARY_COPY_OP(u_int32_t, vuint, ucopy_u32, UNARY_TYPE_COPY)
-UNARY_COPY_OP(double, vfloatx2, ucopy_f64, UNARY_TYPE_COPY)
+UNARY_COPY_OP(ucopy_multithread_cache, __bf16, vbfloat, ucopy_bf16, 2) 
+UNARY_COPY_OP(ucopy_multithread_cache, __fp16, vhalf, ucopy_f16, 2)
+UNARY_COPY_OP(ucopy_multithread_cache, float, vfloat, ucopy_f32, 4)
+UNARY_COPY_OP(ucopy_multithread_cache, u_int8_t, vuchar, ucopy_u8, 2)
+UNARY_COPY_OP(ucopy_multithread_cache, u_int32_t, vuint, ucopy_u32, 4)
+UNARY_COPY_OP(ucopy_multithread_cache, double, vfloatx2, ucopy_f64, 8)
 
 // UNARY_OP(int8_t, vchar, ucopy_i8, UNARY_TYPE_COPY)
 // UNARY_OP(u_int8_t, vuchar, ucopy_u8, UNARY_TYPE_COPY)

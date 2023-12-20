@@ -7,9 +7,9 @@
 #include <algorithm>
 #include <functional>
 #include <numeric>
-
+#include <krt/vector_infra.h>
 using namespace std;
-
+using namespace tops;
 constexpr int MAX_RANK = 4;
 constexpr int MAX_PAVO_CLUSTER_NUM = 4;
 constexpr int MAX_PAVO_SIP_NUM = 6;
@@ -39,6 +39,94 @@ constexpr int SIP_VECTOR_LENGTH = 128;
 #else
   constexpr static int VDMEM_REAL_SIZE = VDMEM_SIZE;
 #endif
+
+#if defined(__GCU_ARCH__)
+#if __GCU_ARCH__ >= 200 && __GCU_ARCH__ <= 300
+using IndexType = uint32_t;
+#else
+using IndexType = size_t;
+#endif
+#else
+using IndexType = size_t;
+#endif
+
+template <typename RET_TYPE>
+inline KRT_API RET_TYPE viota(unsigned int start);
+template <typename RET_TYPE, typename MB_TYPE>
+inline KRT_API RET_TYPE viota_t(const MB_TYPE& mb, unsigned int start,
+                                const RET_TYPE& remain);
+template <typename RET_TYPE, typename MB_TYPE>
+inline KRT_API RET_TYPE viota_f(const MB_TYPE& mb, unsigned int start,
+                                const RET_TYPE& remain) {
+  auto mask = mask_not(mb);
+  return viota_t<RET_TYPE>(mask, start, remain);
+}
+
+template <typename RET_TYPE>
+inline KRT_API RET_TYPE viota_dup(unsigned int start);
+template <typename RET_TYPE, typename MB_TYPE>
+inline KRT_API RET_TYPE viota_dup_t(const MB_TYPE& mb, unsigned int start,
+                                    const RET_TYPE& remain);
+template <typename RET_TYPE, typename MB_TYPE>
+inline KRT_API RET_TYPE viota_dup_f(const MB_TYPE& mb, unsigned int start,
+                                    const RET_TYPE& remain) {
+  auto mask = mask_not(mb);
+  return viota_dup_t<RET_TYPE>(mask, start, remain);
+}
+
+#if (__KRT_ARCH__ >= 300)
+#define VIOTA_IMPL(TYPE, NUM, BOOL_NUM)                                       \
+  template <>                                                                 \
+  inline KRT_API va##NUM##TYPE##x4 viota(unsigned int start) {                \
+    return __dtu_m_mid_m0_##TYPE(start);                                      \
+  }                                                                           \
+  template <>                                                                 \
+  inline KRT_API va##NUM##TYPE##x4 viota_dup(unsigned int start) {            \
+    return __dtu_m_mid_m1_##TYPE(start);                                      \
+  }                                                                           \
+  template <>                                                                 \
+  inline KRT_API va##NUM##TYPE##x4 viota_t(const vbool##BOOL_NUM##_t& mb,     \
+                                           unsigned int start,                \
+                                           const va##NUM##TYPE##x4& remain) { \
+    return __dtu_m_mid_m0_##TYPE##_vm(start, remain, mb);                     \
+  }                                                                           \
+  template <>                                                                 \
+  inline KRT_API va##NUM##TYPE##x4 viota_dup_t(                               \
+      const vbool##BOOL_NUM##_t& mb, unsigned int start,                      \
+      const va##NUM##TYPE##x4& remain) {                                      \
+    return __dtu_m_mid_m1_##TYPE##_vm(start, remain, mb);                     \
+  }
+
+VIOTA_IMPL(u32, 16, 64);
+VIOTA_IMPL(u16, 32, 128);
+VIOTA_IMPL(u8, 64, 256);
+#undef VIOTA_IMPL
+#endif  // __KRT_ARCH__ >= 300
+
+template <int BPE> struct UnsignedByBPE;
+template <> struct UnsignedByBPE<8> { using type = uint64_t; };
+template <> struct UnsignedByBPE<4> { using type = uint32_t; };
+template <> struct UnsignedByBPE<2> { using type = uint16_t; };
+template <> struct UnsignedByBPE<1> { using type = uint8_t; };
+
+constexpr int BYTES_FOR_VA = TOPS_VECTOR_LENGTH;
+constexpr int BYTES_FOR_DA = TOPS_VECTOR_LENGTH * 2;
+constexpr int BYTES_FOR_QA = TOPS_VECTOR_LENGTH * 4;
+constexpr int NUMS_SPLIT = TOPS_VECTOR_LENGTH;
+
+using IndexType = unsigned int;
+using VecIndexType =
+    typename scalar_to_vector<IndexType,
+                              BYTES_FOR_QA / sizeof(IndexType)>::type;
+
+template <int RANK> using ArrayVecIndexType = VecIndexType[RANK];
+
+constexpr int FIXED_VEC_LENGTH = vector_length<VecIndexType>::value;
+template <int BPE>
+using FixedVecValueType =
+    typename scalar_to_vector<typename UnsignedByBPE<BPE>::type,
+                              FIXED_VEC_LENGTH>::type;
+using FixedVecMaskType = typename vector_to_mask<VecIndexType>::type;
 
 #define ALIGN_UP(a, b) (((a + b - 1) / b) * b)
 
@@ -182,6 +270,25 @@ __device__ __forceinline__ bool is_any_zero(size_t rank, size_t* strides) {
       }
     }
     return false;
+}
+
+/**
+ * @brief Cast a pointer or an interger to GCU intrinsic pointer
+ *
+ * @param any pointer type or integer type with same bits as a pointer
+ * @return intrinsic pointer
+ */
+template <typename T, typename std::enable_if<std::is_integral<T>::value,
+                                              bool>::type = true>
+__device__ __forceinline__ __DTU_INTRIN_AS__ char* CastToGcuPtr(T ptr) {
+  unsigned long long addr = static_cast<unsigned long long>(ptr);
+  return (__DTU_INTRIN_AS__ char*)addr;
+}
+
+template <typename T,
+          typename std::enable_if<std::is_pointer<T>::value, bool>::type = true>
+__device__ __forceinline__ __DTU_INTRIN_AS__ char* CastToGcuPtr(T ptr) {
+  return (__DTU_INTRIN_AS__ char*)ptr;
 }
 
 template <typename T>

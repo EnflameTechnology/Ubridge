@@ -187,8 +187,8 @@ impl DeviceExecutor {
         let kernel_platform = "scorpio"; 
 
         let unary_functions = vec![
-            "ucopy", "uneg", "uexp", "ulog", "usin", "ucos", "uabs", "usqr", "usqrt", "ursqrt", "ugelu",
-            "urelu", "utanh", "urecip", "uelu"
+            "uneg", "uexp", "ulog", "usin", "ucos", "uabs", "usqr", "usqrt", "ursqrt", "ugelu",
+            "urelu", "utanh", "urecip", "uelu", 
         ]; 
 
         let binary_functions = vec![
@@ -222,6 +222,8 @@ impl DeviceExecutor {
             "is_u8_f16", "is_i64_f32", "is_i64_f64", "is_i64_u8", "is_i64_u32",
             "is_i64_i64", "is_u32_f32", "is_u32_f64", "is_u32_u8", "is_u32_i64", "is_u32_u32", 
             "is_u8_f32", "is_u8_f64", "is_u8_u8", "is_u8_u32", "is_u8_i64"];
+        let copy_functions = vec![ "ucopy_bf16", "ucopy_u8", "ucopy_u32",
+                        "ucopy_f16", "ucopy_f32"];
 
         let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
         match get_kernels(device_id, kernel_platform) {
@@ -241,10 +243,16 @@ impl DeviceExecutor {
                                 function_map.insert(name, Arc::new(function));
                             }
                         }
-                        let name = format!("{}_u8", "ucopy");
-                        println!("Load function {}", name);
-                        let function = _module_map[module].get_function(&name).unwrap();
-                        function_map.insert(name, Arc::new(function));
+                        for func in &copy_functions {
+                            println!("Load function {}", func);
+                            let function = _module_map[module].get_function(&func).unwrap();
+                            function_map.insert(func.to_string(), Arc::new(function));
+                            
+                        }
+                        // let name = format!("{}_u8", "ucopy");
+                        // println!("Load function {}", name);
+                        // let function = _module_map[module].get_function(&name).unwrap();
+                        // function_map.insert(name, Arc::new(function));
                     } else if module == "binary" {
                         for dt in ["bf16", "f16", "f32"] {
                             for func in &binary_functions {
