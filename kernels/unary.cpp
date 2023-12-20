@@ -547,36 +547,22 @@ __device__ void ucopy_single_thread(T* in, T* out, const size_t op_type, const s
     int MAX_THREADS = GetThreadNumEachBlock();
     int blockId = blockIdx.y * gridDim.x + blockIdx.x;
     int threadId = blockId * blockDim.x + threadIdx.x;
+    int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
+    int out_map_size = AlignUp(out_total_size, NUMS_SPLIT) * sizeof(T);
+    auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(op_type==4?in + start_offset: in), in_map_size);
+    auto dst_l3_addr = map_mem(reinterpret_cast<generic_ptr>(out), out_map_size);
 
-    if (op_type == 4 && threadId == 0) { 
-        int src_shape[SRCRANK];
-        int offsets[SRCRANK];
-        for (int j = 0; j < SRCRANK; ++j) {
-          src_shape[j] = dims_and_strides[j];
-          offsets[j] = src_shape[j]==dst_dim[j]?0:start_offset;
-        }
-        tops::mdspan src_mem(tops::Global, in, src_shape);
-        tops::mdspan dst_mem(tops::Global, out, dst_dim);
-        tops::slice(ctx, dst_mem, src_mem, offsets);
-
-    } else if (threadId == 0) {
-
-      int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
-      int out_map_size = AlignUp(out_total_size, NUMS_SPLIT) * sizeof(T);
-      auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
-      auto dst_l3_addr = map_mem(reinterpret_cast<generic_ptr>(out), out_map_size);
-
-      T* dst_l3 = reinterpret_cast<T*>(dst_l3_addr);
-      T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
-      for (int i = 0; i < out_total_size; i++) {
-          unsigned int strided_i = get_strided_index(i, num_dims, dst_dim, dst_strides);
-          if (strided_i < in_total_size) {
-            dst_l3[i] = src_l3[strided_i];
-          } 
-      }
-      unmap_mem(src_l3_addr);
-      unmap_mem(dst_l3_addr);
+    T* dst_l3 = reinterpret_cast<T*>(dst_l3_addr);
+    T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
+    for (int i = 0; i < out_total_size; i++) {
+        unsigned int strided_i = get_strided_index(i, num_dims, dst_dim, dst_strides);
+        if (strided_i < in_total_size) {
+          dst_l3[i] = src_l3[strided_i];
+        } 
     }
+    unmap_mem(src_l3_addr);
+    unmap_mem(dst_l3_addr);
+  
 }
 
 
@@ -605,51 +591,39 @@ __device__ void ucopy_multithread(T* in, T* out, const size_t op_type, const siz
     int MAX_THREADS = GetThreadNumEachBlock();
     int blockId = blockIdx.y * gridDim.x + blockIdx.x;
     int threadId = blockId * blockDim.x + threadIdx.x;
-
-    if (op_type == 4 && threadId == 0) { 
-        int src_shape[SRCRANK];
-        int offsets[SRCRANK];
-        for (int j = 0; j < SRCRANK; ++j) {
-          src_shape[j] = dims_and_strides[j];
-          offsets[j] = src_shape[j]==dst_dim[j]?0:start_offset;
-        }
-        tops::mdspan src_mem(tops::Global, in, src_shape);
-        tops::mdspan dst_mem(tops::Global, out, dst_dim);
-        tops::slice(ctx, dst_mem, src_mem, offsets);
-
-    } else {
-      int N = out_total_size;
-      int THREAD_STEP = 1;
-      int thread_step = 1;
-      if (N > MAX_THREADS) {
-        THREAD_STEP = N / MAX_THREADS;
-        thread_step = THREAD_STEP;
-        if (N % MAX_THREADS != 0) {
-          if (thread_id == MAX_THREADS - 1) {
-            thread_step += N % MAX_THREADS; //last thread also process remains
-          }
+  
+    int N = out_total_size;
+    int THREAD_STEP = 1;
+    int thread_step = 1;
+    if (N > MAX_THREADS) {
+      THREAD_STEP = N / MAX_THREADS;
+      thread_step = THREAD_STEP;
+      if (N % MAX_THREADS != 0) {
+        if (thread_id == MAX_THREADS - 1) {
+          thread_step += N % MAX_THREADS; //last thread also process remains
         }
       }
-
-      int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
-      int out_map_size = AlignUp(out_total_size, NUMS_SPLIT) * sizeof(T);
-      auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
-      auto dst_l3_addr = map_mem(reinterpret_cast<generic_ptr>(out), out_map_size);
-
-      T* dst_l3 = reinterpret_cast<T*>(dst_l3_addr);
-      T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
-      for (int i = 0; i < thread_step; i++) {
-        size_t idx = thread_id * THREAD_STEP + i;
-        // if (idx < N) {
-            unsigned int strided_i = get_strided_index(idx, num_dims, dst_dim, dst_strides);
-            // if (strided_i < in_total_size) {
-              dst_l3[idx] = src_l3[strided_i];
-            // } 
-        // }
-      }
-      unmap_mem(src_l3_addr);
-      unmap_mem(dst_l3_addr);
     }
+
+    int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
+    int out_map_size = AlignUp(out_total_size, NUMS_SPLIT) * sizeof(T);
+    auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(op_type==4?in + start_offset: in), in_map_size);
+    auto dst_l3_addr = map_mem(reinterpret_cast<generic_ptr>(out), out_map_size);
+
+    T* dst_l3 = reinterpret_cast<T*>(dst_l3_addr);
+    T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
+    for (int i = 0; i < thread_step; i++) {
+      size_t idx = thread_id * THREAD_STEP + i;
+      // if (idx < N) {
+          unsigned int strided_i = get_strided_index(idx, num_dims, dst_dim, dst_strides);
+          // if (strided_i < in_total_size) {
+            dst_l3[idx] = src_l3[strided_i];
+          // } 
+      // }
+    }
+    unmap_mem(src_l3_addr);
+    unmap_mem(dst_l3_addr);
+
 }
 
 template <typename T, int SRCRANK, int DSTRANK, int BPE>
@@ -678,52 +652,38 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t op_type, con
     int blockId = blockIdx.y * gridDim.x + blockIdx.x;
     int threadId = blockId * blockDim.x + threadIdx.x;
 
-    if (op_type == 4 && threadId == 0) { 
-        int src_shape[SRCRANK];
-        int offsets[SRCRANK];
-        for (int j = 0; j < SRCRANK; ++j) {
-          src_shape[j] = dims_and_strides[j];
-          offsets[j] = src_shape[j]==dst_dim[j]?0:start_offset;
-        }
-        tops::mdspan src_mem(tops::Global, in, src_shape);
-        tops::mdspan dst_mem(tops::Global, out, dst_dim);
-        tops::slice(ctx, dst_mem, src_mem, offsets);
-
-    } else {
-      tops_dte_ctx_t ctx;
-      tops::dte_scope s(ctx); 
-      const int TILESIZE = 4096;
-      __local__ __valigned__ T buffer[TILESIZE];
-      tops::mdspan out_hbm(tops::Global, out, out_total_size);
-      int N = out_total_size;
-      int THREAD_STEP = 1;
-      int thread_step = 1;
-      if (N > MAX_THREADS) {
-        THREAD_STEP = N / MAX_THREADS;
-        thread_step = THREAD_STEP;
-        if (N % MAX_THREADS != 0) {
-          if (thread_id == MAX_THREADS - 1) {
-            thread_step += N % MAX_THREADS; //last thread also process remains
-          }
+    const int TILESIZE = 4096;
+    __local__ __valigned__ T buffer[TILESIZE];
+    tops::mdspan out_hbm(tops::Global, out, out_total_size);
+    int N = out_total_size;
+    int THREAD_STEP = 1;
+    int thread_step = 1;
+    if (N > MAX_THREADS) {
+      THREAD_STEP = N / MAX_THREADS;
+      thread_step = THREAD_STEP;
+      if (N % MAX_THREADS != 0) {
+        if (thread_id == MAX_THREADS - 1) {
+          thread_step += N % MAX_THREADS; //last thread also process remains
         }
       }
-
-      int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
-      auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
-      T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
-      for (int i = 0; i < thread_step; i+=TILESIZE) {
-        int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i;
-        int offset = thread_id * THREAD_STEP + i;
-        for (int j = 0; j< bufsize; j++) {
-          size_t idx = offset + j;
-          unsigned int strided_i = get_strided_index(idx, num_dims, dst_dim, dst_strides);
-          buffer[j] = src_l3[strided_i];
-        }
-        tops::mdspan buffer_l1(tops::Private, buffer, bufsize);
-        tops::deslice(ctx, out_hbm, buffer_l1, {offset});
-      }
-      unmap_mem(src_l3_addr);
     }
+
+    int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
+    auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(op_type==4?in + start_offset: in), in_map_size);
+    T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
+    for (int i = 0; i < thread_step; i+=TILESIZE) {
+      int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i;
+      int offset = thread_id * THREAD_STEP + i;
+      for (int j = 0; j< bufsize; j++) {
+        size_t idx = offset + j;
+        unsigned int strided_i = get_strided_index(idx, num_dims, dst_dim, dst_strides);
+        buffer[j] = src_l3[strided_i];
+      }
+      tops::mdspan buffer_l1(tops::Private, buffer, bufsize);
+      tops::deslice(ctx, out_hbm, buffer_l1, {offset});
+    }
+    unmap_mem(src_l3_addr);
+  
 }
 
 #if 0
@@ -747,81 +707,67 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t op_type, co
     }
     int in_total_size = origin_numel;
     int out_total_size = numel;
-
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNumEachBlock();
     int blockId = blockIdx.y * gridDim.x + blockIdx.x;
     int threadId = blockId * blockDim.x + threadIdx.x;
-
-    if (op_type == 4 && threadId == 0) { 
-        int src_shape[SRCRANK];
-        int offsets[SRCRANK];
-        for (int j = 0; j < SRCRANK; ++j) {
-          src_shape[j] = dims_and_strides[j];
-          offsets[j] = src_shape[j]==dst_dim[j]?0:start_offset;
-        }
-        tops::mdspan src_mem(tops::Global, in, src_shape);
-        tops::mdspan dst_mem(tops::Global, out, dst_dim);
-        tops::slice(ctx, dst_mem, src_mem, offsets);
-
-    } else {
-      tops_dte_ctx_t ctx;
-      tops::dte_scope s(ctx); 
-      const int TILESIZE = TOPS_VECTOR_LENGTH / sizeof(T);
-      __local__ __valigned__ T buffer[1024];
-      tops::mdspan out_hbm(tops::Global, out, out_total_size);
-      int N = out_total_size;
-      int THREAD_STEP = 1;
-      int thread_step = 1;
-      if (N > MAX_THREADS) {
-        THREAD_STEP = N / MAX_THREADS;
-        thread_step = THREAD_STEP;
-        if (N % MAX_THREADS != 0) {
-          if (thread_id == MAX_THREADS - 1) {
-            thread_step += N % MAX_THREADS; //last thread also process remains
-          }
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx); 
+    const int TILESIZE = TOPS_VECTOR_LENGTH / sizeof(T);
+    __local__ __valigned__ T buffer[1024];
+    tops::mdspan out_hbm(tops::Global, out, out_total_size);
+    int N = out_total_size;
+    int THREAD_STEP = 1;
+    int thread_step = 1;
+    if (N > MAX_THREADS) {
+      THREAD_STEP = N / MAX_THREADS;
+      thread_step = THREAD_STEP;
+      if (N % MAX_THREADS != 0) {
+        if (thread_id == MAX_THREADS - 1) {
+          thread_step += N % MAX_THREADS; //last thread also process remains
         }
       }
-
-      int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
-      auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
-      T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
-      va16u32x4 vec_dst_shape[DSTRANK];
-      va16u32x4 vec_dst_strides[DSTRANK];
-      for (int i = 0; i < DSTRANK; ++i) {
-        vec_dst_shape[i] = vbroadcast<va16u32x4>((unsigned int)dst_dim[i]);
-        vec_dst_strides[i] = vbroadcast<va16u32x4>((unsigned int)dst_strides[i]);
-      }
-
-      auto vec_srt_start = vbroadcast<va16u32x4>((unsigned int)0);
-      auto vec_srt_end = vbroadcast<va16u32x4>((unsigned int)in_total_size);
-
-      for (int i = 0; i < thread_step; i+=TILESIZE) {
-        int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i;
-        int offset = thread_id * THREAD_STEP + i;
-
-        auto indexes = viota<va16u32x4>((unsigned int)offset);
-        auto strided_indexes = get_batch_strided_index<DSTRANK>(indexes, vec_dst_shape, vec_dst_strides);
-        // using ResultValueType = typename scalar_to_vector<T, TOPS_VECTOR_LENGTH / sizeof(T)>::type;
-        using ResultValueType = FixedVecValueType<BPE>;
-        auto mask_ge = vge<vbool64_t>(strided_indexes, vec_srt_start);
-        auto mask_lt = vlt<vbool64_t>(strided_indexes, vec_srt_end);
-        auto mask = mask_and(mask_ge, mask_lt);
-
-        auto vec_bpe = vbroadcast<va16u32x4>((unsigned int)sizeof(T));
-        auto offsets = vmul(strided_indexes, vec_bpe);
-        ResultValueType result;
-        result = vgather_t(mask, src_l3, offsets, result);
-
-        auto output = vload<ResultValueType>(buffer);
-        output = vselect_t(mask, result, output);
-        // vstore(output, buffer); //TODO
-        // vstore(result, buffer);
-        // tops::mdspan buffer_l1(tops::Private, buffer, bufsize);
-        // tops::deslice(ctx, out_hbm, buffer_l1, {offset});
-      }
-      unmap_mem(src_l3_addr);
     }
+
+    int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
+    auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(op_type==4?in + start_offset: in), in_map_size);
+    T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
+    va16u32x4 vec_dst_shape[DSTRANK];
+    va16u32x4 vec_dst_strides[DSTRANK];
+    for (int i = 0; i < DSTRANK; ++i) {
+      vec_dst_shape[i] = vbroadcast<va16u32x4>((unsigned int)dst_dim[i]);
+      vec_dst_strides[i] = vbroadcast<va16u32x4>((unsigned int)dst_strides[i]);
+    }
+
+    auto vec_srt_start = vbroadcast<va16u32x4>((unsigned int)0);
+    auto vec_srt_end = vbroadcast<va16u32x4>((unsigned int)in_total_size);
+
+    for (int i = 0; i < thread_step; i+=TILESIZE) {
+      int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i;
+      int offset = thread_id * THREAD_STEP + i;
+
+      auto indexes = viota<va16u32x4>((unsigned int)offset);
+      auto strided_indexes = get_batch_strided_index<DSTRANK>(indexes, vec_dst_shape, vec_dst_strides);
+      // using ResultValueType = typename scalar_to_vector<T, TOPS_VECTOR_LENGTH / sizeof(T)>::type;
+      using ResultValueType = FixedVecValueType<BPE>;
+      auto mask_ge = vge<vbool64_t>(strided_indexes, vec_srt_start);
+      auto mask_lt = vlt<vbool64_t>(strided_indexes, vec_srt_end);
+      auto mask = mask_and(mask_ge, mask_lt);
+
+      auto vec_bpe = vbroadcast<va16u32x4>((unsigned int)sizeof(T));
+      auto offsets = vmul(strided_indexes, vec_bpe);
+      ResultValueType result;
+      result = vgather_t(mask, src_l3, offsets, result);
+
+      auto output = vload<ResultValueType>(buffer);
+      output = vselect_t(mask, result, output);
+      // vstore(output, buffer); //TODO
+      // vstore(result, buffer);
+      // tops::mdspan buffer_l1(tops::Private, buffer, bufsize);
+      // tops::deslice(ctx, out_hbm, buffer_l1, {offset});
+    }
+    unmap_mem(src_l3_addr);
+
 }
 #endif
 

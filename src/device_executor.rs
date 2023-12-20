@@ -223,7 +223,7 @@ impl DeviceExecutor {
             "is_i64_i64", "is_u32_f32", "is_u32_f64", "is_u32_u8", "is_u32_i64", "is_u32_u32", 
             "is_u8_f32", "is_u8_f64", "is_u8_u8", "is_u8_u32", "is_u8_i64"];
         let copy_functions = vec![ "ucopy_bf16", "ucopy_u8", "ucopy_u32",
-                        "ucopy_f16", "ucopy_f32"];
+                        "ucopy_f16", "ucopy_f32", "ucopy_f64"];
 
         let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
         match get_kernels(device_id, kernel_platform) {
