@@ -522,41 +522,30 @@ __device__ __forceinline__ VecIndexType get_batch_strided_index(VecIndexType ind
 }
 
 
-template <typename T, int SRCRANK, int DSTRANK, int BPE>
-__device__ void ucopy_single_thread(T* in, T* out, const size_t op_type, const size_t origin_numel, 
-        const size_t numel, const size_t start_offset, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_strides) {
+template <typename T, int RANK, int BPE>
+__device__ void ucopy_single_thread(T* in, T* out, const size_t in_size, const size_t out_size, size_t* dims_and_strides) {
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx); 
-    int src_dim[SRCRANK];
-    int src_strides[SRCRANK];
-    int dst_dim[DSTRANK];
-    int dst_strides[DSTRANK];
-    for (int j = 0; j < origin_num_dims; ++j) {
-      src_dim[j] = dims_and_strides[j];
-      src_strides[j] = dims_and_strides[origin_num_dims + j];
+    int dst_dim[RANK];
+    int dst_strides[RANK];
+    for (int j = 0; j < RANK; ++j) {
+      dst_dim[j] = dims_and_strides[j];
+      dst_strides[j] = dims_and_strides[RANK + j];
     }
-
-    for (int j = 0; j < num_dims; ++j) {
-      dst_dim[j] = dims_and_strides[j + 2 * origin_num_dims];
-      dst_strides[j] = dims_and_strides[2 * origin_num_dims + num_dims + j];
-    }
-    int in_total_size = origin_numel;
-    int out_total_size = numel;
-
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNumEachBlock();
     int blockId = blockIdx.y * gridDim.x + blockIdx.x;
     int threadId = blockId * blockDim.x + threadIdx.x;
-    int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
-    int out_map_size = AlignUp(out_total_size, NUMS_SPLIT) * sizeof(T);
-    auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(op_type==4?in + start_offset: in), in_map_size);
+    int in_map_size = AlignUp(in_size, NUMS_SPLIT) * sizeof(T);
+    int out_map_size = AlignUp(out_size, NUMS_SPLIT) * sizeof(T);
+    auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
     auto dst_l3_addr = map_mem(reinterpret_cast<generic_ptr>(out), out_map_size);
 
     T* dst_l3 = reinterpret_cast<T*>(dst_l3_addr);
     T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
-    for (int i = 0; i < out_total_size; i++) {
-        unsigned int strided_i = get_strided_index(i, num_dims, dst_dim, dst_strides);
-        if (strided_i < in_total_size) {
+    for (int i = 0; i < out_size; i++) {
+        unsigned int strided_i = get_strided_index(i, RANK, dst_dim, dst_strides);
+        if (strided_i < in_size) {
           dst_l3[i] = src_l3[strided_i];
         } 
     }
@@ -566,33 +555,24 @@ __device__ void ucopy_single_thread(T* in, T* out, const size_t op_type, const s
 }
 
 
-template <typename T, int SRCRANK, int DSTRANK, int BPE>
-__device__ void ucopy_multithread(T* in, T* out, const size_t op_type, const size_t origin_numel, 
-        const size_t numel, const size_t start_offset, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_strides) {
+template <typename T, int RANK, int BPE>
+__device__ void ucopy_multithread(T* in, T* out, const size_t in_size, const size_t out_size, size_t* dims_and_strides) {
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx); 
-    int src_dim[SRCRANK];
-    int src_strides[SRCRANK];
-    int dst_dim[DSTRANK];
-    int dst_strides[DSTRANK];
-    for (int j = 0; j < origin_num_dims; ++j) {
-      src_dim[j] = dims_and_strides[j];
-      src_strides[j] = dims_and_strides[origin_num_dims + j];
-    }
+    int dst_dim[RANK];
+    int dst_strides[RANK];
 
-    for (int j = 0; j < num_dims; ++j) {
-      dst_dim[j] = dims_and_strides[j + 2 * origin_num_dims];
-      dst_strides[j] = dims_and_strides[2 * origin_num_dims + num_dims + j];
+    for (int j = 0; j < RANK; ++j) {
+      dst_dim[j] = dims_and_strides[j];
+      dst_strides[j] = dims_and_strides[RANK + j];
     }
-    int in_total_size = origin_numel;
-    int out_total_size = numel;
 
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNumEachBlock();
     int blockId = blockIdx.y * gridDim.x + blockIdx.x;
     int threadId = blockId * blockDim.x + threadIdx.x;
   
-    int N = out_total_size;
+    int N = out_size;
     int THREAD_STEP = 1;
     int thread_step = 1;
     if (N > MAX_THREADS) {
@@ -605,9 +585,9 @@ __device__ void ucopy_multithread(T* in, T* out, const size_t op_type, const siz
       }
     }
 
-    int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
-    int out_map_size = AlignUp(out_total_size, NUMS_SPLIT) * sizeof(T);
-    auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(op_type==4?in + start_offset: in), in_map_size);
+    int in_map_size = AlignUp(in_size, NUMS_SPLIT) * sizeof(T);
+    int out_map_size = AlignUp(out_size, NUMS_SPLIT) * sizeof(T);
+    auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
     auto dst_l3_addr = map_mem(reinterpret_cast<generic_ptr>(out), out_map_size);
 
     T* dst_l3 = reinterpret_cast<T*>(dst_l3_addr);
@@ -615,7 +595,7 @@ __device__ void ucopy_multithread(T* in, T* out, const size_t op_type, const siz
     for (int i = 0; i < thread_step; i++) {
       size_t idx = thread_id * THREAD_STEP + i;
       // if (idx < N) {
-          unsigned int strided_i = get_strided_index(idx, num_dims, dst_dim, dst_strides);
+          unsigned int strided_i = get_strided_index(idx, RANK, dst_dim, dst_strides);
           // if (strided_i < in_total_size) {
             dst_l3[idx] = src_l3[strided_i];
           // } 
@@ -626,26 +606,17 @@ __device__ void ucopy_multithread(T* in, T* out, const size_t op_type, const siz
 
 }
 
-template <typename T, int SRCRANK, int DSTRANK, int BPE>
-__device__ void ucopy_multithread_cache(T* in, T* out, const size_t op_type, const size_t origin_numel, 
-        const size_t numel, const size_t start_offset, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_strides) {
+template <typename T, int RANK, int BPE>
+__device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, const size_t out_size, size_t* dims_and_strides) {
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx); 
-    int src_dim[SRCRANK];
-    int src_strides[SRCRANK];
-    int dst_dim[DSTRANK];
-    int dst_strides[DSTRANK];
-    for (int j = 0; j < origin_num_dims; ++j) {
-      src_dim[j] = dims_and_strides[j];
-      src_strides[j] = dims_and_strides[origin_num_dims + j];
-    }
+    int dst_dim[RANK];
+    int dst_strides[RANK];
 
-    for (int j = 0; j < num_dims; ++j) {
-      dst_dim[j] = dims_and_strides[j + 2 * origin_num_dims];
-      dst_strides[j] = dims_and_strides[2 * origin_num_dims + num_dims + j];
+    for (int j = 0; j < RANK; ++j) {
+      dst_dim[j] = dims_and_strides[j];
+      dst_strides[j] = dims_and_strides[RANK + j];
     }
-    int in_total_size = origin_numel;
-    int out_total_size = numel;
 
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNumEachBlock();
@@ -654,8 +625,8 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t op_type, con
 
     const int TILESIZE = 4096;
     __local__ __valigned__ T buffer[TILESIZE];
-    tops::mdspan out_hbm(tops::Global, out, out_total_size);
-    int N = out_total_size;
+    tops::mdspan out_hbm(tops::Global, out, out_size);
+    int N = out_size;
     int THREAD_STEP = 1;
     int thread_step = 1;
     if (N > MAX_THREADS) {
@@ -668,15 +639,15 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t op_type, con
       }
     }
 
-    int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
-    auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(op_type==4?in + start_offset: in), in_map_size);
+    int in_map_size = AlignUp(in_size, NUMS_SPLIT) * sizeof(T);
+    auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
     T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
     for (int i = 0; i < thread_step; i+=TILESIZE) {
       int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i;
       int offset = thread_id * THREAD_STEP + i;
       for (int j = 0; j< bufsize; j++) {
         size_t idx = offset + j;
-        unsigned int strided_i = get_strided_index(idx, num_dims, dst_dim, dst_strides);
+        unsigned int strided_i = get_strided_index(idx, RANK, dst_dim, dst_strides);
         buffer[j] = src_l3[strided_i];
       }
       tops::mdspan buffer_l1(tops::Private, buffer, bufsize);
@@ -687,26 +658,20 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t op_type, con
 }
 
 #if 0
-template <typename T, int SRCRANK, int DSTRANK, int BPE>
-__device__ void ucopy_multithread_gather(T* in, T* out, const size_t op_type, const size_t origin_numel, 
-        const size_t numel, const size_t start_offset, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_strides) {
+template <typename T, int RANK, int BPE>
+__device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, 
+        const size_t out_size, size_t* dims_and_strides) {
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx); 
-    int src_dim[SRCRANK];
-    int src_strides[SRCRANK];
-    int dst_dim[DSTRANK];
-    int dst_strides[DSTRANK];
-    for (int j = 0; j < origin_num_dims; ++j) {
-      src_dim[j] = dims_and_strides[j];
-      src_strides[j] = dims_and_strides[origin_num_dims + j];
+
+    int dst_dim[RANK];
+    int dst_strides[RANK];
+
+    for (int j = 0; j < RANK; ++j) {
+      dst_dim[j] = dims_and_strides[j];
+      dst_strides[j] = dims_and_strides[RANK + j];
     }
 
-    for (int j = 0; j < num_dims; ++j) {
-      dst_dim[j] = dims_and_strides[j + 2 * origin_num_dims];
-      dst_strides[j] = dims_and_strides[2 * origin_num_dims + num_dims + j];
-    }
-    int in_total_size = origin_numel;
-    int out_total_size = numel;
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNumEachBlock();
     int blockId = blockIdx.y * gridDim.x + blockIdx.x;
@@ -715,8 +680,8 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t op_type, co
     tops::dte_scope s(ctx); 
     const int TILESIZE = TOPS_VECTOR_LENGTH / sizeof(T);
     __local__ __valigned__ T buffer[1024];
-    tops::mdspan out_hbm(tops::Global, out, out_total_size);
-    int N = out_total_size;
+    tops::mdspan out_hbm(tops::Global, out, out_size);
+    int N = out_size;
     int THREAD_STEP = 1;
     int thread_step = 1;
     if (N > MAX_THREADS) {
@@ -729,12 +694,12 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t op_type, co
       }
     }
 
-    int in_map_size = AlignUp(in_total_size, NUMS_SPLIT) * sizeof(T);
-    auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(op_type==4?in + start_offset: in), in_map_size);
+    int in_map_size = AlignUp(in_size, NUMS_SPLIT) * sizeof(T);
+    auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
     T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
-    va16u32x4 vec_dst_shape[DSTRANK];
-    va16u32x4 vec_dst_strides[DSTRANK];
-    for (int i = 0; i < DSTRANK; ++i) {
+    va16u32x4 vec_dst_shape[RANK];
+    va16u32x4 vec_dst_strides[RANK];
+    for (int i = 0; i < RANK; ++i) {
       vec_dst_shape[i] = vbroadcast<va16u32x4>((unsigned int)dst_dim[i]);
       vec_dst_strides[i] = vbroadcast<va16u32x4>((unsigned int)dst_strides[i]);
     }
@@ -747,7 +712,7 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t op_type, co
       int offset = thread_id * THREAD_STEP + i;
 
       auto indexes = viota<va16u32x4>((unsigned int)offset);
-      auto strided_indexes = get_batch_strided_index<DSTRANK>(indexes, vec_dst_shape, vec_dst_strides);
+      auto strided_indexes = get_batch_strided_index<RANK>(indexes, vec_dst_shape, vec_dst_strides);
       // using ResultValueType = typename scalar_to_vector<T, TOPS_VECTOR_LENGTH / sizeof(T)>::type;
       using ResultValueType = FixedVecValueType<BPE>;
       auto mask_ge = vge<vbool64_t>(strided_indexes, vec_srt_start);
@@ -773,70 +738,32 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t op_type, co
 
 #define UNARY_COPY_OP(KERNEL, TYPE, VT, FN_NAME, BPE) \
 extern "C" __global__ void FN_NAME( \
-    const size_t origin_numel, \
-    const size_t numel, \
-    const size_t start_offset, \
-    const size_t origin_num_dims, \
+    const size_t in_size, \
+    const size_t out_size, \
     const size_t num_dims, \
-    size_t *dims_and_layout, \
-    const size_t op_type, \
-    TYPE *inp, \
+    size_t *dims_and_strides, \
+    TYPE *in, \
     TYPE *out) \
 { \
     bool cont = true; \
     __local__ __valigned__ size_t info[128]; \
     tops_dte_ctx_t ctx; \
     tops::dte_scope s(ctx); \
-    if (dims_and_layout) { \
-      tops::mdspan srcInfo(tops::Global, dims_and_layout, origin_num_dims * 2 + num_dims * 2); \
-      tops::mdspan dstInfo(tops::Private, info, origin_num_dims * 2 + num_dims * 2); \
+    if (dims_and_strides) { \
+      tops::mdspan srcInfo(tops::Global, dims_and_strides, num_dims * 2); \
+      tops::mdspan dstInfo(tops::Private, info, num_dims * 2); \
       tops::memcpy(ctx, dstInfo, srcInfo); \
     } \
-    if (num_dims==2) {\
-      if (origin_num_dims == 2)\
-        KERNEL<TYPE, 2, 2, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 3)\
-        KERNEL<TYPE, 3, 2, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 4)\
-        KERNEL<TYPE, 4, 2, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 5)\
-        KERNEL<TYPE, 5, 2, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims <= 1)\
-        KERNEL<TYPE, 1, 2, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-    } else if (num_dims==3) {\
-      if (origin_num_dims == 3)\
-        KERNEL<TYPE, 3, 3, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 4)\
-        KERNEL<TYPE, 4, 3, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 5)\
-        KERNEL<TYPE, 5, 3, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 2)\
-        KERNEL<TYPE, 2, 3, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims <= 1)\
-        KERNEL<TYPE, 1, 3, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-    } else if (num_dims == 4) {\
-      if (origin_num_dims == 5)\
-        KERNEL<TYPE, 5, 4, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 4)\
-        KERNEL<TYPE, 4, 4, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 3)\
-        KERNEL<TYPE, 3, 4, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 2)\
-        KERNEL<TYPE, 2, 4, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims <= 1)\
-        KERNEL<TYPE, 1, 4, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-    } else if (num_dims==5) {\
-      if (origin_num_dims <= 1)\
-        KERNEL<TYPE, 1, 5, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 2)\
-        KERNEL<TYPE, 2, 5, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 3)\
-        KERNEL<TYPE, 3, 5, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 4)\
-        KERNEL<TYPE, 4, 5, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-      else if (origin_num_dims == 5)\
-        KERNEL<TYPE, 5, 5, BPE>(inp, out, op_type, origin_numel, numel, start_offset, origin_num_dims, num_dims, info); \
-    } \
+    if (num_dims == 2)\
+      KERNEL<TYPE, 2, BPE>(in, out, in_size, out_size, info); \
+    else if (num_dims == 3)\
+      KERNEL<TYPE, 3, BPE>(in, out, in_size, out_size, info); \
+    else if (num_dims == 4)\
+      KERNEL<TYPE, 4, BPE>(in, out, in_size, out_size, info); \
+    else if (num_dims == 5)\
+      KERNEL<TYPE, 5, BPE>(in, out, in_size, out_size, info); \
+    else if (num_dims <= 1)\
+      KERNEL<TYPE, 1, BPE>(in, out, in_size, out_size, info); \
 } \
 
 
