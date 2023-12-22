@@ -624,7 +624,7 @@ __device__ __forceinline__ void binary_kernel(T* in_a, T* in_b, TO* out, int N,
   }
 }
 
-
+#if 0
 #define BINARY_OP(TYPE, TYPE_OUT, FN_NAME, TP) \
 extern "C" __global__ void FN_NAME( \
     const size_t numel, \
@@ -651,6 +651,20 @@ extern "C" __global__ void FN_NAME( \
     } else if (lhs_cont) { \
       binary_kernel_right<TYPE, TYPE_OUT>(lhs, rhs, out, numel, num_dims, info, TP); \
     }\
+} \
+
+#endif
+
+#define BINARY_OP(TYPE, TYPE_OUT, FN_NAME, TP) \
+extern "C" __global__ void FN_NAME( \
+    const size_t numel, \
+    const size_t num_dims, \
+    size_t *dims_and_strides, \
+    TYPE *lhs, \
+    TYPE *rhs, \
+    TYPE_OUT *out) \
+{ \
+    binary_kernel<TYPE, TYPE_OUT>(lhs, rhs, out, numel, TP); \
 } \
 
 BINARY_OP(__bf16, __bf16, badd_bf16, BINARY_TYPE_ADD)
