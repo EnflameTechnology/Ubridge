@@ -38,7 +38,7 @@ __device__ __forceinline__ void atomic_where(ID_TYPENAME* ids_ptr, T* src_ptr1, 
 template <typename ID_TYPENAME, typename T>
 __device__ __forceinline__ void where_kernel(ID_TYPENAME* ids, T* in1, T* in2, T* out, const size_t element_num) {
     int thread_id = GetThreadIdx();
-    int MAX_THREADS = GetThreadNumEachBlock();
+    int MAX_THREADS = GetThreadNum();
     // const int BLOCK_SIZE = TILE_SIZE;
     int N = element_num / TILE_SIZE;
     __local__ __valigned__ ID_TYPENAME ids_buffer[TILE_SIZE];

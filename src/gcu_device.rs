@@ -97,6 +97,7 @@ impl GcuDevice {
                 unsafe {
                     driv::topsGetDeviceProperties(&mut prop as *mut driv::topsDeviceProp_t, ordinal as i32);
                 }
+                println!("GCU device property: \n {:?} \n", prop);
                 Ok(Arc::new(Self {
                     id: ordinal,
                     device: gcu_executor.device,
@@ -105,8 +106,8 @@ impl GcuDevice {
                     is_async: !eager_mode,
                     prop: prop,
                     launch_cfg:  GcuLaunchConfig {
-                        grid_dim: (1, 1, 1),
-                        block_dim: (prop.maxThreadsPerBlock as u32, 1, 1),
+                        grid_dim: (prop.multiProcessorCount as u32, 1, 1),
+                        block_dim: (prop.maxThreadsPerMultiProcessor as u32, 1, 1),
                         shared_mem_bytes: 0,
                     },
                     tuner: AtenGemmTuner::new(),

@@ -23,10 +23,8 @@
 #include "tops/tops_runtime.h"
 #include "utils.h"
 
-#if __GCU_ARCH__ >= 300
-#include "include/common/atomic_op.h"
-#include "include/common/binary.h"
-#endif
+#include <acore/common/atomic_op.h>
+#include <acore/common/binary.h>
 
 using namespace std;
 
@@ -324,7 +322,7 @@ __device__ __forceinline__ void binary_kernel_right(T* in_a, T* in_b, TO* out, i
 {
     int dim_size = dims_and_strides[num_dims - 1];
     int thread_id = GetThreadIdx();
-    int MAX_THREADS = GetThreadNumEachBlock();
+    int MAX_THREADS = GetThreadNum();
 
     const int N = element_num / dim_size;
     __local__ __valigned__ T in_buffer1[20480];

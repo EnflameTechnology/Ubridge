@@ -19,9 +19,9 @@
 #include <tops/bfloat.h>
 #include "matmul_general.h"
 #include "tops/tops_runtime.h"
-// #include "op_aten_gemm_tuner.h"
 #include "utils.h"
-#include "include/common/atomic_op.h"
+#include <acore/common/atomic_op.h>
+
 
 using namespace std;
 #define MAX_NUM 1540096 - 1024

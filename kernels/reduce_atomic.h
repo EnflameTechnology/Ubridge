@@ -6,7 +6,7 @@
 #include "tops/tops_runtime.h"
 #include "utils.h"
 using namespace std;
-#include "include/common/atomic_op.h"
+#include <acore/common/atomic_op.h>
 
 template <typename TYPE>
 __forceinline__ __device__ void atomic_reduce_max(TYPE* dst_ptr, TYPE* src_ptr,

@@ -28,7 +28,7 @@
 #include <krt/vector_infra.h>
 #include <krt/mmu.h>
 
-#include "include/common/atomic_op.h"
+#include <acore/common/atomic_op.h>
 #include "utils.h"
 #include "utils/vector_ex.h"
 using namespace std;
@@ -532,10 +532,6 @@ __device__ void ucopy_single_thread(T* in, T* out, const size_t in_size, const s
       dst_dim[j] = dims_and_strides[j];
       dst_strides[j] = dims_and_strides[RANK + j];
     }
-    int thread_id = GetThreadIdx();
-    int MAX_THREADS = GetThreadNumEachBlock();
-    int blockId = blockIdx.y * gridDim.x + blockIdx.x;
-    int threadId = blockId * blockDim.x + threadIdx.x;
     int in_map_size = AlignUp(in_size, NUMS_SPLIT) * sizeof(T);
     int out_map_size = AlignUp(out_size, NUMS_SPLIT) * sizeof(T);
     auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
@@ -567,9 +563,7 @@ __device__ void ucopy_multithread(T* in, T* out, const size_t in_size, const siz
     }
 
     int thread_id = GetThreadIdx();
-    int MAX_THREADS = GetThreadNumEachBlock();
-    int blockId = blockIdx.y * gridDim.x + blockIdx.x;
-    int threadId = blockId * blockDim.x + threadIdx.x;
+    int MAX_THREADS = GetThreadNum();
 
     const int TILESIZE = 128 * 1024 / BPE;
     __local__ __valigned__ T buffer[TILESIZE];
@@ -620,9 +614,7 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, con
     }
 
     int thread_id = GetThreadIdx();
-    int MAX_THREADS = GetThreadNumEachBlock();
-    int blockId = blockIdx.y * gridDim.x + blockIdx.x;
-    int threadId = blockId * blockDim.x + threadIdx.x;
+    int MAX_THREADS = GetThreadNum();
 
     const int TILESIZE = 128 * 1024 / BPE;
     __local__ __valigned__ T buffer[TILESIZE];
@@ -646,7 +638,7 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, con
 
     if (cacheable) {
       int offset = thread_id * THREAD_STEP;
-      if (threadId == 0) {
+      if (thread_id == 0) {
         cache_ctx.config_memcpy(
           tops::mdspan(tops::Shared, src_cached, in_size),
           tops::mdspan(tops::Global, in, in_size));
@@ -706,9 +698,8 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
     tops::mdspan out_hbm(tops::Global, out, out_size);
 
     int thread_id = GetThreadIdx();
-    int MAX_THREADS = GetThreadNumEachBlock();
-    int blockId = blockIdx.y * gridDim.x + blockIdx.x;
-    int threadId = blockId * blockDim.x + threadIdx.x;
+    int MAX_THREADS = GetThreadNum();
+
     constexpr int TILESIZE = vector_length<va16u32x4>::value;
     constexpr int BUFFER_SIZE = TILESIZE * 1024 / BPE;
 
@@ -740,7 +731,7 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
 
     if (cacheable) {
       int offset = thread_id * THREAD_STEP;
-      if (threadId == 0) {
+      if (thread_id == 0) {
         cache_ctx.config_memcpy(
           tops::mdspan(tops::Shared, src_cached, in_size),
           tops::mdspan(tops::Global, in, in_size));

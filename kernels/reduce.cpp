@@ -35,7 +35,7 @@ enum REDUCE_TYPE {
 template <typename T>
 __forceinline__ __device__ void reduce_kernel(T* in, T* out, const size_t element_num, const size_t reduce_dim_size, REDUCE_TYPE tp) {
     int thread_id = GetThreadIdx();
-    int MAX_THREADS = GetThreadNumEachBlock();
+    int MAX_THREADS = GetThreadNum();
 
     const int N = element_num / reduce_dim_size;
     __local__ __valigned__ T in_buffer[40960];

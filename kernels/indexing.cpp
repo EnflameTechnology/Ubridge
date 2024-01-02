@@ -29,7 +29,7 @@ __device__ __forceinline__ void index_select_kernel(const size_t id_numel,
     ID_TYPENAME *ids, T *inp, T *out,
     const size_t left_size, const size_t dim_size, const size_t right_size) {
     int thread_id = GetThreadIdx();
-    int MAX_THREADS = GetThreadNumEachBlock();
+    int MAX_THREADS = GetThreadNum();
     int N = id_numel;
     __local__ __valigned__ ID_TYPENAME ids_buffer[4096];
 

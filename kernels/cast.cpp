@@ -27,10 +27,8 @@
 #include <krt/leaptr.h>
 #include <krt/vector_infra.h>
 
-#if __GCU_ARCH__ >= 300
-#include "include/common/atomic_op.h"
-// #include "/home/kernel/atomicop_pkg/src/include/common/atomic_op.h"
-#endif
+#include <acore/common/atomic_op.h>
+
 
 #include "utils.h"
 using namespace std;
