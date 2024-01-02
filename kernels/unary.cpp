@@ -28,7 +28,7 @@
 #include <krt/vector_infra.h>
 #include <krt/mmu.h>
 
-#include <acore/common/atomic_op.h>
+#include <acore/atomic_op.h>
 #include "utils.h"
 #include "utils/vector_ex.h"
 using namespace std;
@@ -597,7 +597,7 @@ __device__ void ucopy_multithread(T* in, T* out, const size_t in_size, const siz
     unmap_mem(src_l3_addr);
 }
 
-#define SHARE_BUFFER_SIZE 1024 * 1024 * 16 //16MB
+#define SHARE_BUFFER_SIZE 1024 * 1024 * 32 //32MB
 __shared__ char raw_cache[SHARE_BUFFER_SIZE];
 template <typename T, int RANK, int BPE>
 __device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, const size_t out_size, size_t* dims_and_strides) {

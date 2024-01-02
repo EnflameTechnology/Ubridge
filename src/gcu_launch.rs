@@ -52,7 +52,7 @@ impl GcuLaunchConfig {
     pub fn for_ucopy() -> Self {
         Self {
             grid_dim: (1, 1, 1),
-            block_dim: (1, 1, 1),
+            block_dim: (Self::max_sip_num(), 1, 1),
             shared_mem_bytes: 0,
         }
     }

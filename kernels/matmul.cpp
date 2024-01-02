@@ -20,7 +20,7 @@
 #include "matmul_general.h"
 #include "tops/tops_runtime.h"
 #include "utils.h"
-#include <acore/common/atomic_op.h>
+#include <acore/atomic_op.h>
 
 
 using namespace std;
