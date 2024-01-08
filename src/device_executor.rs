@@ -225,6 +225,7 @@ impl DeviceExecutor {
         let copy_functions = vec![ "ucopy_bf16", "ucopy_u8", "ucopy_u32", "ucopy_f64",
                         "ucopy_f16", "ucopy_f32", ];
 
+        let embedding_functions = vec!["rope_f32", "rope_f16", "rope_bf16", ];
         let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
         match get_kernels(device_id, kernel_platform) {
             (Some(_module_map), Some(_device), Some(_stream)) => {
@@ -304,6 +305,12 @@ impl DeviceExecutor {
                         }
                     } else if module == "indexing" {
                         for func in &index_functions {
+                            println!("Load function {}", func);
+                            let function = _module_map[module].get_function(&func).unwrap();
+                            function_map.insert(func.to_string(), Arc::new(function));
+                        }
+                    } else if module == "embedding" {
+                        for func in &embedding_functions {
                             println!("Load function {}", func);
                             let function = _module_map[module].get_function(&func).unwrap();
                             function_map.insert(func.to_string(), Arc::new(function));

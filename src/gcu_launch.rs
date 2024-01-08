@@ -26,25 +26,11 @@ pub struct GcuLaunchConfig {
 }
 
 impl GcuLaunchConfig {
-    pub fn for_num_elems(n: u32) -> Self {
-        // let tile_size = 0x8000;
-        // let mut threads = Self::max_sip_num();
-        // let mut grids = n/tile_size;
-        // if grids < 1 { //elements < tile_size
-        //     grids = 1;
-        //     threads = 1;
-        // } else if grids <= threads {
-        //     threads = grids;
-        //     grids = 1;
-        // } else if grids / threads > 0 {
-        //   grids = grids / threads;
-        // } else {
-        //   grids = 1;
-        // }
-      
+    pub fn for_threds(n: u32) -> Self {
+     
         Self {
             grid_dim: (1, 1, 1),
-            block_dim: (Self::max_sip_num(), 1, 1),
+            block_dim: (n, 1, 1),
             shared_mem_bytes: 0,
         }
     }
@@ -66,81 +52,7 @@ impl GcuLaunchConfig {
     pub fn max_sip_num() -> u32 {
         6
     }
-    #[allow(non_snake_case)]
-    pub fn for_transpose(dim1: u32, dim2: u32) -> Self {
-        let N = dim2;
-        let M = dim1;
-        let TILE_DIM = 64;
-        let mut GRIDS = N / TILE_DIM;
-        if GRIDS * TILE_DIM < N {
-            GRIDS += 1;
-        };
-        let mut BLOCKS = M / TILE_DIM;
-        if BLOCKS * TILE_DIM < M {
-            BLOCKS += 1;
-        };
-        let mut PER_BLOCKS = 1;
-        if BLOCKS > 4 {
-            PER_BLOCKS = 4;
-            if (BLOCKS / PER_BLOCKS) * 4 < BLOCKS {
-                BLOCKS /= PER_BLOCKS;
-                BLOCKS += 1;
-            } else {
-                BLOCKS /= PER_BLOCKS;
-            }
-        }
-
-        Self {
-            grid_dim: (GRIDS, 1, 1),
-            block_dim: (BLOCKS, PER_BLOCKS, 1),
-            shared_mem_bytes: 0,
-        }
-    }
-
-    #[allow(non_snake_case)]
-    pub fn for_dot(M: u32, N: u32, tile_size: u32) -> Self {
-        // let tile_size = 64;
-        let mut gridsz = M / tile_size;
-        if gridsz < 1 {
-          gridsz = 1;
-        }
-        let mut blocksz = N / tile_size;
-        let mut perthreads = Self::max_sip_num();
-        if blocksz > Self::max_sip_num() {
-          blocksz /= Self::max_sip_num();
-        } else {
-          perthreads = 1;
-        }
-
-        if blocksz < 1 {
-            blocksz = 1;
-        }
-
-        Self {
-            grid_dim: (gridsz, blocksz, 1),
-            block_dim: (perthreads, 1, 1),
-            shared_mem_bytes: 0,
-        }
-    }
     
-    #[allow(non_snake_case)]
-    pub fn for_batch_matmul(batch: u32, M: u32) -> Self {
-        Self {
-            grid_dim: (batch, M, 1),
-            block_dim: (1, 1, 1),
-            shared_mem_bytes: 0,
-        }
-        
-    }
-
-    #[allow(non_snake_case)]
-    pub fn for_gemm() -> Self {
-        Self {
-            grid_dim: (1, 1, 1),
-            block_dim: (Self::max_sip_num(), 1, 1),
-            shared_mem_bytes: 0,
-        }
-    }
 }
 
 /// Consumes a [GcuFunction] to execute asychronously on the device with
