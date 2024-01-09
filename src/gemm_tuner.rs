@@ -1,4 +1,4 @@
-use std::{clone, collections::HashMap};
+use std::{clone, collections::HashMap, sync::Mutex};
 
 use num_traits::One; 
 pub use cust_core::_hidden::{DeviceCopy};
@@ -267,20 +267,21 @@ impl GEMM_OP_PARAS {
 // #[derive(Clone)]
 pub struct AtenGemmTuner {
     op_name_: String,
-    tuned_map: UnsafeCell<HashMap<String, GEMM_OP_PARAS>>,
+    tuned_map: Mutex<UnsafeCell<HashMap<String, GEMM_OP_PARAS>>>,
 }
 
 impl AtenGemmTuner {
     pub fn new() -> Self {
         AtenGemmTuner {
             op_name_: String::new(),
-            tuned_map: HashMap::<String, GEMM_OP_PARAS>::new().into(),
+            tuned_map: Mutex::new(HashMap::<String, GEMM_OP_PARAS>::new().into()),
         }
     }
 
     pub unsafe fn tuner(&self, info: &AtenGemmInfo) -> &GEMM_OP_PARAS {
         let pattern = format!("t{:?}_b{}_m{}_k{}_n{}", info.data_type, info.batch, info.M, info.K, info.N);
-        let mutmap = match self.tuned_map.get().as_mut() {Some(_b) => {_b}, _=> {panic!("error")}};
+        let tuned_map = self.tuned_map.lock().unwrap();
+        let mutmap = match tuned_map.get().as_mut() {Some(_b) => {_b}, _=> {panic!("error")}};
 
         if mutmap.contains_key(&pattern) {
             return &mutmap[&pattern.clone()];
