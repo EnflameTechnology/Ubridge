@@ -54,17 +54,17 @@ pub struct GcuDevice {
 }
 
 pub struct GcuFunction {
-    pub name: String,
-    pub path: String,
+    pub func_name: String,
+    pub module_name: String,
     pub func: Option<topsFunction_t>,
     // pub executor: Option<Arc<Mutex<&'static mut DeviceExecutor>>>,
 }
 
 impl GcuFunction {
-    pub fn new(name: String, path: String) -> Self {
+    pub fn new(func_name: String, module_name: String) -> Self {
         GcuFunction {
-            name: name,
-            path: path,
+            func_name,
+            module_name,
             func: None,
             // executor: None
         }
@@ -97,7 +97,9 @@ impl GcuDevice {
                 unsafe {
                     driv::topsGetDeviceProperties(&mut prop as *mut driv::topsDeviceProp_t, ordinal as i32);
                 }
-                println!("GCU device property: \n {:?} \n", prop);
+                let mut property = format!("**GCU device property: {:?} \n", prop);
+                property = property.replace(" 0, 0,", "");
+                println!("{}", property);
                 Ok(Arc::new(Self {
                     id: ordinal,
                     device: gcu_executor.device,
@@ -135,17 +137,14 @@ impl GcuDevice {
     pub fn ordinal(&self) -> usize {
         self.id
     }
-    pub fn get_or_load_func(&self, func_name: &str, kernel_path: &str) -> DeviceResult<GcuFunction> {
-        let path = Path::new(kernel_path);
-        let _module_name = path.file_stem().unwrap().to_str().unwrap();
-        if (self.executor.has_function(_module_name.to_string(), func_name.to_string())) 
-        {
+    pub fn get_or_load_func(&self, func_name: &str, module_name: &str) -> DeviceResult<GcuFunction> {
+        if self.executor.has_function(module_name.to_string(), func_name.to_string()) {
             match &self.executor.function_map{
                 Some(funcs) => {
                     return Ok(
                         GcuFunction {
-                            name: func_name.to_string(), 
-                            path: kernel_path.to_string(),
+                            func_name: func_name.to_string(), 
+                            module_name: module_name.to_string(),
                             func: Some(funcs[func_name].inner),
                         }
                     );
@@ -156,7 +155,7 @@ impl GcuDevice {
         } else {
             println!("Kernel {} not found!", func_name);
         }
-        Ok(GcuFunction::new(func_name.to_string(), kernel_path.to_string()))
+        Ok(GcuFunction::new(func_name.to_string(), module_name.to_string()))
     }
     
     pub fn get_gemm_launch_params(&self, datatype: crate::DATATYPE, b: usize, m: usize, k: usize, n: usize) -> &GEMM_OP_PARAS {

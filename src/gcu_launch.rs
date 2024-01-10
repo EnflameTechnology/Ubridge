@@ -239,22 +239,13 @@ impl GcuFunction {
                 ).to_result();
 
                 if ret.is_err() {
-                    println!("Launch Error for function {}", self.name);
+                    println!("Launch Error for function {}", self.func_name);
                 }
                 return ret;
 
             }
             _=> {}
         }
-        // self.device.bind_to_thread()?;
-        // launch_kernel(
-        //     self.cu_function,
-        //     cfg.grid_dim,
-        //     cfg.block_dim,
-        //     cfg.shared_mem_bytes,
-        //     self.device.stream,
-        //     params,
-        // )
         Ok(())
     }
 

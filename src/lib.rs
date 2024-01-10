@@ -31,21 +31,33 @@ pub mod prelude {
     pub use cuda_backend::memory::CopyDestination;
 }
 
-pub const AFFINE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/affine.topsfb");
-pub const BINARY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/binary.topsfb");
-pub const CAST: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/cast.topsfb");
-pub const CONV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/conv.topsfb");
-pub const FILL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/fill.topsfb");
-pub const INDEXING: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/indexing.topsfb");
-pub const REDUCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/reduce.topsfb");
-pub const TERNARY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/ternary.topsfb");
-pub const UNARY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/unary.topsfb");
-pub const MATMUL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/matmul.topsfb");
+// pub const AFFINE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/affine.topsfb");
+// pub const BINARY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/binary.topsfb");
+// pub const CAST: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/cast.topsfb");
+// pub const CONV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/conv.topsfb");
+// pub const FILL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/fill.topsfb");
+// pub const INDEXING: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/indexing.topsfb");
+// pub const REDUCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/reduce.topsfb");
+// pub const TERNARY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/ternary.topsfb");
+// pub const UNARY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/unary.topsfb");
+// pub const MATMUL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/matmul.topsfb");
+// pub const KCCONCAT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/kvconcat.topsfb");
 
-pub const TRANSPOSE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/transpose.topsfb");
-pub const DOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/dot.topsfb");
-pub const DOTLLM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/dotllm.topsfb");
-pub const GEMM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/gemm.topsfb");
+pub const AFFINE: &str = "affine";
+pub const BINARY: &str = "binary";
+pub const CAST: &str = "cast";
+pub const CONV: &str = "conv";
+pub const FILL: &str = "fill";
+pub const INDEXING: &str = "indexing";
+pub const REDUCE: &str = "reduce";
+pub const TERNARY: &str = "ternary";
+pub const UNARY: &str = "unary";
+pub const MATMUL: &str = "matmul";
+pub const KCCONCAT: &str = "kvconcat";
+// pub const TRANSPOSE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/transpose.topsfb");
+// pub const DOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/dot.topsfb");
+// pub const DOTLLM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/dotllm.topsfb");
+// pub const GEMM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/gemm.topsfb");
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum DATATYPE {
