@@ -89,52 +89,6 @@ __device__ __forceinline__ void relu_kernel(T* output, T* input, int num) {
   }
 }
 
-// template <typename T, typename OP>
-// __global__ void gelu_fwd_kernel(T* out, T* in, int num) {
-//   int thread_num = GetThreadNum();
-//   int thread_id = GetThreadIdx();
-//   int elem_per_sip = CeilDiv(num, thread_num);
-//   int start = thread_id * elem_per_sip;
-//   int elem_this_sip = num - start > elem_per_sip ? elem_per_sip : num - start;
-//   int end = start + elem_this_sip;
-//   if (start >= num) return;
-
-//   constexpr int sip_size = 0x180000;
-//   constexpr int bpe = sizeof(T);
-//   constexpr int vector_length = 128;
-//   constexpr int block_nums = 8;
-
-// #define PING_PONG_SIZE (1)
-
-//   // int tile_size = AlignDown(sip_size / block_nums / bpe, vector_length);
-//   constexpr int tile_size = 64 * 1024 / sizeof(T);
-//   __local__ __attribute__((aligned(256))) T in_buf[PING_PONG_SIZE][tile_size];
-//   __local__ __attribute__((aligned(256))) T out_buf[PING_PONG_SIZE][tile_size];
-
-//   tops_dte_ctx_t ctx;
-//   tops::dte_scope s(ctx);
-
-//   int pp_flag = 0;
-//   for (int offset = start; offset < end; offset += tile_size) {
-//     int elem_num = end - offset > tile_size ? tile_size : end - offset;
-//     // dte in
-//     tops::mdspan in_g(tops::Global, in + offset, elem_num);
-//     tops::mdspan in_p(tops::Private, in_buf[pp_flag], elem_num);
-
-//     tops::memcpy(ctx, in_p, in_g);
-
-//     // call atomic op here
-//     // call_atomic_activation<T, OP>(out_buf[pp_flag], in_buf[pp_flag],
-//     // elem_num);
-//     gelu(out_buf[pp_flag], in_buf[pp_flag], elem_num);
-
-//     // dte out
-//     tops::mdspan out_g(tops::Global, out + offset, elem_num);
-//     tops::mdspan out_p(tops::Private, out_buf[pp_flag], elem_num);
-
-//     tops::memcpy(ctx, out_g, out_p);
-//   }
-// }
 
 
 template <typename T, typename VT>
@@ -597,7 +551,7 @@ __device__ void ucopy_multithread(T* in, T* out, const size_t in_size, const siz
     unmap_mem(src_l3_addr);
 }
 
-#define SHARE_BUFFER_SIZE 1024 * 1024 * 32 //32MB
+#define SHARE_BUFFER_SIZE 1024 * 1024 * 24 //24MB
 __shared__ char raw_cache[SHARE_BUFFER_SIZE];
 template <typename T, int RANK, int BPE>
 __device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, const size_t out_size, size_t* dims_and_strides) {
@@ -844,7 +798,6 @@ UNARY_COPY_OP(ucopy_multithread_cache, u_int32_t, vuint, ucopy_u32, 4)
 UNARY_COPY_OP(ucopy_multithread_cache, double, vfloatx2, ucopy_f64, 8) //remove this for gather copy
 
 // UNARY_OP(int8_t, vchar, ucopy_i8, UNARY_TYPE_COPY)
-// UNARY_OP(u_int8_t, vuchar, ucopy_u8, UNARY_TYPE_COPY)
 // UNARY_OP(int32_t, vint, ucopy_i32, UNARY_TYPE_COPY)
 
 int test() {
@@ -871,15 +824,6 @@ int test() {
                   topsMemcpyHostToDevice);
   topsMemcpy(out_d, out_h, size_out * sizeof(__fp16),
                   topsMemcpyHostToDevice);
-  // int grids = size_out/tile_size;
-  // int threads = 6;
-  // if (grids < 1) {
-  //   grids = 1;
-  // } else if (grids / 6 > 0) {
-  //   grids = grids / 6;
-  // } else {
-  //   threads = 1;
-  // }
 
   // ucopy_f16<<<dim3(1, 1, 1), dim3(1, 12, 1)>>>(size_out, lhs_d, out_d);
 

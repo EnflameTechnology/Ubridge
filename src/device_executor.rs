@@ -230,6 +230,9 @@ impl DeviceExecutor {
                         "kvconcat_f16", "kvconcat_f32", ];
 
         let embedding_functions = vec!["rope_f32", "rope_f16", "rope_bf16", ];
+
+        let conv_functions = vec!["conv1d_f32", "conv1d_f16", "conv1d_bf16", "conv1d_f64", "conv1d_u8", "conv1d_u32",];
+
         let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
         match get_kernels(device_id, kernel_platform) {
             (Some(_module_map), Some(_device), Some(_stream)) => {
@@ -321,6 +324,12 @@ impl DeviceExecutor {
                         }
                     } else if module == "kvconcat" {
                         for func in &kvconcat_functions {
+                            println!("Load function {}", func);
+                            let function = _module_map[module].get_function(&func).unwrap();
+                            function_map.insert(func.to_string(), Arc::new(function));
+                        }
+                    } else if module == "conv" {
+                        for func in &conv_functions {
                             println!("Load function {}", func);
                             let function = _module_map[module].get_function(&func).unwrap();
                             function_map.insert(func.to_string(), Arc::new(function));
