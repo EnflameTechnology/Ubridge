@@ -49,10 +49,65 @@ __forceinline__ __device__ void  atomic_cast(float** dst_ptr, __bf16* src_ptr,
 }
 #endif 
 
+__device__ __forceinline__  void apply_rotary_qkv(float *q_arr, float *k_arr, float *cos_ptr, float *sin_ptr,
+                                int rot_offset, int embed_dim, int gpt_geox) {
+
+  int x_index, y_index;
+  float cos, sin;
+  if (gpt_geox) {
+    // GPT-NeoX style
+    x_index = rot_offset;
+    y_index = embed_dim + rot_offset;
+    cos = cos_ptr[x_index];
+    sin = sin_ptr[x_index];
+  } else {
+    // GPT-J style
+    x_index = 2 * rot_offset;
+    y_index = x_index + 1;
+    cos = cos_ptr[x_index / 2];
+    sin = sin_ptr[x_index / 2];
+  }
+
+  float x = q_arr[x_index];
+  float y = q_arr[y_index];
+  q_arr[x_index] = x * cos - y * sin;
+  q_arr[y_index] = y * cos + x * sin;
+  x = k_arr[x_index];
+  y = k_arr[y_index];
+  k_arr[x_index] = x * cos - y * sin;
+  k_arr[y_index] = y * cos + x * sin;
+}
+
+__device__ __forceinline__  void apply_rotary(float *arr, float *cos_ptr, float *sin_ptr,
+                                int rot_offset, int embed_dim, int gpt_geox) {
+
+  int x_index, y_index;
+  float cos, sin;
+  if (gpt_geox) {
+    // GPT-NeoX style
+    x_index = rot_offset;
+    y_index = embed_dim + rot_offset;
+    cos = cos_ptr[x_index];
+    sin = sin_ptr[x_index];
+  } else {
+    // GPT-J style
+    x_index = 2 * rot_offset;
+    y_index = x_index + 1;
+    cos = cos_ptr[x_index / 2];
+    sin = sin_ptr[x_index / 2];
+  }
+
+  float x = arr[x_index];
+  float y = arr[y_index];
+  arr[x_index] = x * cos - y * sin;
+  arr[y_index] = y * cos + x * sin;
+}
+
 template <typename T>
 __device__ void rope(T* query, T* key, float* cos_sin,
-    int num_tokens, int num_heads, int head_size, int gpt_geox) {
-    int stride = num_heads * head_size;
+    int num_tokens, int q_heads, int k_heads, int hidden_size, int gpt_geox) {
+    int q_stride = q_heads * hidden_size;
+    int k_stride = k_heads * hidden_size;
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx);
     int thread_id = GetThreadIdx();
@@ -75,65 +130,45 @@ __device__ void rope(T* query, T* key, float* cos_sin,
     __local__ __valigned__ float bufQueryf32[1024 * 16];
     __local__ __valigned__ float bufKeyf32[1024 * 16];
 
-    tops::mdspan cos_sin_l1(tops::Private, bufCosSin, head_size);
-    tops::mdspan query_l1(tops::Private, bufQuery, stride);
-    tops::mdspan key_l1(tops::Private, bufKey, stride);
-
+    tops::mdspan cos_sin_l1(tops::Private, bufCosSin, hidden_size);
+    tops::mdspan query_l1(tops::Private, bufQuery, q_stride);
+    tops::mdspan key_l1(tops::Private, bufKey, k_stride);
+    int32_t embed_dim = hidden_size / 2;
+    int nq = q_heads * embed_dim;
+    int nk = k_heads * embed_dim;
     for (int j = 0; j < thread_step; j++) {
       int i = thread_id * THREAD_STEP + j;
       if (i < N) {
-
-        auto query_sub0 = query + i * stride;
-        auto key_sub0 = key + i * stride;
-        tops::mdspan hbm_query(tops::Global, query_sub0, stride);
-        tops::mdspan hbm_key(tops::Global, key_sub0, stride);
+        auto query_sub0 = query + i * q_stride;
+        auto key_sub0 = key + i * k_stride;
+        tops::mdspan hbm_query(tops::Global, query_sub0, q_stride);
+        tops::mdspan hbm_key(tops::Global, key_sub0, k_stride);
         tops::memcpy(ctx, query_l1, hbm_query);
         tops::memcpy(ctx, key_l1, hbm_key);
-        auto cos_sin_cache = cos_sin + i * head_size;
-        tops::mdspan hbm_cos_sin(tops::Global, cos_sin_cache, head_size);
+        auto cos_sin_cache = cos_sin + i * hidden_size;
+        tops::mdspan hbm_cos_sin(tops::Global, cos_sin_cache, hidden_size);
         tops::memcpy(ctx, cos_sin_l1, hbm_cos_sin);
-        convert<float, T>(reinterpret_cast<float*>(bufQueryf32), reinterpret_cast<T*>(bufQuery), stride);
-        convert<float, T>(reinterpret_cast<float*>(bufKeyf32), reinterpret_cast<T*>(bufKey), stride);
-        int32_t embed_dim = head_size / 2;
+        convert<float, T>(reinterpret_cast<float*>(bufQueryf32), reinterpret_cast<T*>(bufQuery), q_stride);
+        convert<float, T>(reinterpret_cast<float*>(bufKeyf32), reinterpret_cast<T*>(bufKey), k_stride);
         auto cos_ptr = bufCosSin;
         auto sin_ptr = bufCosSin + embed_dim;
 
-        int nq = num_heads * embed_dim;
-        int x_index, y_index;
-        float cos, sin;
-
         for (int j = 0; j < nq; j++) {
           int head_idx = j / embed_dim;
-          int offset = head_idx * head_size;
+          int offset = head_idx * hidden_size;
           int rot_offset = j % embed_dim;
           auto q_arr = bufQueryf32 + offset;
           auto k_arr = bufKeyf32 + offset;
 
-          if (gpt_geox) {
-            // GPT-NeoX style
-            x_index = rot_offset;
-            y_index = embed_dim + rot_offset;
-            cos = cos_ptr[x_index];
-            sin = sin_ptr[x_index];
+          if (nq == nk) {
+            apply_rotary_qkv(q_arr, k_arr, cos_ptr, sin_ptr, rot_offset, embed_dim, gpt_geox);
           } else {
-            // GPT-J style
-            x_index = 2 * rot_offset;
-            y_index = x_index + 1;
-            cos = cos_ptr[x_index / 2];
-            sin = sin_ptr[x_index / 2];
+            apply_rotary(q_arr, cos_ptr, sin_ptr, rot_offset, embed_dim, gpt_geox);
+            apply_rotary(k_arr, cos_ptr, sin_ptr, rot_offset, embed_dim, gpt_geox);
           }
-
-          float x = q_arr[x_index];
-          float y = q_arr[y_index];
-          q_arr[x_index] = x * cos - y * sin;
-          q_arr[y_index] = y * cos + x * sin;
-          x = k_arr[x_index];
-          y = k_arr[y_index];
-          k_arr[x_index] = x * cos - y * sin;
-          k_arr[y_index] = y * cos + x * sin;
         }
-        convert<T, float>(reinterpret_cast<T*>(bufQuery), reinterpret_cast<float*>(bufQueryf32), stride);
-        convert<T, float>(reinterpret_cast<T*>(bufKey), reinterpret_cast<float*>(bufKeyf32), stride);
+        convert<T, float>(reinterpret_cast<T*>(bufQuery), reinterpret_cast<float*>(bufQueryf32), q_stride);
+        convert<T, float>(reinterpret_cast<T*>(bufKey), reinterpret_cast<float*>(bufKeyf32), k_stride);
         tops::memcpy(ctx, hbm_query, query_l1);
         tops::memcpy(ctx, hbm_key, key_l1);
       }
@@ -141,24 +176,24 @@ __device__ void rope(T* query, T* key, float* cos_sin,
 }
 
 extern "C" __global__ void  rope_f32(float *query, float *key, float *cos_sin,
-                      int num_tokens, int num_heads, int head_size, int gpt_geox) {
+                      int num_tokens, int q_heads, int k_heads, int hidden_size, int gpt_geox) {
     rope<float>(
       query, key, cos_sin,
-      num_tokens, num_heads, head_size, gpt_geox);
+      num_tokens, q_heads, k_heads, hidden_size, gpt_geox);
 }
 
 extern "C" __global__ void  rope_f16(__fp16*query, __fp16 *key, float *cos_sin,
-                      int num_tokens, int num_heads, int head_size, int gpt_geox) {
+                      int num_tokens, int q_heads, int k_heads, int hidden_size, int gpt_geox) {
     rope<__fp16>(
       query, key, cos_sin,
-      num_tokens, num_heads, head_size, gpt_geox);
+      num_tokens, q_heads, k_heads, hidden_size, gpt_geox);
 }
 
 extern "C" __global__ void  rope_bf16(__bf16 *query, __bf16 *key, float *cos_sin,
-                      int num_tokens, int num_heads, int head_size, int gpt_geox) {
+                      int num_tokens, int q_heads, int k_heads, int hidden_size, int gpt_geox) {
     rope<__bf16>(
       query, key, cos_sin,
-      num_tokens, num_heads, head_size, gpt_geox);
+      num_tokens, q_heads, k_heads, hidden_size, gpt_geox);
 }
 
 #if 0
@@ -228,24 +263,24 @@ __forceinline__  void apply_rotary_embedding(tops::half *arr,
 
 template <typename T>
 void rope_cpu(T *query, T *key, T *cos_sin,
-                      int num_tokens, int num_heads, int head_size, int gpt_geox) {
-    int stride = num_heads * head_size;
+                      int num_tokens, int q_heads, int hidden_size, int gpt_geox) {
+    int stride = q_heads * hidden_size;
     for (int i = 0; i < num_tokens; i++) {
       // int32_t pos = positions[i];
 
       auto query_sub0 = query + i * stride;
       auto key_sub0 = key + i * stride;
-      auto cos_sin_cache_sub0 = cos_sin + i * head_size;
+      auto cos_sin_cache_sub0 = cos_sin + i * hidden_size;
 
-      int32_t embed_dim = head_size / 2;
+      int32_t embed_dim = hidden_size / 2;
       auto cos_cache_sub0 = cos_sin_cache_sub0;
       auto sin_cache_sub0 = cos_sin_cache_sub0 + embed_dim;
 
-      int nq = num_heads * embed_dim;
+      int nq = q_heads * embed_dim;
 
       for (int j = 0; j < nq; j++) {
         int head_idx = j / embed_dim;
-        int offset = head_idx * head_size;
+        int offset = head_idx * hidden_size;
         int rot_offset = j % embed_dim;
         auto query_sub1 = query_sub0 + offset;
         apply_rotary_embedding(reinterpret_cast<T*>(query_sub1), reinterpret_cast<T*>(cos_cache_sub0), 
@@ -253,10 +288,10 @@ void rope_cpu(T *query, T *key, T *cos_sin,
                                     rot_offset, embed_dim, gpt_geox);
       }
 
-      int nk = num_heads * embed_dim;
+      int nk = q_heads * embed_dim;
       for (int j = 0; j < nk; j++) {
         int head_idx = j / embed_dim;
-        int offset = head_idx * head_size;
+        int offset = head_idx * hidden_size;
         int rot_offset = j % embed_dim;
         auto key_sub1 = key_sub0 + offset;
         apply_rotary_embedding(reinterpret_cast<T*>(key_sub1), reinterpret_cast<T*>(cos_cache_sub0), 
@@ -271,9 +306,9 @@ void rope_cpu(T *query, T *key, T *cos_sin,
 template <typename T>
 void test() {
   int num_tokens = 13;
-  int num_heads = 32;
-  int head_size = 128;
-  int qsize = num_tokens * num_heads * head_size;
+  int q_heads = 32;
+  int hidden_size = 128;
+  int qsize = num_tokens * q_heads * hidden_size;
   printf("start the test...\n");
   int gpt_neox = 1;
   int in_size = qsize * sizeof(T);
@@ -288,7 +323,7 @@ void test() {
     key[j] = T(0.25);
   }
 
-  int cos_sin_size = num_tokens * head_size;
+  int cos_sin_size = num_tokens * hidden_size;
   float *cos_sin = reinterpret_cast<float*>(aligned_alloc(128, cos_sin_size * sizeof(float)));
   for (int j =0; j< cos_sin_size; j ++) {
     cos_sin[j] = 0.9;
@@ -308,7 +343,7 @@ void test() {
   CHECK(topsMemcpy(cos_sin_d, cos_sin, cos_sin_size * sizeof(float), topsMemcpyHostToDevice));
   printf("Launching kernel...\n");
 
-  rope_f16<<<1, 12>>>(query_d, key_d, cos_sin_d, num_tokens, num_heads, head_size, gpt_neox);
+  rope_f16<<<1, 12>>>(query_d, key_d, cos_sin_d, num_tokens, q_heads, q_heads, hidden_size, gpt_neox);
 
   T *query_o = reinterpret_cast<T*>(aligned_alloc(128, in_size));
   T *key_o = reinterpret_cast<T*>(aligned_alloc(128, in_size));
@@ -316,7 +351,7 @@ void test() {
   CHECK(topsMemcpy(query_o, query_d, in_size, topsMemcpyDeviceToHost));
   CHECK(topsMemcpy(key_o, key_d, in_size, topsMemcpyDeviceToHost));
   printf("Calculating cpu results...\n");
-  // rope_cpu<T>(query, key, cos_sin, num_tokens, num_heads, head_size, gpt_neox);
+  // rope_cpu<T>(query, key, cos_sin, num_tokens, q_heads, hidden_size, gpt_neox);
 
   for (int i = 0; i < qsize; i++) {
     // if (abs(float(query[i]) - float(query_o[i])) >0.00001 || abs(float(key[i]) - float(key_o[i])) > 0.00001)
