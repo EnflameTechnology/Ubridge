@@ -23,6 +23,7 @@
 #include "tops/tops_runtime.h"
 #include "utils.h"
 #include "reduce_atomic.h"
+#include <acore/acore_op.h>
 using namespace std;
 #define RANK_MAX 3
 
@@ -125,6 +126,90 @@ REDUCE_OP(float, fast_max_f32, REDUCE_MAX)
 REDUCE_OP(tops::half, fast_max_f16, REDUCE_MAX)
 REDUCE_OP(int8_t, fast_max_i8, REDUCE_MAX)
 REDUCE_OP(tops::bfloat, fast_max_bf16, REDUCE_MAX)
+
+
+#define TILE_SIZE 1024 * 16
+template <typename T>
+__device__ void softmax_kernel(T *input, T* output, 
+    size_t chunks, size_t last_dim_size) {
+    __local__ __valigned__ float buffer1[TILE_SIZE];
+    __local__ __valigned__ float buffer2[TILE_SIZE];
+    __local__ __valigned__ T bufferTmp[TILE_SIZE];
+
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx);
+
+    int thread_id = GetThreadIdx();
+    int MAX_THREADS = GetThreadNum();
+    int N = chunks;
+
+    int THREAD_STEP = 1;
+    int thread_step = 1;
+    if (N > MAX_THREADS) {
+      THREAD_STEP = N / MAX_THREADS;
+      thread_step = THREAD_STEP;
+      if (N % MAX_THREADS != 0) {
+        if (thread_id == MAX_THREADS - 1) {
+          thread_step += N % MAX_THREADS; //last thread also process remains
+        }
+      }
+    }
+
+    // printf("N %d, MAX_THREADS %d, THREAD_STEP %d, thread_step %d, chunks %lu, last_dim_size %lu \n", 
+    //     N, MAX_THREADS, THREAD_STEP, thread_step, chunks, last_dim_size);
+    //yi = exp(xi - max)/(sum(exp(xi - max))
+    for (int i = 0; i < thread_step; i++) {
+      int offset = thread_id * THREAD_STEP + i;
+      if (offset >= N) {
+        break;
+      }
+      // printf("offset %lu\n", offset * last_dim_size);
+      tops::mdspan l1_input(tops::Private, bufferTmp, last_dim_size);
+      tops::mdspan hbm_input(tops::Global, input + offset * last_dim_size, last_dim_size);
+
+      tops::memcpy(ctx, l1_input, hbm_input);
+      convert<float, T>(reinterpret_cast<float*>(buffer1), reinterpret_cast<T*>(bufferTmp), last_dim_size);
+      
+      atomic_reduce_max(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), last_dim_size);
+      
+      T max_value = buffer2[0];
+      sub(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), max_value, last_dim_size);
+      exp(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(buffer2), last_dim_size);
+      atomic_reduce_sum(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), last_dim_size);
+      T sum_exp = buffer2[0];
+      tops::mdspan hbm_output(tops::Global, output + offset * last_dim_size, last_dim_size);
+      div(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), sum_exp, last_dim_size);
+      convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer2), last_dim_size);
+      tops::mdspan l1_output(tops::Private, bufferTmp, last_dim_size);
+      tops::memcpy(ctx, hbm_output, l1_output);
+    }
+}
+
+extern "C" __global__ void softmax_f16(__fp16 *input, __fp16 *output,
+    size_t chunks, size_t last_dim_size) {
+      softmax_kernel<__fp16>(input, output, chunks, last_dim_size);
+}
+
+extern "C" __global__ void softmax_bf16(__bf16 *input, __bf16 *output,
+    size_t chunks, size_t last_dim_size) {
+      softmax_kernel<__bf16>(input, output, chunks, last_dim_size);
+}
+
+extern "C" __global__ void softmax_f32(float *input, float *output,
+    size_t chunks, size_t last_dim_size) {
+      softmax_kernel<float>(input, output, chunks, last_dim_size);
+}
+
+// extern "C" __global__ void softmax_f64(double *input, double *output,
+//     size_t elements) {
+//       softmax_kernel<double>(input, output, elements);
+// }
+
+// extern "C" __global__ void softmax_u8(uint8_t *input, uint8_t* output, 
+//     size_t elements) {
+//       softmax_kernel<uint8_t>(input, output, elements);
+// }
+
 
 int main(void) {
   topsError_t err = topsSuccess;
