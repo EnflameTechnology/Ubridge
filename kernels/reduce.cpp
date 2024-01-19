@@ -172,11 +172,11 @@ __device__ void softmax_kernel(T *input, T* output,
       
       atomic_reduce_max(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), last_dim_size);
       
-      T max_value = buffer2[0];
+      float max_value = buffer2[0];
       sub(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), max_value, last_dim_size);
       exp(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(buffer2), last_dim_size);
       atomic_reduce_sum(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), last_dim_size);
-      T sum_exp = buffer2[0];
+      float sum_exp = buffer2[0];
       tops::mdspan hbm_output(tops::Global, output + offset * last_dim_size, last_dim_size);
       div(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), sum_exp, last_dim_size);
       convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer2), last_dim_size);
@@ -210,6 +210,122 @@ extern "C" __global__ void softmax_f32(float *input, float *output,
 //       softmax_kernel<uint8_t>(input, output, elements);
 // }
 
+
+
+#define TILE_SIZE 1024 * 16
+template <typename T>
+__device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias,
+    size_t chunks, size_t last_dims_size, float epsilon, int remove_mean, int affine) {
+    __local__ __valigned__ float buffer1[TILE_SIZE];
+    __local__ __valigned__ float buffer2[TILE_SIZE];
+    __local__ __valigned__ float buffer3[TILE_SIZE];
+    __local__ __valigned__ T bufferTmp[TILE_SIZE];
+    __local__ __valigned__ float bufferWeight[TILE_SIZE];
+    __local__ __valigned__ float bufferBias[TILE_SIZE];
+    __local__ __valigned__ float bufTmp[256];
+    __local__ __valigned__ float bufTmp1[256];
+
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx);
+
+    int thread_id = GetThreadIdx();
+    int MAX_THREADS = GetThreadNum();
+    int N = chunks;
+
+    int THREAD_STEP = 1;
+    int thread_step = 1;
+    if (N > MAX_THREADS) {
+      THREAD_STEP = N / MAX_THREADS;
+      thread_step = THREAD_STEP;
+      if (N % MAX_THREADS != 0) {
+        if (thread_id == MAX_THREADS - 1) {
+          thread_step += N % MAX_THREADS; //last thread also process remains
+        }
+      }
+    }
+    tops::mdspan l1_weight(tops::Private, bufferWeight, last_dims_size);
+    tops::mdspan l1_bias(tops::Private, bufferBias, last_dims_size);
+    tops::mdspan l1_tmp(tops::Private, bufferTmp, last_dims_size);
+    tops::mdspan hbm_weight(tops::Global, weight, last_dims_size);
+    tops::memcpy(ctx, l1_tmp, hbm_weight);
+
+    convert<float, T>(reinterpret_cast<float*>(bufferWeight), reinterpret_cast<T*>(bufferTmp), last_dims_size);
+    if (affine >0) {
+      tops::mdspan hbm_bias(tops::Global, bias, last_dims_size);
+      tops::memcpy(ctx, l1_tmp, hbm_bias);
+      convert<float, T>(reinterpret_cast<float*>(bufferBias), reinterpret_cast<T*>(bufferTmp), last_dims_size);
+    }
+
+    // printf("N %d, MAX_THREADS %d, THREAD_STEP %d, thread_step %d, chunks %lu, last_dims_size %lu remove_mean %d, affine %d\n", 
+    //     N, MAX_THREADS, THREAD_STEP, thread_step, chunks, last_dims_size, remove_mean, affine);
+
+    //mean = sum(xi)/N
+    //varience = sum((xi - mean)^2)/N
+    //yi = (xi - mean) / sqrt(varience + epsilon)
+    //yi = gamma * yi + beta
+
+    for (int i = 0; i < thread_step; i++) {
+      int offset = thread_id * THREAD_STEP + i;
+      if (offset >= N) {
+        break;
+      }
+      // printf("offset %lu\n", offset * last_dims_size);
+      tops::mdspan l1_input(tops::Private, bufferTmp, last_dims_size);
+      tops::mdspan hbm_input(tops::Global, input + offset * last_dims_size, last_dims_size);
+
+      tops::memcpy(ctx, l1_input, hbm_input);
+      if (remove_mean == 0) {
+        convert<float, T>(reinterpret_cast<float*>(buffer2), reinterpret_cast<T*>(bufferTmp), last_dims_size);
+      } else {
+        convert<float, T>(reinterpret_cast<float*>(buffer1), reinterpret_cast<T*>(bufferTmp), last_dims_size);
+        atomic_reduce_sum(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), last_dims_size);
+        float mean_value = buffer2[0] / last_dims_size;
+        // buffer2 -> xi - mean
+        sub(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), mean_value, last_dims_size);
+      }
+
+      // buffer1 -> (xi - mean)^2
+      mul(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer2), last_dims_size);
+      
+      atomic_reduce_sum(reinterpret_cast<float*>(buffer3), reinterpret_cast<float*>(buffer1), last_dims_size);
+      float var_value = buffer3[0] / last_dims_size;
+      bufTmp[0] = var_value + epsilon;
+
+      // printf("reduce sum %f, var_value %f, epsilon %f\n", buffer3[0], var_value, epsilon);
+      sqrt(reinterpret_cast<float*>(bufTmp1), reinterpret_cast<float*>(bufTmp), 32);
+      // printf("sqrt before %f sqrt after %f\n", bufTmp[0], bufTmp1[0]);
+
+      // buffer1 -> (xi - mean) / sqrt(varience + epsilon)
+      div(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(buffer2), bufTmp1[0], last_dims_size);
+      
+      mul(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(bufferWeight), last_dims_size);
+
+      if (affine >0) {
+        add(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(bufferBias), last_dims_size);
+        convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer1), last_dims_size);
+      } else {
+        convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer2), last_dims_size);
+      }
+      tops::mdspan hbm_output(tops::Global, output + offset * last_dims_size, last_dims_size);
+      tops::mdspan l1_output(tops::Private, bufferTmp, last_dims_size);
+      tops::memcpy(ctx, hbm_output, l1_output);
+    }
+}
+
+extern "C" __global__ void layernorm_f16(__fp16 *input, __fp16 *output, __fp16* weight, __fp16* bias,
+    size_t chunks, size_t last_dim_size, float epsilon, int remove_mean, int affine) {
+      layernorm_kernel<__fp16>(input, output, weight, bias, chunks, last_dim_size, epsilon, remove_mean, affine);
+}
+
+extern "C" __global__ void layernorm_bf16(__bf16 *input, __bf16 *output, __bf16* weight, __bf16* bias,
+    size_t chunks, size_t last_dim_size, float epsilon, int remove_mean, int affine) {
+      layernorm_kernel<__bf16>(input, output, weight, bias, chunks, last_dim_size, epsilon, remove_mean, affine);
+}
+
+extern "C" __global__ void layernorm_f32(float *input, float *output, float* weight, float* bias,
+    size_t chunks, size_t last_dim_size, float epsilon, int remove_mean, int affine) {
+      layernorm_kernel<float>(input, output, weight, bias, chunks, last_dim_size, epsilon, remove_mean, affine);
+}
 
 int main(void) {
   topsError_t err = topsSuccess;

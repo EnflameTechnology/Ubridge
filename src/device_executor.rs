@@ -212,7 +212,9 @@ impl DeviceExecutor {
 
         let reduce_functions = vec!["fast_min_f32", "fast_min_f16","fast_min_i8","fast_min_bf16",
             "fast_max_f32", "fast_max_f16", "fast_max_i8", "fast_max_bf16",
-            "fast_sum_f32", "fast_sum_f16", "fast_sum_i8", "fast_sum_bf16", "softmax_f16", "softmax_bf16", "softmax_f32"];
+            "fast_sum_f32", "fast_sum_f16", "fast_sum_i8", "fast_sum_bf16", 
+            "softmax_f16", "softmax_bf16", "softmax_f32",
+            "layernorm_f16", "layernorm_bf16", "layernorm_f32"];
 
         let where_functions = vec!["where_i64_f32", "where_i64_f64", "where_i64_u8", "where_i64_u32", "where_i64_i64",
             "where_u32_f32", "where_u32_f64", "where_u32_u8", "where_u32_u32", "where_u32_i64",
