@@ -220,8 +220,9 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias,
     __local__ __valigned__ float buffer2[TILE_SIZE];
     __local__ __valigned__ float buffer3[TILE_SIZE];
     __local__ __valigned__ T bufferTmp[TILE_SIZE];
-    __local__ __valigned__ float bufferWeight[TILE_SIZE];
-    __local__ __valigned__ float bufferBias[TILE_SIZE];
+    __local__ __valigned__ T bufferWeight[TILE_SIZE];
+    __local__ __valigned__ T bufferBias[TILE_SIZE];
+    __local__ __valigned__ T bufferOut[TILE_SIZE];
     __local__ __valigned__ float bufTmp[256];
     __local__ __valigned__ float bufTmp1[256];
 
@@ -245,15 +246,15 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias,
     }
     tops::mdspan l1_weight(tops::Private, bufferWeight, last_dims_size);
     tops::mdspan l1_bias(tops::Private, bufferBias, last_dims_size);
-    tops::mdspan l1_tmp(tops::Private, bufferTmp, last_dims_size);
+    // tops::mdspan l1_tmp(tops::Private, bufferTmp, last_dims_size);
     tops::mdspan hbm_weight(tops::Global, weight, last_dims_size);
-    tops::memcpy(ctx, l1_tmp, hbm_weight);
+    tops::memcpy(ctx, l1_weight, hbm_weight);
 
-    convert<float, T>(reinterpret_cast<float*>(bufferWeight), reinterpret_cast<T*>(bufferTmp), last_dims_size);
+    // convert<float, T>(reinterpret_cast<float*>(bufferWeight), reinterpret_cast<T*>(bufferTmp), last_dims_size);
     if (affine >0) {
       tops::mdspan hbm_bias(tops::Global, bias, last_dims_size);
-      tops::memcpy(ctx, l1_tmp, hbm_bias);
-      convert<float, T>(reinterpret_cast<float*>(bufferBias), reinterpret_cast<T*>(bufferTmp), last_dims_size);
+      tops::memcpy(ctx, l1_bias, hbm_bias);
+      // convert<float, T>(reinterpret_cast<float*>(bufferBias), reinterpret_cast<T*>(bufferTmp), last_dims_size);
     }
 
     // printf("N %d, MAX_THREADS %d, THREAD_STEP %d, thread_step %d, chunks %lu, last_dims_size %lu remove_mean %d, affine %d\n", 
@@ -298,17 +299,25 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias,
       // buffer1 -> (xi - mean) / sqrt(varience + epsilon)
       div(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(buffer2), bufTmp1[0], last_dims_size);
       
-      mul(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(bufferWeight), last_dims_size);
+
+      convert<T, float>(reinterpret_cast<T*>(bufferOut), reinterpret_cast<float*>(buffer1), last_dims_size);
+
+      tops::mdspan hbm_output(tops::Global, output + offset * last_dims_size, last_dims_size);
+
+      mul(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<T*>(bufferOut), reinterpret_cast<T*>(bufferWeight), last_dims_size);
 
       if (affine >0) {
-        add(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(bufferBias), last_dims_size);
-        convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer1), last_dims_size);
-      } else {
-        convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer2), last_dims_size);
+        add(reinterpret_cast<T*>(bufferOut), reinterpret_cast<T*>(bufferTmp), reinterpret_cast<T*>(bufferBias), last_dims_size);
+        tops::mdspan l1_output(tops::Private, bufferOut, last_dims_size);
+        tops::memcpy(ctx, hbm_output, l1_output);
+        // convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer1), last_dims_size);
+      } 
+      else {
+        // convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer2), last_dims_size);
+        tops::mdspan l1_output(tops::Private, bufferTmp, last_dims_size);
+        tops::memcpy(ctx, hbm_output, l1_output);
       }
-      tops::mdspan hbm_output(tops::Global, output + offset * last_dims_size, last_dims_size);
-      tops::mdspan l1_output(tops::Private, bufferTmp, last_dims_size);
-      tops::memcpy(ctx, hbm_output, l1_output);
+
     }
 }
 
