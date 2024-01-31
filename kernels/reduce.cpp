@@ -250,11 +250,9 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias,
     tops::mdspan hbm_weight(tops::Global, weight, last_dims_size);
     tops::memcpy(ctx, l1_weight, hbm_weight);
 
-    // convert<float, T>(reinterpret_cast<float*>(bufferWeight), reinterpret_cast<T*>(bufferTmp), last_dims_size);
     if (affine >0) {
       tops::mdspan hbm_bias(tops::Global, bias, last_dims_size);
       tops::memcpy(ctx, l1_bias, hbm_bias);
-      // convert<float, T>(reinterpret_cast<float*>(bufferBias), reinterpret_cast<T*>(bufferTmp), last_dims_size);
     }
 
     // printf("N %d, MAX_THREADS %d, THREAD_STEP %d, thread_step %d, chunks %lu, last_dims_size %lu remove_mean %d, affine %d\n", 

@@ -111,6 +111,24 @@ __forceinline__ __device__ void  atomic_reduce_min(int8_t* dst_ptr, int8_t* src_
   }
 }
 
+template <typename T>
+__device__ __forceinline__ T call_reduce_sum(T *src_ptr,
+                                              int size) {
+  generic_ptr src_addr = reinterpret_cast<generic_ptr>(src_ptr);
+  constexpr int bpe = sizeof(T);
+  constexpr int vec_elems = sizeof(typename tops::unified_scalar<T>::type) * TOPS_VECTOR_LENGTH / bpe;
+  using vtype = typename tops::scalar_to_vector<T, vec_elems>::type;
+
+  auto src_leaptr = tops::simple_leaptr<vtype>(src_addr);
+  int group_num = (size + vec_elems - 1) / vec_elems;
+  vtype vsrc;
+  vtype vdst = tops::vzero<vtype>();
+  for (int i = 0; i < group_num; i++) {
+    vsrc = src_leaptr.load();
+    vdst = tops::vadd(vdst, vsrc);
+  }
+  return tops::vreduce_sum<T, vtype>(vdst);
+}
 
 template <typename TYPE>
 __forceinline__ __device__ void atomic_reduce_sum(TYPE* dst_ptr, TYPE* src_ptr,
@@ -120,6 +138,10 @@ __forceinline__ __device__ void atomic_reduce_sum(TYPE* dst_ptr, TYPE* src_ptr,
 template <>
 __forceinline__ __device__ void  atomic_reduce_sum(float* dst_ptr, float* src_ptr,
                                             unsigned int channel_align) {
+  if (channel_align % TOPS_VECTOR_LENGTH == 0) {
+    dst_ptr[0] = call_reduce_sum<float>(src_ptr, channel_align);
+    return;
+  }
   dst_ptr[0] = src_ptr[0];
   for (int i=1; i< channel_align; i++) {
       dst_ptr[0] += src_ptr[i];
@@ -127,8 +149,12 @@ __forceinline__ __device__ void  atomic_reduce_sum(float* dst_ptr, float* src_pt
 }
 
 template <>
-__forceinline__ __device__ void  atomic_reduce_sum(tops::half* dst_ptr, tops::half* src_ptr,
+__forceinline__ __device__ void  atomic_reduce_sum(__fp16* dst_ptr, __fp16* src_ptr,
                                             unsigned int channel_align) {
+  if (channel_align % TOPS_VECTOR_LENGTH == 0) {
+    dst_ptr[0] = call_reduce_sum<__fp16>(src_ptr, channel_align);
+    return;
+  }
   dst_ptr[0] = src_ptr[0];
   for (int i=1; i< channel_align; i++) {
       dst_ptr[0] += src_ptr[i];
@@ -196,3 +222,4 @@ __forceinline__ __device__ float  reduce_sum_scalar(tops::bfloat* src_ptr,
   }
   return v;
 }
+
