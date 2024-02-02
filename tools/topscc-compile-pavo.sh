@@ -13,7 +13,7 @@ cd $KERNEL_PATH
 if [ $# -gt 1 ]; then
     echo "please specify kernel-name to be built"
 else
-    topscc $KERNEL_PATH"/../"$1.cpp -arch gcu200 -ltops -std=c++17 -lpthread -O3 -o $KERNEL_PATH"/"$1.o0.out --save-temps
+    opt/tops/bin/topscc $KERNEL_PATH"/../"$1.cpp -arch gcu200 -ltops -std=c++17 -lpthread -O3 -o $KERNEL_PATH"/"$1.o0.out --save-temps
 fi
 
 # cleaning up tmp files

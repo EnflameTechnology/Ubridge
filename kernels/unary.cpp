@@ -37,6 +37,8 @@ using namespace tops;
 #define TILE_SIZE AlignDown(((VDMEM_SIZE) / 32), 256)
 #define GATHER_COPY
 #define SHARE_BUFFER_SIZE 1024 * 1024 * 24 //24MB
+const int COPY_TILESIZE = 128 * 1024;
+const int COPY_L1SIZE = 896 * 1024;
 
 enum UNARY_TYPE {
     UNARY_TYPE_NEG = 1,
@@ -56,41 +58,6 @@ enum UNARY_TYPE {
     UNARY_TYPE_RECIP = 16,
     UNARY_TYPE_COPY = 20,
 };
-
-template <typename T>
-__device__ __forceinline__ void gelu_kernel(T* output, T* input, int num) {
-  using vtype = typename scalar_to_vector<T,
-                                          TOPS_VECTOR_LENGTH>::type;
-  const int vlength = vector_length<vtype>::value;
-  leaptr<vtype> intput_ptr = simple_leaptr<vtype>(input);
-  leaptr<vtype> output_ptr = simple_leaptr<vtype>(output);
-  int group_num = (num + vlength - 1) / vlength;
-  vtype v_input, v_output;
-  for (int i = 0; i < group_num; i++) {
-    v_input = intput_ptr.load();
-    v_output = vgelu(v_input);
-    output_ptr.store(v_output);
-  }
-}
-
-template <typename T, typename VT>
-__device__ __forceinline__ void relu_kernel(T* output, T* input, int num) {
-  using vtype = typename scalar_to_vector<T,
-                                          TOPS_VECTOR_LENGTH>::type;
-  const int vlength = vector_length<vtype>::value;
-  leaptr<vtype> intput_ptr = simple_leaptr<vtype>(input);
-  leaptr<vtype> output_ptr = simple_leaptr<vtype>(output);
-  int group_num = (num + vlength - 1) / vlength;
-  vtype v_input, v_output;
-  auto vzeros = tops::vzero<VT>();
-  for (int i = 0; i < group_num; i++) {
-    v_input = intput_ptr.load();
-    // v_output = vmax(v_input, vzeros); // fix this!
-    output_ptr.store(v_output);
-  }
-}
-
-
 
 template <typename T, typename VT>
 __device__ __forceinline__ void unary_atomic(T* in, T* out, int len, UNARY_TYPE tp)
@@ -145,22 +112,22 @@ __device__ __forceinline__ void unary_atomic(T* in, T* out, int len, UNARY_TYPE 
       }
     case UNARY_TYPE_GELU:
       {
-        gelu_kernel(out, in, len);
+        gelu(out, in, len);
         break;
       }
     case UNARY_TYPE_RELU:
       {
-        relu_kernel<T, VT>(out, in , len);
+        relu(out, in , len);
         break;
       }
     case UNARY_TYPE_ELU:
       {
-        // elu(out, in, len);
+        elu(out, in, len, 0.0f); //fix
         break;
       }
     case UNARY_TYPE_SILU:
       {
-        //(out, in, len);
+        swish(out, in, len);
         break;
       }
     case UNARY_TYPE_TANH:
@@ -175,9 +142,7 @@ __device__ __forceinline__ void unary_atomic(T* in, T* out, int len, UNARY_TYPE 
       }
     case UNARY_TYPE_COPY:
       {
-        tops::mdspan src_p(tops::Private, in, len);
-        tops::mdspan dst_p(tops::Private, out, len);
-        tops::memcpy(ctx, dst_p, src_p);
+        tops::memcpy(ctx, tops::mdspan(tops::Private, out, len), tops::mdspan(tops::Private, in, len));
         break;
       }
     default:
@@ -185,125 +150,40 @@ __device__ __forceinline__ void unary_atomic(T* in, T* out, int len, UNARY_TYPE 
     }
 }
 
-
 template <typename T, typename VT>
-__device__ void unary_kernel(T* in, T* out, int len, UNARY_TYPE tp) {
-  tops_dte_ctx_t ctxs_in[PING_PONG_SIZE];
-  tops_dte_ctx_t ctxs_out[PING_PONG_SIZE];
-  tops::event evs_in[PING_PONG_SIZE];
-  tops::event evs_out[PING_PONG_SIZE];
-  __local__ __valigned__ T in_buffer[PING_PONG_SIZE][TILE_SIZE];
-  __local__ __valigned__ T out_buffer[PING_PONG_SIZE][TILE_SIZE];
-  int N = len;
-  tops::mdspan output(tops::Global, out, N);
+__device__ void unary_kernel(T* in, T* out, int numel, UNARY_TYPE tp) {
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx); 
 
-  int thread_num = GetThreadNum();
-  int thread_id = GetThreadIdx();
+    int thread_id = GetThreadIdx();
+    int MAX_THREADS = GetThreadNum();
 
-  int thread_off_leading = thread_id * TILE_SIZE;
-  int thread_len_leading =
-      N - thread_off_leading >= TILE_SIZE ? TILE_SIZE : N - thread_off_leading;
-  int thread_step = TILE_SIZE * thread_num;
+    const int TILESIZE = 512 * 1024 / sizeof(T);
+    __local__ __valigned__ T buffer1[TILESIZE];
+    __local__ __valigned__ T buffer2[TILESIZE];
+    tops::mdspan buffer_l1(tops::Private, buffer1, TILESIZE);
 
-  int thread_off_leading_next = thread_off_leading + thread_step;
-  int thread_remain_leading = N - thread_off_leading_next;
-  int thread_len_leading_next =
-      thread_remain_leading >= TILE_SIZE ? TILE_SIZE : thread_remain_leading;
-
-  int pp_flag = 0;
-  tops::dte_scope s_in0(ctxs_in[0]);
-  tops::dte_scope s_in1(ctxs_in[1]);
-  tops::dte_scope s_out0(ctxs_out[0]);
-  tops::dte_scope s_out1(ctxs_out[1]);
-
-  // first config pingpong dma completely: d2s/s2d, linear copy
-  if (thread_len_leading > 0) {
-    ctxs_in[0].config_memcpy(
-        tops::mdspan(tops::Private, in_buffer[pp_flag], thread_len_leading),
-        tops::mdspan(tops::Global, in + thread_off_leading,
-                     thread_len_leading));
-
-    ctxs_out[0].config_memcpy(
-        tops::mdspan(tops::Global, out + thread_off_leading,
-                     thread_len_leading),
-        tops::mdspan(tops::Private, out_buffer[pp_flag], thread_len_leading));
-
-    evs_in[pp_flag] = ctxs_in[pp_flag].trigger();
-  }
-
-  if (thread_len_leading_next > 0) {
-    ctxs_in[1].config_memcpy(
-        tops::mdspan(tops::Private, in_buffer[1],
-                     thread_len_leading_next),
-        tops::mdspan(tops::Global, in + thread_off_leading_next,
-                     thread_len_leading_next));
-
-    ctxs_out[1].config_memcpy(
-        tops::mdspan(tops::Global, out + thread_off_leading_next,
-                     thread_len_leading_next),
-        tops::mdspan(tops::Private, out_buffer[1],
-                     thread_len_leading_next));
-  }
-
-  for (int i = thread_off_leading; i < N; i += thread_step) {
-    int pp_flag_next = 1 - pp_flag;
-    int pp_flag_prev = 1 - pp_flag;
-    int thread_off_next = i + thread_step;
-    int thread_remain_next = N - thread_off_next;
-    int thread_len = N - i >= TILE_SIZE ? TILE_SIZE : N - i;
-    int thread_len_next =
-        thread_remain_next >= TILE_SIZE ? TILE_SIZE : thread_remain_next;
-    if (thread_len_next > 0) {
-      evs_in[pp_flag_next] = ctxs_in[pp_flag_next].trigger();
-    }
-
-    int thread_off_next2 = i + thread_step * 2;
-    int thread_remain_next2 = N - thread_off_next2;
-    int thread_len_next2 =
-        thread_remain_next2 >= TILE_SIZE ? TILE_SIZE : thread_remain_next2;
-
-    if (thread_len > 0) {
-      evs_in[pp_flag].wait();
-    }
-
-    if (thread_len_next2 > 0) {
-      ctxs_in[pp_flag].config_memcpy(
-        tops::mdspan(tops::Private, in_buffer[pp_flag],
-                     thread_len_next2),
-        tops::mdspan(tops::Global, in + thread_off_next2,
-                     thread_len_next2));
-    }
-
-    // call atomic op here
-    if (thread_len > 0) {
-      unary_atomic<T, VT>(in_buffer[pp_flag], out_buffer[pp_flag],
-                               thread_len, tp);
-      evs_out[pp_flag] = ctxs_out[pp_flag].trigger();
-    }
-
-    if (i != thread_off_leading) {
-      int thread_off_prev = i - thread_step;
-      int thread_remain_prev = N - thread_off_prev;
-      int thread_len_prev =
-          thread_remain_prev >= TILE_SIZE ? TILE_SIZE : thread_remain_prev;
-      if (thread_len_prev > 0) {
-        evs_out[pp_flag_prev].wait();
-      }
-
-      if (thread_len_next > 0) {
-        ctxs_out[pp_flag_prev].config_memcpy(
-        tops::mdspan(tops::Global, out + thread_off_next,
-                     thread_len_next),
-        tops::mdspan(tops::Private, out_buffer[pp_flag_prev],
-                     thread_len_next));
+    tops::mdspan out_hbm(tops::Global, out, numel);
+    int N = numel;
+    int THREAD_STEP = 1;
+    int thread_step = 1;
+    if (N > MAX_THREADS) {
+      THREAD_STEP = N / MAX_THREADS;
+      thread_step = THREAD_STEP;
+      if (N % MAX_THREADS != 0) {
+        if (thread_id == MAX_THREADS - 1) {
+          thread_step += N % MAX_THREADS; //last thread also process remains
+        }
       }
     }
-    pp_flag = 1 - pp_flag;
-  }
 
-  if (thread_len_leading > 0) {
-    evs_out[1 - pp_flag].wait();
-  }
+    for (int i = 0; i < thread_step; i+=TILESIZE) {
+      int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i;
+      int offset = thread_id * THREAD_STEP + i;
+      tops::memcpy(ctx, buffer_l1, tops::mdspan(tops::Global, in + offset, bufsize));
+      unary_atomic<T, VT>(buffer1, buffer2, bufsize, tp);
+      tops::deslice(ctx, out_hbm, tops::mdspan(tops::Private, buffer2, bufsize), {offset});
+    }
 }
 
 #define UNARY_OP(TYPE, VT, FN_NAME, TP) \
@@ -329,7 +209,6 @@ UNARY_OP(__bf16, vbfloat, urelu_bf16, UNARY_TYPE_RELU)
 UNARY_OP(__bf16, vbfloat, usilu_bf16, UNARY_TYPE_SILU) 
 UNARY_OP(__bf16, vbfloat, utanh_bf16, UNARY_TYPE_TANH) 
 UNARY_OP(__bf16, vbfloat, urecip_bf16, UNARY_TYPE_RECIP) 
-UNARY_OP(__bf16, vbfloat, uelu_bf16, UNARY_TYPE_ELU) 
 
 UNARY_OP(__fp16, vhalf, uneg_f16, UNARY_TYPE_NEG)
 UNARY_OP(__fp16, vhalf, uexp_f16, UNARY_TYPE_EXP)
@@ -345,7 +224,6 @@ UNARY_OP(__fp16, vhalf, urelu_f16, UNARY_TYPE_RELU)
 UNARY_OP(__fp16, vhalf, usilu_f16, UNARY_TYPE_SILU)
 UNARY_OP(__fp16, vhalf, utanh_f16, UNARY_TYPE_TANH)
 UNARY_OP(__fp16, vhalf, urecip_f16, UNARY_TYPE_RECIP)
-UNARY_OP(__fp16, vhalf, uelu_f16, UNARY_TYPE_ELU)
 
 
 UNARY_OP(float, vfloat, uneg_f32, UNARY_TYPE_NEG)
@@ -362,7 +240,71 @@ UNARY_OP(float, vfloat, urelu_f32, UNARY_TYPE_RELU)
 UNARY_OP(float, vfloat, usilu_f32, UNARY_TYPE_SILU)
 UNARY_OP(float, vfloat, utanh_f32, UNARY_TYPE_TANH)
 UNARY_OP(float, vfloat, urecip_f32, UNARY_TYPE_RECIP)
-UNARY_OP(float, vfloat, uelu_f32, UNARY_TYPE_ELU)
+
+
+template <typename T, typename VT, typename EXTTYPE>
+__device__ __forceinline__ void unary_atomic1(T* in, T* out, int len, EXTTYPE extValue, UNARY_TYPE tp)
+{
+  switch (tp) {
+    case UNARY_TYPE_ELU:
+      {
+        elu(out, in, len, extValue);
+        break;
+      }
+    default:
+      break;
+  }
+}
+
+template <typename T, typename VT, typename EXTTYPE>
+__device__ void unary_kernel1(T* in, T* out, int numel, EXTTYPE extValue, UNARY_TYPE tp) {
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx); 
+
+    int thread_id = GetThreadIdx();
+    int MAX_THREADS = GetThreadNum();
+
+    const int TILESIZE = 512 * 1024 / sizeof(T);
+    __local__ __valigned__ T buffer1[TILESIZE];
+    __local__ __valigned__ T buffer2[TILESIZE];
+    tops::mdspan buffer_l1(tops::Private, buffer1, TILESIZE);
+
+    tops::mdspan out_hbm(tops::Global, out, numel);
+    int N = numel;
+    int THREAD_STEP = 1;
+    int thread_step = 1;
+    if (N > MAX_THREADS) {
+      THREAD_STEP = N / MAX_THREADS;
+      thread_step = THREAD_STEP;
+      if (N % MAX_THREADS != 0) {
+        if (thread_id == MAX_THREADS - 1) {
+          thread_step += N % MAX_THREADS; //last thread also process remains
+        }
+      }
+    }
+
+    for (int i = 0; i < thread_step; i+=TILESIZE) {
+      int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i;
+      int offset = thread_id * THREAD_STEP + i;
+      tops::memcpy(ctx, buffer_l1, tops::mdspan(tops::Global, in + offset, bufsize));
+      unary_atomic1<T, VT>(buffer1, buffer2, bufsize, extValue, tp);
+      tops::deslice(ctx, out_hbm, tops::mdspan(tops::Private, buffer2, bufsize), {offset});
+    }
+}
+
+#define UNARY_OP1(TYPE, VT, FN_NAME, EXTTYPE, TP) \
+extern "C" __global__ void FN_NAME( \
+    const size_t numel, \
+    TYPE *inp, \
+    TYPE *out, \
+    EXTTYPE extValue) \
+{ \
+    unary_kernel1<TYPE, VT>(inp, out, numel, extValue, TP); \
+} \
+
+UNARY_OP1(__bf16, vbfloat, uelu_bf16, float, UNARY_TYPE_ELU) 
+UNARY_OP1(__fp16, vhalf, uelu_f16, float, UNARY_TYPE_ELU)
+UNARY_OP1(float, vfloat, uelu_f32, float, UNARY_TYPE_ELU)
 
 #define PRINTHELPER(ARRAY, SZ, MSG) \
   printf(MSG); \
@@ -552,8 +494,7 @@ __device__ void ucopy_multithread(T* in, T* out, const size_t in_size, const siz
     unmap_mem(src_l3_addr);
 }
 
-const int COPY_TILESIZE = 128 * 1024;
-const int COPY_L1SIZE = 896 * 1024;
+
 template <typename T, int RANK, int BPE>
 __device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, const size_t out_size, size_t* dims_and_strides, char* raw_cache, T* buffer) {
     tops_dte_ctx_t ctx;
@@ -572,9 +513,6 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, con
     int MAX_THREADS = GetThreadNum();
 
     const int TILESIZE = COPY_TILESIZE / BPE;
-
-    // __local__ __valigned__ T l1_cache[TILESIZE + L1SIZE];
-    // T* buffer = reinterpret_cast<T*>(l1_cache);
 
     tops::mdspan out_hbm(tops::Global, out, out_size);
     int N = out_size;
@@ -653,7 +591,7 @@ __device__ __forceinline__ void gather_and_store(void* out, void* in,
 
 // #include "utils/unroller_helper.h"
 template <typename T, int RANK, int BPE>
-__device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, const size_t out_size, size_t* dims_and_strides, char* raw_cache) {
+__device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, const size_t out_size, size_t* dims_and_strides, char* raw_cache, T* buffer) {
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx); 
     __private_dte__ tops_dte_ctx_t cache_ctx;
@@ -664,7 +602,8 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
     int MAX_THREADS = GetThreadNum();
 
     constexpr int TILESIZE = vector_length<va16u32x4>::value;
-    constexpr int BUFFER_SIZE = TILESIZE * 1024 / BPE;
+    // constexpr int BUFFER_SIZE = TILESIZE * 1024 / BPE;
+    const int BUFFER_SIZE = COPY_TILESIZE / BPE;
 
     // printf("\nin_size %lu, out_size %lu, TILESIZE %d", in_size, out_size, TILESIZE);
     int N = out_size;
@@ -687,13 +626,19 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
       dst_strides[j] = dims_and_strides[RANK + j];
     }
 
-    bool cacheable = in_size > MAX_THREADS && in_size * sizeof(T) < SHARE_BUFFER_SIZE;
+    bool cacheable_l1 = in_size > MAX_THREADS && in_size * sizeof(T) < COPY_L1SIZE;
+    bool cacheable_l2 = in_size > MAX_THREADS && in_size * sizeof(T) < SHARE_BUFFER_SIZE;
 
     T* src_cached = reinterpret_cast<T*>(raw_cache);
     mapped_ptr src_l3_addr;
 
-    if (cacheable) {
-      int offset = thread_id * THREAD_STEP;
+    if (cacheable_l1){
+      src_cached = reinterpret_cast<T*>(buffer + BUFFER_SIZE);
+      ctx.config_memcpy(
+        tops::mdspan(tops::Private, src_cached, in_size),
+        tops::mdspan(tops::Global, in, in_size));
+      ctx.trigger_and_wait();
+    } else if (cacheable_l2) {
       if (thread_id == 0) {
         cache_ctx.config_memcpy(
           tops::mdspan(tops::Shared, src_cached, in_size),
@@ -712,7 +657,7 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
     // auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
     // T* src_l3 = reinterpret_cast<T*>(src_l3_addr);
 
-    __local__ __valigned__ T buffer[BUFFER_SIZE];
+    // __local__ __valigned__ T buffer[BUFFER_SIZE];
     __local__ __valigned__ unsigned int idx_buffer[TILESIZE];
 
     va16u32x4 vec_dst_shape[RANK];
@@ -723,9 +668,11 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
       vec_dst_shape[i] = vbroadcast<va16u32x4>((unsigned int)dst_dim[i]);
       vec_dst_strides[i] = vbroadcast<va16u32x4>((unsigned int)dst_strides[i]);
     }
+#ifdef GATHER_COPY
     va16u32x4 vec_src_start = vbroadcast<va16u32x4>((unsigned int)0);
     va16u32x4 vec_src_end = vbroadcast<va16u32x4>((unsigned int)in_size);
     va16u32x4 vec_bpe = vbroadcast<va16u32x4>((unsigned int)sizeof(T));
+#endif
     va16u32x4 idx_results = vbroadcast<va16u32x4>((unsigned int)0);
     constexpr IndexType NUM_UNROLLING = 1;
     T *pbuffer = buffer;
@@ -738,15 +685,15 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
       auto indexes = viota<va16u32x4>((unsigned int)offset);
       auto strided_indexes = get_batch_strided_index<RANK>(indexes, idx_results, vec_dst_shape, vec_dst_strides);
 #ifdef GATHER_COPY
-      if (in_size > TILESIZE && in_size == out_size) {
+      if (bufsize == TILESIZE) {
           gather_and_store<BPE>(pbuffer, src_cached, vec_bpe, vec_src_start,
                                     vec_src_end, strided_indexes);
       } else {
 #endif
-        vstore(strided_indexes, idx_buffer);
+        // vstore(strided_indexes, idx_buffer);
         // #pragma clang loop unroll(enable)
         for (int j = 0; j< bufsize; j++) {
-          pbuffer[j] = src_cached[idx_buffer[j]];
+          pbuffer[j] = src_cached[strided_indexes[j]];
         }
 #ifdef GATHER_COPY
       }
@@ -763,7 +710,7 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
       }
     }
 
-    if (!cacheable)
+    if (!cacheable_l1 && !cacheable_l2)
       unmap_mem(src_l3_addr);
   
 }

@@ -26,19 +26,19 @@ using namespace std;
 
 template <typename T>
 __device__ __forceinline__ void kvconcat_kernel(T *ltensor, T* rtensor, T *out,
-    size_t* dims) {
+    size_t* dims, size_t dim_size) {
     __local__ __valigned__ size_t dim_buf[10];
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx);
-    tops::mdspan hbm_dims(tops::Global, dims, 8);
-    tops::mdspan l1_dims(tops::Private, dim_buf, 8);
+    tops::mdspan hbm_dims(tops::Global, dims, dim_size * 2);
+    tops::mdspan l1_dims(tops::Private, dim_buf, dim_size * 2);
     tops::memcpy(ctx, l1_dims, hbm_dims);
 
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNum();
-    int N = dim_buf[0] * dim_buf[1];
-    int lstride = dim_buf[2] * dim_buf[3];
-    int rstride = dim_buf[6] * dim_buf[7];
+    int N = dim_size > 3 ? dim_buf[0] * dim_buf[1] : dim_buf[0];
+    int lstride = dim_size > 3 ? dim_buf[2] * dim_buf[3] : dim_buf[1] * dim_buf[2];
+    int rstride = dim_size > 3 ? dim_buf[6] * dim_buf[7]: dim_buf[4] * dim_buf[5];
     int out_stride = lstride + rstride;
 
     int THREAD_STEP = 1;
@@ -71,28 +71,28 @@ __device__ __forceinline__ void kvconcat_kernel(T *ltensor, T* rtensor, T *out,
 }
 
 extern "C" __global__ void kvconcat_f16(__fp16 *ltensor, __fp16* rtensor, __fp16 *out,
-    size_t* dims) {
-      kvconcat_kernel<__fp16>(ltensor, rtensor, out, dims);
+    size_t* dims, size_t dim_size) {
+      kvconcat_kernel<__fp16>(ltensor, rtensor, out, dims, dim_size);
 }
 
 extern "C" __global__ void kvconcat_bf16(__bf16 *ltensor, __bf16* rtensor, __bf16 *out,
-    size_t* dims) {
-      kvconcat_kernel<__bf16>(ltensor, rtensor, out, dims);
+    size_t* dims, size_t dim_size) {
+      kvconcat_kernel<__bf16>(ltensor, rtensor, out, dims, dim_size);
 }
 
 extern "C" __global__ void kvconcat_f32(float *ltensor, float* rtensor, float *out,
-    size_t* dims) {
-      kvconcat_kernel<float>(ltensor, rtensor, out, dims);
+    size_t* dims, size_t dim_size) {
+      kvconcat_kernel<float>(ltensor, rtensor, out, dims, dim_size);
 }
 
 extern "C" __global__ void kvconcat_f64(double *ltensor, double* rtensor, double *out,
-    size_t* dims) {
-      kvconcat_kernel<double>(ltensor, rtensor, out, dims);
+    size_t* dims, size_t dim_size) {
+      kvconcat_kernel<double>(ltensor, rtensor, out, dims, dim_size);
 }
 
 extern "C" __global__ void kvconcat_u8(uint8_t *ltensor, uint8_t* rtensor, uint8_t *out,
-    size_t* dims) {
-      kvconcat_kernel<uint8_t>(ltensor, rtensor, out, dims);
+    size_t* dims, size_t dim_size) {
+      kvconcat_kernel<uint8_t>(ltensor, rtensor, out, dims, dim_size);
 }
 
 int main() {}
