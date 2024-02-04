@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <tops.h>
 #include <tops/half.h>
+#include <tops/bfloat.h>
 #include <algorithm>
 #include <vector>
 #include "tops/tops_runtime.h"

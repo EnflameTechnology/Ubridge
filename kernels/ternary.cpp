@@ -21,7 +21,6 @@
 #include <vector>
 #include "tops/tops_runtime.h"
 #include "utils.h"
-#include "reduce_atomic.h"
 using namespace std;
 #define TILE_SIZE AlignDown(((VDMEM_SIZE) / 32), 256)
 
