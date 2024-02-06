@@ -1,5 +1,5 @@
 /*
- * Copyright 2022-2023 Enflame. All Rights Reserved.
+ * Copyright 2021-2024 Enflame. All Rights Reserved.
 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -12,8 +12,17 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * @file    reduce.cpp
+ * @brief
+ *
+ * @author  Guoqing Bao
+ * @date    2023-12-12 to 2024-01-31
+ * @version V0.1
+ * @par     Copyright (c) Enflame Tech Company.
+ * @par     History: add fused layernorm & softmax kernel, optimize reduce sum kernel
+ * @par     Comments: gcu kernel for reduce operations, including reduce sum, reduce max, reduce min, softmax, layernorm.
  */
-
 #include <stdio.h>
 #include <tops.h>
 #include <tops/half.h>
@@ -23,7 +32,7 @@
 #include "tops/tops_runtime.h"
 #include "utils.h"
 #include "reduce_atomic.h"
-#include <acore/acore_op.h>
+#include <acore/atomic_op.h>
 using namespace std;
 #define RANK_MAX 3
 

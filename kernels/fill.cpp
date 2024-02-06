@@ -12,8 +12,10 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ * @par Original implementation: http://git.enflame.cn/sw/tops/-/tree/master/library/computing/topsop/lib/kernel/cc_kernel/fill_
+ * @par Comments: a simple fill kernel bought from TopsOP.
  */
-//Original implementation: http://git.enflame.cn/sw/tops/-/tree/master/library/computing/topsop/lib/kernel/cc_kernel/fill_
+
 
 #include <stdio.h>
 #include <tops.h>

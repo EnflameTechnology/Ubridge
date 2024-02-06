@@ -1,3 +1,28 @@
+/*
+ * Copyright 2021-2024 Enflame. All Rights Reserved.
+
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * @file    device_executor.rs
+ * @brief
+ *
+ * @author  Guoqing Bao
+ * @date    2022-10-27 - 2024-01-19
+ * @version V0.1
+ * @par     Copyright (c) Enflame Tech Company.
+ * @par     History: Add supports for fused kernels
+ * @par     Comments: a gcu executor for kernel management, and gcu kernel computations.
+ */
 use crate::device_opcode::DeviceOpCode;
 use crate::device_tensor::{DeviceTensor, DeviceTensorKind};
 use core::fmt::Debug;
@@ -6,9 +31,11 @@ use std::collections::HashMap;
 
 use std::sync::{Arc, Once};
 
+use cust_core::DeviceCopy;
+use tops::driv;
 //Import UHAL for common computing interfaces
 use uhal::context::CurrentContextTrait;
-
+use uhal::device::DeviceTrait;
 use uhal::error::DeviceResult;
 use uhal::launch;
 use uhal::memory::DeviceBufferTrait;
@@ -53,11 +80,18 @@ use cuda::CuApi as Api;
 #[cfg(feature = "cuda_backend")]
 use cuda_backend as cuda;
 
+#[derive(Debug)]
+pub struct MemPool(driv::topsMemPool_t);
+
+unsafe impl Send for MemPool {}
+unsafe impl Sync for MemPool {}
+
 pub(crate) static mut G_KERNEL: (
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
     Option<Stream>,
-) = (None, None, None);
+    Option<MemPool>,
+) = (None, None, None, None);
 
 static INIT: Once = Once::new();
 
@@ -76,9 +110,13 @@ pub fn init_kernels(
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
     Option<Stream>,
+    Option<MemPool>,
 ) {
     match init_api(device_id) {
         Some(device) => {
+            let mut mempool = MemPool { 0: std::ptr::null_mut() };
+            unsafe { driv::topsDeviceGetMemPool(&mut mempool.0, device.as_raw()); }
+
             let stream = match Stream::new(StreamFlags::NON_BLOCKING, None) {
                 Ok(_stream) => _stream,
                 _ => {
@@ -121,9 +159,9 @@ pub fn init_kernels(
             if module_map.len() > 0 {
                 println!("{} kernel(s) loaded!", module_map.len());
             }
-            return (Some(module_map), Some(device), Some(stream));
+            return (Some(module_map), Some(device), Some(stream), Some(mempool));
         }
-        _ => return (None, None, None),
+        _ => return (None, None, None, None),
     };
 }
 
@@ -133,6 +171,7 @@ fn get_kernels(
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
     Option<Stream>,
+    Option<MemPool>,
 ) {
     unsafe {
         INIT.call_once(|| {
@@ -149,6 +188,7 @@ pub struct DeviceExecutor {
     pub function_map: Option<HashMap<String, Arc<Function<'static>>>>,
     pub device: Option<&'static Device>,
     pub stream: Option<&'static Stream>,
+    pub mem_pool: Option<&'static MemPool>,
     cache_buffer: HashMap<String, Box<DeviceTensor>>,
     cache_shape: HashMap<String, Box<DeviceBuffer<i32>>>,
 }
@@ -237,7 +277,7 @@ impl DeviceExecutor {
 
         let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
         match get_kernels(device_id, kernel_platform) {
-            (Some(_module_map), Some(_device), Some(_stream)) => {
+            (Some(_module_map), Some(_device), Some(_stream), Some(_mempool)) => {
                 for module in _module_map.keys().into_iter() {
                     if module == "activation" {
                         for fun in ["activationf32", "activationf16"] {
@@ -346,6 +386,7 @@ impl DeviceExecutor {
                     device: Some(_device),
                     module_map: Some(_module_map),
                     function_map: Some(function_map),
+                    mem_pool: Some(_mempool),
                     cache_buffer: HashMap::<String, Box<DeviceTensor>>::new(),
                     cache_shape: HashMap::<String, Box<DeviceBuffer<i32>>>::new(),
                     stream: Some(_stream),

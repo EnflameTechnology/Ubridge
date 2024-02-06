@@ -1,6 +1,6 @@
-/**
- * Copyright 2020-2024 Enflame. All Rights Reserved.
- *
+/*
+ * Copyright 2021-2024 Enflame. All Rights Reserved.
+
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -12,8 +12,17 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * @file    embedding.cpp
+ * @brief
+ *
+ * @author  Guoqing Bao
+ * @date    2024-01-08 to 2024-01-30
+ * @version V0.1
+ * @par     Copyright (c) Enflame Tech Company.
+ * @par     History: Support partial rotary embedding
+ * @par     Comments: gcu kernel for rotary embedding (partial rotary embedding also supported).
  */
-
 #include <stdio.h>
 #include <tops.h>
 #include <tops/half.h>

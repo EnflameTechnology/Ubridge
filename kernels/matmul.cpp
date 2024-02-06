@@ -12,7 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ *
+* @par Copyright (c) Enflame Tech Company.
+* @par History: revised from TopsOp/Aten for candle-gcu
+*/
+
 #include <stdio.h>
 #include <tops.h>
 #include <tops/half.h>

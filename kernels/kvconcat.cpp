@@ -1,5 +1,5 @@
 /*
- * Copyright 2022-2024 Enflame. All Rights Reserved.
+ * Copyright 2021-2024 Enflame. All Rights Reserved.
 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -12,6 +12,16 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * @file    kvconcat.cpp
+ * @brief
+ *
+ * @author  Guoqing Bao
+ * @date    2024-01-10 to 2024-02-02
+ * @version V0.1
+ * @par     Copyright (c) Enflame Tech Company.
+ * @par     History: Remove PING_PONG logic & support 3-dim kvconcat
+ * @par     Comments: gcu kernel for faster key-value concatination in LLM models.
  */
 
 #include <stdio.h>

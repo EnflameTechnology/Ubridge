@@ -1,4 +1,29 @@
 
+/*
+ * Copyright 2021-2024 Enflame. All Rights Reserved.
+
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * @file    gcu_launch.rs
+ * @brief
+ *
+ * @author  Guoqing Bao
+ * @date    2023-09-05 - 2024-01-10
+ * @version V0.1
+ * @par     Copyright (c) Enflame Tech Company.
+ * @par     History: compatible with runtime 3.0 kernel launch
+ * @par     Comments: a gcu kernel launch abstraction.
+ */
 #[cfg(feature = "tops_backend")]
 use tops_backend as tops;
 #[cfg(feature = "tops_backend")]
@@ -225,22 +250,28 @@ impl GcuFunction {
 
                 // let mut size :usize = (std::mem::size_of::<c_ulonglong>() * (params.len() - 1) + std::mem::size_of::<usize>()) as usize;
                 // let _config = vec![0x1 as *const c_void, params.as_mut_ptr() as *const _ as *mut c_void, 0x2 as *const c_void, &mut size as *const _ as *mut c_void, 0x3 as *const c_void];
-        
-                let nul = ptr::null_mut();
+                let null = ptr::null_mut();
+                let stream =  if self.is_async {self.stream.unwrap()} else {null};
                 let shared_mem_bytes = 0;
-                let ret = driv::topsModuleLaunchKernel(
+                let mut ret = driv::topsModuleLaunchKernel(
                     func, cfg.grid_dim.0, cfg.grid_dim.1, cfg.grid_dim.2,
                     cfg.block_dim.0, cfg.block_dim.1, cfg.block_dim.2,
                     shared_mem_bytes as u32,
-                    nul,
+                    stream,
                     params.as_mut_ptr() as *mut *mut c_void,
-                    nul as *mut *mut c_void, 
+                    null as *mut *mut c_void, 
                     // config.as_mut_ptr() as *mut *mut c_void            
                 ).to_result();
 
+                if ret.is_ok() && self.is_async {
+                    println!("******************driv::topsStreamSynchronize! {}", self.is_async);
+                    ret = driv::topsStreamSynchronize(stream).to_result();
+                }
+
                 if ret.is_err() {
                     println!("Launch Error for function {}", self.func_name);
-                }
+                } 
+
                 return ret;
 
             }
