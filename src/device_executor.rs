@@ -228,7 +228,7 @@ impl DeviceExecutor {
 
         let unary_functions = vec![
             "uneg", "uexp", "ulog", "usin", "ucos", "uabs", "usqr", "usqrt", "ursqrt", "ugelu",
-            "urelu", "utanh", "urecip", "uelu", 
+            "urelu", "utanh", "urecip", "uelu", "usigmoid", "usilu", "uelu",
         ]; 
 
         let binary_functions = vec![
@@ -279,12 +279,7 @@ impl DeviceExecutor {
         match get_kernels(device_id, kernel_platform) {
             (Some(_module_map), Some(_device), Some(_stream), Some(_mempool)) => {
                 for module in _module_map.keys().into_iter() {
-                    if module == "activation" {
-                        for fun in ["activationf32", "activationf16"] {
-                            let function = _module_map[module].get_function(fun).unwrap();
-                            function_map.insert(fun.to_string(), Arc::new(function));
-                        }
-                    } else if module == "unary" {
+                    if module == "unary" {
                         for dt in ["bf16", "f16", "f32"] {
                             for func in &unary_functions {
                                 let name = format!("{}_{}", func, dt);
@@ -299,10 +294,6 @@ impl DeviceExecutor {
                             function_map.insert(func.to_string(), Arc::new(function));
                             
                         }
-                        // let name = format!("{}_u8", "ucopy");
-                        // println!("Load function {}", name);
-                        // let function = _module_map[module].get_function(&name).unwrap();
-                        // function_map.insert(name, Arc::new(function));
                     } else if module == "binary" {
                         for dt in ["bf16", "f16", "f32"] {
                             for func in &binary_functions {
