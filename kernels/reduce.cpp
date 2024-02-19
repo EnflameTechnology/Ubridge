@@ -48,8 +48,8 @@ __forceinline__ __device__ void reduce_kernel(T* in, T* out, const size_t elemen
     int MAX_THREADS = GetThreadNum();
 
     const int N = element_num / reduce_dim_size;
-    __local__ __valigned__ T in_buffer[40960];
-    __local__ __valigned__ T out_buffer[40960];
+    __local__ __valigned__ T in_buffer[41984];
+    __local__ __valigned__ T out_buffer[41984];
 
     tops_dte_ctx_t ctxs_in;
     tops_dte_ctx_t ctxs_out;
@@ -89,20 +89,7 @@ __forceinline__ __device__ void reduce_kernel(T* in, T* out, const size_t elemen
             atomic_reduce_max<T>(out_buffer, in_buffer, reduce_dim_size);
           } else if (tp == REDUCE_SUM) {
             atomic_reduce_sum<T>(out_buffer, in_buffer, reduce_dim_size);
-          } else {
-            printf("Not supported reduce type!");
-          }
-          // printf("Reduce type %d\n", tp);
-          // printf("\nReduce Input buffer: ");
-          // for (int j=0; j<reduce_dim_size; j++) {
-          //   printf("%.5f ", static_cast<float>(in_buffer[j]));
-          // }
-          // printf("\nReduce Output buffer: ");
-
-          // for (int j=0; j<reduce_dim_size; j++) {
-          //   printf("%.5f ", static_cast<float>(out_buffer[j]));
-          // }
-          // printf("%.5f ", static_cast<float>(out_buffer[0]));
+          } 
           ctxs_out.config_deslice(hbm_out, thread_out0, {0, 0});
           ctxs_out.set_dst_offset(0, idx);
           ctxs_out.trigger_and_wait();
