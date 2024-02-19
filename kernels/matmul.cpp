@@ -59,7 +59,7 @@ __device__ __forceinline__ void matmul_kernel(lhs_t *lhs, rhs_t *rhs, rhs_t *out
       int lhs_multicore, int rhs_multicore, int batch_multicore,
       int lhs_transpose, int rhs_transpose,
       float alpha, float beta, float addmm_beta, 
-      int sip_m, int sip_k, int sip_n) {
+      int sip_m, int sip_k, int sip_n, int broadcasted_weight) {
   int thread_num = GetThreadNum();
   int thread_id = GetThreadIdx();
   int sip_cnt_raw = thread_num;
@@ -116,7 +116,7 @@ __device__ __forceinline__ void matmul_kernel(lhs_t *lhs, rhs_t *rhs, rhs_t *out
   tops::half quant_value(scale);
 
   int32_t hbm_lhs_shape[4] = {1, B, M, K};
-  int32_t hbm_rhs_shape[4] = {1, B, K, N};
+  int32_t hbm_rhs_shape[4] = {1, broadcasted_weight > 0 ? 1 : B, K, N};
   int32_t hbm_out_shape[4] = {1, B, M, N};
   if (transa == 1) {
     hbm_lhs_shape[2] = K;
@@ -268,6 +268,8 @@ __device__ __forceinline__ void matmul_kernel(lhs_t *lhs, rhs_t *rhs, rhs_t *out
       auto m_hbm_offset = (is_lhs_split == 1) ? thread_idx * subm_size : 0;
       auto n_hbm_offset = (is_rhs_split == 1) ? thread_idx * subn_size : 0;
       auto batch_offset = batch_hmb_offset + b_idx;
+      auto r_batch_offset = broadcasted_weight > 0 ? 0 : batch_offset;
+
       if (transa == 0) {
         event_lhs0 = tops::slice_async(dte_lhs[0], private_lhs0, hbm_lhs,
                                        {0, batch_offset, m_hbm_offset, 0});
@@ -282,11 +284,11 @@ __device__ __forceinline__ void matmul_kernel(lhs_t *lhs, rhs_t *rhs, rhs_t *out
 
       if (transb == 0) {
         event_rhs0 = tops::slice_async(dte_rhs[0], private_rhs0, hbm_rhs,
-                                       {0, batch_offset, 0, n_hbm_offset});
+                                       {0, r_batch_offset, 0, n_hbm_offset});
       } else {
         e_rhs_trans_0 =
             tops::slice_async(dte_rhs_trans[0], private_rhs0_trans, hbm_rhs,
-                              {0, batch_offset, n_hbm_offset, 0});
+                              {0, r_batch_offset, n_hbm_offset, 0});
         // tops::wait(e_rhs_trans_0);
 
         event_rhs0 = tops::transpose_async(dte_rhs[0], private_rhs0,
@@ -441,12 +443,12 @@ __device__ __forceinline__ void matmul_kernel(lhs_t *lhs, rhs_t *rhs, rhs_t *out
               if (transb == 0) {
                 next_event_rhs =
                     tops::slice_async(dte_rhs[0], *next_private_rhs, hbm_rhs,
-                                      {0, batch_offset, next_subk_offset_global,
+                                      {0, r_batch_offset, next_subk_offset_global,
                                        next_subn_offset_global});
               } else {
                 e_rhs_trans_0 = tops::slice_async(
                     dte_rhs_trans[0], *next_private_rhs_trans, hbm_rhs,
-                    {0, batch_offset, next_subn_offset_global,
+                    {0, r_batch_offset, next_subn_offset_global,
                      next_subk_offset_global});
                 // tops::wait(e_rhs_trans_0);
                 next_event_rhs = tops::transpose_async(
@@ -551,9 +553,9 @@ extern "C" __global__ void matmul_f32(float *in_a, float *in_b, float *out,
                                             int lhs_multicore, int rhs_multicore, int batch_multicore,
                                             int lhs_transpose, int rhs_transpose,
                                             float alpha, float beta, float addmm_beta, 
-                                            int sip_m, int sip_k, int sip_n) {
+                                            int sip_m, int sip_k, int sip_n, int broadcasted_weight) {
       matmul_kernel<float, float>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
-      lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n);
+      lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight);
 }
 
 extern "C" __global__ void matmul_f16(__fp16 *in_a, __fp16 *in_b, __fp16 *out,  
@@ -562,9 +564,9 @@ extern "C" __global__ void matmul_f16(__fp16 *in_a, __fp16 *in_b, __fp16 *out,
                                                 int lhs_multicore, int rhs_multicore, int batch_multicore,
                                                 int lhs_transpose, int rhs_transpose,
                                                 float alpha, float beta, float addmm_beta, 
-                                                int sip_m, int sip_k, int sip_n) {
+                                                int sip_m, int sip_k, int sip_n, int broadcasted_weight) {
       matmul_kernel<__fp16, __fp16>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
-      lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n);
+      lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight);
 }
 
 extern "C" __global__ void matmul_bf16(tops::bfloat *in_a,
@@ -575,9 +577,9 @@ extern "C" __global__ void matmul_bf16(tops::bfloat *in_a,
                                                   int lhs_multicore, int rhs_multicore, int batch_multicore,
                                                   int lhs_transpose, int rhs_transpose,
                                                   float alpha, float beta, float addmm_beta, 
-                                                  int sip_m, int sip_k, int sip_n) {
+                                                  int sip_m, int sip_k, int sip_n, int broadcasted_weight) {
       matmul_kernel<tops::bfloat, tops::bfloat>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
-      lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n);
+      lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight);
 }
 
 extern "C" __global__ void matmul_i8(int8_t *in_a, int8_t *in_b,
@@ -587,9 +589,9 @@ extern "C" __global__ void matmul_i8(int8_t *in_a, int8_t *in_b,
                                             int lhs_multicore, int rhs_multicore, int batch_multicore,
                                             int lhs_transpose, int rhs_transpose,
                                             float alpha, float beta, float addmm_beta, 
-                                            int sip_m, int sip_k, int sip_n) {
+                                            int sip_m, int sip_k, int sip_n, int broadcasted_weight) {
       matmul_kernel<int8_t, int8_t>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
-      lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n);
+      lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight);
 }
 
 int main() {
