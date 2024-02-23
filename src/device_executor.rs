@@ -227,7 +227,7 @@ impl DeviceExecutor {
         let kernel_platform = "scorpio"; 
 
         let unary_functions = vec![
-            "uneg", "uexp", "ulog", "usin", "ucos", "uabs", "usqr", "usqrt", "ursqrt", "ugelu",
+            "uneg", "uexp", "ulog", "usin", "ucos", "uabs", "usqr", "usqrt", "ursqrt", "ugelu", "ugelu_erf",
             "urelu", "utanh", "urecip", "uelu", "usigmoid", "usilu", "uelu",
         ]; 
 

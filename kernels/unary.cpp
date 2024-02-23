@@ -68,6 +68,7 @@ enum UNARY_TYPE {
     UNARY_TYPE_TANH = 15,
     UNARY_TYPE_SIGMOID = 16,
     UNARY_TYPE_RECIP = 17,
+    UNARY_TYPE_GELU_ERF = 18,
     UNARY_TYPE_COPY = 20,
 };
 
@@ -125,6 +126,11 @@ __device__ __forceinline__ void unary_atomic(T* in, T* out, int len, UNARY_TYPE 
     case UNARY_TYPE_GELU:
       {
         gelu(out, in, len);
+        break;
+      }
+    case UNARY_TYPE_GELU_ERF:
+      {
+        gelu(out, in, len); //TODO: gelu with erf
         break;
       }
     case UNARY_TYPE_RELU:
@@ -227,6 +233,7 @@ UNARY_OP(__bf16, vbfloat, usilu_bf16, UNARY_TYPE_SILU)
 UNARY_OP(__bf16, vbfloat, utanh_bf16, UNARY_TYPE_TANH) 
 UNARY_OP(__bf16, vbfloat, usigmoid_bf16, UNARY_TYPE_SIGMOID) 
 UNARY_OP(__bf16, vbfloat, urecip_bf16, UNARY_TYPE_RECIP) 
+UNARY_OP(__bf16, vbfloat, ugelu_erf_bf16, UNARY_TYPE_GELU_ERF)
 
 UNARY_OP(__fp16, vhalf, uneg_f16, UNARY_TYPE_NEG)
 UNARY_OP(__fp16, vhalf, uexp_f16, UNARY_TYPE_EXP)
@@ -243,6 +250,7 @@ UNARY_OP(__fp16, vhalf, usilu_f16, UNARY_TYPE_SILU)
 UNARY_OP(__fp16, vhalf, utanh_f16, UNARY_TYPE_TANH)
 UNARY_OP(__fp16, vhalf, usigmoid_f16, UNARY_TYPE_SIGMOID) 
 UNARY_OP(__fp16, vhalf, urecip_f16, UNARY_TYPE_RECIP)
+UNARY_OP(__fp16, vhalf, ugelu_erf_f16, UNARY_TYPE_GELU_ERF)
 
 
 UNARY_OP(float, vfloat, uneg_f32, UNARY_TYPE_NEG)
@@ -260,6 +268,7 @@ UNARY_OP(float, vfloat, usilu_f32, UNARY_TYPE_SILU)
 UNARY_OP(float, vfloat, utanh_f32, UNARY_TYPE_TANH)
 UNARY_OP(float, vfloat, usigmoid_f32, UNARY_TYPE_SIGMOID) 
 UNARY_OP(float, vfloat, urecip_f32, UNARY_TYPE_RECIP)
+UNARY_OP(float, vfloat, ugelu_erf_f32, UNARY_TYPE_GELU_ERF)
 
 
 template <typename T, typename VT, typename EXTTYPE>

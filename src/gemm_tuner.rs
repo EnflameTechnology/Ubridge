@@ -486,13 +486,15 @@ impl AtenGemmTuner {
                 );
             }
         } else {
-            tune.sip_n = UNIT_SIP_N;
+            tune.sip_n = if info.N/UNIT_SIP_N > 1000 {UNIT_SIP_N*4} else {UNIT_SIP_N};
             tune.sip_m = UNIT_SIP_M;
-            tune.sip_k = K_Align;
+            tune.sip_k = if info.N/UNIT_SIP_N > 1000 {UNIT_SIP_K} else {K_Align};
             let l1_mem_sip_k =
                 (l1_mem / 2 / BPE - tune.sip_m * tune.sip_n - N_Align)
                     / (2 * tune.sip_m + 2 * tune.sip_n);
-            tune.sip_k = align_down(l1_mem_sip_k, UNIT_SIP_K);
+            if l1_mem_sip_k > 0 {
+                tune.sip_k = align_down(l1_mem_sip_k, UNIT_SIP_K);
+            }
 
             set_split_option!(
                 tune,
