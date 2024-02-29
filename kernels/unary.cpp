@@ -39,7 +39,7 @@
 #include <krt/vector_infra.h>
 #include <krt/mmu.h>
 
-#include <acore/atomic_op.h>
+#include <acore/acore_op.h>
 #include "utils.h"
 #include "utils/vector_ex.h"
 using namespace std;

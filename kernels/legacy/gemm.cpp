@@ -22,7 +22,7 @@
 // #include "op_aten_gemm_tuner.h"
 #include "utils.h"
 #include "dot_core_kernels.h"
-#include "include/common/atomic_op.h"
+#include "include/common/acore_op.h"
 using namespace std;
 #define MAX_NUM 1540096 - 1024
 #define TEMPLATE_ALIGN_UP(a, b) (((a + b - 1) / b) * b)

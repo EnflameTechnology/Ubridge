@@ -17,7 +17,7 @@
  * @brief
  *
  * @author  Guoqing Bao
- * @date    2023-12-02 to 2024-02-04
+ * @date    2023-12-02 to 2024-02-29
  * @version V0.1
  * @par     Copyright (c) Enflame Tech Company.
  * @par     History: use custom atomic_where
@@ -31,6 +31,8 @@
 #include <vector>
 #include "tops/tops_runtime.h"
 #include "utils.h"
+#include "tcle.h"
+using namespace tcle;
 using namespace std;
 #define TILE_SIZE AlignDown(((VDMEM_SIZE) / 32), 256)
 
@@ -44,50 +46,53 @@ __device__ __forceinline__ void atomic_where(ID_TYPENAME* ids_ptr, T* src_ptr1, 
 
 }
 
+template <typename T>
+__device__ __forceinline__ void atomic_where_u8(unsigned char* ids_ptr, T* src_ptr1, T* src_ptr2, 
+                                            T* dst_ptr,
+                                            unsigned int elements) {
+  constexpr int vlength = (sizeof(int) / sizeof(T)) * TCLE_MAX_VECTOR_LENGTH;
+  using vtype = typename altivector<T, vlength>::VT;
+  using mask_vtype = typename altivector_to_mask<vtype>::type;
+  using cond_vtype = typename altivector<unsigned char, vlength>::VT;
+
+  tcle::leaptr<vtype> intput_ptr = tcle::simple_leaptr<vtype>(src_ptr1);
+  tcle::leaptr<vtype> other_ptr = tcle::simple_leaptr<vtype>(src_ptr2);
+  tcle::leaptr<vtype> output_ptr = tcle::simple_leaptr<vtype>(dst_ptr);
+
+  int group_num = (elements + vlength - 1) / vlength;
+  cond_vtype cond;
+  mask_vtype mask;
+  vtype casted_cond, v_input, v_other;
+  vtype v0 = (vtype)(0);
+  for (int i = 0; i < group_num; i++) {
+    cond = tcle::load<cond_vtype>((__TCLE_AS__ char *)ids_ptr);
+    ids_ptr += vlength;
+    v_input = intput_ptr.load();
+    v_other = other_ptr.load();
+    casted_cond = cvt<vtype>(cond);
+    mask = (casted_cond == v0);
+    v_input = vsel(mask, v_other, v_input);
+    output_ptr.store(v_input);
+  }
+}
+
 template <typename ID_TYPENAME, typename T>
-__device__ __forceinline__ void where_kernel(ID_TYPENAME* ids, T* in1, T* in2, T* out, const size_t element_num) {
+__device__ void where_kernel(ID_TYPENAME* ids, T* in1, T* in2, T* out, const size_t len) {
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx); 
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNum();
-    // const int BLOCK_SIZE = TILE_SIZE;
-    int N = element_num / TILE_SIZE;
+
     __local__ __valigned__ ID_TYPENAME ids_buffer[TILE_SIZE];
-    __local__ __valigned__ T in_buffer1[TILE_SIZE];
-    __local__ __valigned__ T in_buffer2[TILE_SIZE];
-    __local__ __valigned__ T out_buffer[TILE_SIZE];
+    __local__ __valigned__ T buffer1[TILE_SIZE];
+    __local__ __valigned__ T buffer2[TILE_SIZE];
+    __local__ __valigned__ T bufferO[TILE_SIZE];
+    tops::mdspan ids_buffer_l1(tops::Private, ids_buffer, TILE_SIZE);
+    tops::mdspan buffer1_l1(tops::Private, buffer1, TILE_SIZE);
+    tops::mdspan buffer2_l1(tops::Private, buffer2, TILE_SIZE);
+    tops::mdspan bufferO_l1(tops::Private, bufferO, TILE_SIZE);
 
-    int block_size = TILE_SIZE;
-    int remains = 0;
-    if (N < 1) {
-      N = 1;
-      block_size = element_num;
-    } else if (element_num % TILE_SIZE > 0) {
-      remains = element_num % TILE_SIZE;
-    }
-    tops_dte_ctx_t ctxs_in[3];
-    tops_dte_ctx_t ctx;
-
-    tops_dte_ctx_t ctxs_out;
-    ctxs_in[0].init();
-    ctxs_in[1].init();
-    ctxs_in[2].init();
-    ctxs_out.init();
-    tops::dte_scope s_in0(ctxs_in[0]);
-    tops::dte_scope s_in1(ctxs_in[1]);
-    tops::dte_scope s_in2(ctxs_in[2]);
-
-    tops::dte_scope s_out0(ctxs_out);
-    tops::dte_scope s_out01(ctx);
-
-    tops::mdspan hbm_ids(tops::Global, ids, N, block_size);
-    tops::mdspan hbm_in1(tops::Global, in1, N, block_size);
-    tops::mdspan hbm_in2(tops::Global, in2, N, block_size);
-    tops::mdspan hbm_out(tops::Global, out, N, block_size);
-
-    tops::mdspan l1_ids(tops::Private, ids_buffer, 1, block_size);
-    tops::mdspan l1_in1(tops::Private, in_buffer1, 1, block_size);
-    tops::mdspan l1_in2(tops::Private, in_buffer2, 1, block_size);
-    tops::mdspan l1_out(tops::Private, out_buffer, 1, block_size);
-
+    int N = len;
     int THREAD_STEP = 1;
     int thread_step = 1;
     if (N > MAX_THREADS) {
@@ -100,64 +105,19 @@ __device__ __forceinline__ void where_kernel(ID_TYPENAME* ids, T* in1, T* in2, T
       }
     }
 
-    // printf("N %d, MAX_THREADS %d, THREAD_STEP %d, thread_step %d", N, MAX_THREADS, THREAD_STEP, thread_step);
-
-    for (int i = 0; i < thread_step; i++) {
-      int idx = thread_id * THREAD_STEP + i;
-      if (idx < N) {
-          ctxs_in[0].config_slice(l1_ids, hbm_ids, {0, 0});
-          ctxs_in[0].set_src_offset(0, idx);
-          ctxs_in[0].trigger_and_wait();
-
-          ctxs_in[1].config_slice(l1_in1, hbm_in1, {0, 0});
-          ctxs_in[1].set_src_offset(0, idx);
-          ctxs_in[1].trigger_and_wait();
-
-          ctxs_in[2].config_slice(l1_in2, hbm_in2, {0, 0});
-          ctxs_in[2].set_src_offset(0, idx);
-          ctxs_in[2].trigger_and_wait();
-
-          atomic_where<ID_TYPENAME, T>(ids_buffer, in_buffer1, in_buffer2, out_buffer, block_size);
-
-        // printf("\nInput buffer1: ");
-        // for (int j=0; j<block_size; j++) {
-        //   printf("%.5f ", static_cast<float>(in_buffer1[j]));
-        // }
-        // printf("\nInput buffer2: ");
-        // for (int j=0; j<block_size; j++) {
-        //   printf("%.5f ", static_cast<float>(in_buffer2[j]));
-        // }
-        // printf("\nOut buffer: ");
-        // for (int j=0; j<block_size; j++) {
-        //   printf("%.5f ", static_cast<float>(out_buffer[j]));
-        // }
-
-          ctxs_out.config_deslice(hbm_out, l1_out, {0, 0});
-          ctxs_out.set_dst_offset(0, idx);
-          ctxs_out.trigger_and_wait();
+    for (int i = 0; i < thread_step; i+=TILE_SIZE) {
+      int bufsize = (i + TILE_SIZE < thread_step) ? TILE_SIZE : thread_step - i;
+      int offset = thread_id * THREAD_STEP + i;
+      tops::memcpy(ctx, ids_buffer_l1, tops::mdspan(tops::Global, ids + offset, bufsize));
+      tops::memcpy(ctx, buffer1_l1, tops::mdspan(tops::Global, in1 + offset, bufsize));
+      tops::memcpy(ctx, buffer2_l1, tops::mdspan(tops::Global, in2 + offset, bufsize));
+      if (std::is_same<ID_TYPENAME, u_int8_t>::value && std::is_same<T, float>::value) {
+        atomic_where_u8<float>(reinterpret_cast<unsigned char*>(ids_buffer), reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(bufferO), bufsize);
+      }  else {
+        atomic_where<ID_TYPENAME, T>(ids_buffer, buffer1, buffer2, bufferO, bufsize);
       }
+      tops::memcpy(ctx, tops::mdspan(tops::Global, out + offset, bufsize), tops::mdspan(tops::Private, bufferO, bufsize));
     }
-
-    if (remains > 0 && thread_id == MAX_THREADS - 1) {
-        tops::mdspan srcIds(tops::Global, ids + N * block_size, remains);
-        tops::mdspan src1(tops::Global, in1 + N * block_size, remains);
-        tops::mdspan src2(tops::Global, in2 + N * block_size, remains);
-
-        tops::mdspan l1_ids(tops::Private, ids_buffer, remains);
-        tops::mdspan l1_in1(tops::Private, in_buffer1, remains);
-        tops::mdspan l1_in2(tops::Private, in_buffer2, remains);
-        tops::mdspan l1_out(tops::Private, out_buffer, remains);
-
-        tops::memcpy(ctx, l1_ids, srcIds);
-        tops::memcpy(ctx, l1_in1, src1);
-        tops::memcpy(ctx, l1_in2, src2);
-        atomic_where<ID_TYPENAME, T>(ids_buffer, in_buffer1, in_buffer2, out_buffer, remains);
-
-        tops::mdspan dstOut(tops::Global, out + N * block_size, remains);
-        tops::memcpy(ctx, dstOut, l1_out);
-    }
-
-
 }
 
 #define WHERE_OP(TYPE, ID_TYPE, FN_NAME) \

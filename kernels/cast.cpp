@@ -36,7 +36,7 @@
 #include <krt/dispatch.h>
 #include <krt/leaptr.h>
 #include <krt/vector_infra.h>
-#include <acore/atomic_op.h>
+#include <acore/acore_op.h>
 #include "utils.h"
 using namespace std;
 using namespace tops;

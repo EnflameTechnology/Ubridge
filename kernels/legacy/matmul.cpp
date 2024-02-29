@@ -8,7 +8,7 @@
 #include "utils.h"
 
 // #if __GCU_ARCH__ >= 300
-// #include "include/common/atomic_op.h"
+// #include "include/common/acore_op.h"
 // #include "include/common/binary.h"
 // #endif
 
