@@ -288,12 +288,6 @@ impl DeviceExecutor {
                                 function_map.insert(name, Arc::new(function));
                             }
                         }
-                        for func in &copy_functions {
-                            println!("Load function {}", func);
-                            let function = _module_map[module].get_function(&func).unwrap();
-                            function_map.insert(func.to_string(), Arc::new(function));
-                            
-                        }
                     } else if module == "binary" {
                         for dt in ["bf16", "f16", "f32"] {
                             for func in &binary_functions {
@@ -363,6 +357,12 @@ impl DeviceExecutor {
                         }
                     } else if module == "conv" {
                         for func in &conv_functions {
+                            println!("Load function {}", func);
+                            let function = _module_map[module].get_function(&func).unwrap();
+                            function_map.insert(func.to_string(), Arc::new(function));
+                        }
+                    } else if module == "copy" {
+                        for func in &copy_functions {
                             println!("Load function {}", func);
                             let function = _module_map[module].get_function(&func).unwrap();
                             function_map.insert(func.to_string(), Arc::new(function));
