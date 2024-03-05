@@ -148,6 +148,8 @@ WHERE_OP(double, uint8_t, where_u8_f64)
 WHERE_OP(uint8_t, uint8_t, where_u8_u8)
 WHERE_OP(uint32_t, uint8_t, where_u8_u32)
 WHERE_OP(int64_t, uint8_t, where_u8_i64)
+WHERE_OP(__fp16, uint8_t, where_u8_f16)
+WHERE_OP(__bf16, uint8_t, where_u8_bf16)
 
 int main(void) {
   topsError_t err = topsSuccess;

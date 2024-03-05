@@ -258,7 +258,7 @@ impl DeviceExecutor {
 
         let where_functions = vec!["where_i64_f32", "where_i64_f64", "where_i64_u8", "where_i64_u32", "where_i64_i64",
             "where_u32_f32", "where_u32_f64", "where_u32_u8", "where_u32_u32", "where_u32_i64",
-            "where_u8_f32", "where_u8_f64", "where_u8_u8", "where_u8_u32", "where_u8_i64"];
+            "where_u8_f32", "where_u8_f64", "where_u8_u8", "where_u8_u32", "where_u8_i64", "where_u8_bf16", "where_u8_f16"];
 
         let index_functions = vec!["is_i64_bf16", "is_u32_bf16", "is_u8_bf16", "is_i64_f16", "is_u32_f16",
             "is_u8_f16", "is_i64_f32", "is_i64_f64", "is_i64_u8", "is_i64_u32",
