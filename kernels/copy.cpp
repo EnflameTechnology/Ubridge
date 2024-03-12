@@ -47,7 +47,6 @@ using namespace tops;
 #define PING_PONG_SIZE 2
 #define TILE_SIZE AlignDown(((VDMEM_SIZE) / 32), 256)
 #define GATHER_COPY
-#define SHARE_BUFFER_SIZE 1024 * 1024 * 24 //24MB
 const int COPY_TILESIZE = 128 * 1024;
 const int COPY_L1SIZE = 896 * 1024;
 

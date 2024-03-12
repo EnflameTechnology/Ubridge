@@ -72,6 +72,9 @@ extern "C" __global__ void FN_NAME( \
     const int TILESIZE = 512 * 1024 / sizeof(T); \
     __local__ __valigned__ T buffer1[TILESIZE]; \
     __local__ __valigned__ T buffer2[TILESIZE]; \
+    __shared__ char raw_cache[SHARE_BUFFER_SIZE]; \
+    bool cachable = numel * sizeof(T) < SHARE_BUFFER_SIZE; \
+    T* sharedBuffer = reinterpret_cast<T*>(raw_cache); \
     tops::mdspan buffer_l1(tops::Private, buffer1, TILESIZE); \
     tops::mdspan out_hbm(tops::Global, out, numel); \
     int N = numel; \
@@ -86,10 +89,14 @@ extern "C" __global__ void FN_NAME( \
         } \
       } \
     } \
+    if (thread_id == 0 && cachable) { \
+      tops::memcpy(ctx, tops::mdspan(tops::Shared, sharedBuffer, numel), tops::mdspan(tops::Global, in, numel)); \
+    } \
+    __syncthreads(); \
     for (int i = 0; i < thread_step; i+=TILESIZE) { \
       int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i; \
       int offset = thread_id * THREAD_STEP + i; \
-      tops::memcpy(ctx, buffer_l1, tops::mdspan(tops::Global, in + offset, bufsize)); \
+      tops::memcpy(ctx, buffer_l1, cachable ? tops::mdspan(tops::Shared, sharedBuffer + offset, bufsize) : tops::mdspan(tops::Global, in + offset, bufsize)); \
       ATOMIC_FUNC(buffer2, buffer1, bufsize); \
       tops::deslice(ctx, out_hbm, tops::mdspan(tops::Private, buffer2, bufsize), {offset}); \
     } \
@@ -160,6 +167,9 @@ extern "C" __global__ void FN_NAME( \
     const int TILESIZE = 512 * 1024 / sizeof(T); \
     __local__ __valigned__ T buffer1[TILESIZE]; \
     __local__ __valigned__ T buffer2[TILESIZE]; \
+    __shared__ char raw_cache[SHARE_BUFFER_SIZE]; \
+    bool cachable = numel * sizeof(T) < SHARE_BUFFER_SIZE; \
+    T* sharedBuffer = reinterpret_cast<T*>(raw_cache); \
     tops::mdspan buffer_l1(tops::Private, buffer1, TILESIZE); \
     tops::mdspan out_hbm(tops::Global, out, numel); \
     int N = numel; \
@@ -174,10 +184,14 @@ extern "C" __global__ void FN_NAME( \
         } \
       } \
     } \
+    if (thread_id == 0 && cachable) { \
+      tops::memcpy(ctx, tops::mdspan(tops::Shared, sharedBuffer, numel), tops::mdspan(tops::Global, in, numel)); \
+    } \
+    __syncthreads(); \
     for (int i = 0; i < thread_step; i+=TILESIZE) { \
       int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i; \
       int offset = thread_id * THREAD_STEP + i; \
-      tops::memcpy(ctx, buffer_l1, tops::mdspan(tops::Global, in + offset, bufsize)); \
+      tops::memcpy(ctx, buffer_l1, cachable ? tops::mdspan(tops::Shared, sharedBuffer + offset, bufsize) :tops::mdspan(tops::Global, in + offset, bufsize)); \
       ATOMIC_FUNC(buffer2, buffer1, bufsize, extValue); \
       tops::deslice(ctx, out_hbm, tops::mdspan(tops::Private, buffer2, bufsize), {offset}); \
     } \

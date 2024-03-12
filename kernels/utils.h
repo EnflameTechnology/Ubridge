@@ -18,6 +18,8 @@ constexpr int MAX_DRD_SIP_NUM = 12;
 constexpr int MAX_SCP_CLUSTER_NUM = 1;
 constexpr int MAX_SCP_SIP_NUM = 12;
 constexpr int SIP_VECTOR_LENGTH = 128;
+#define SHARE_BUFFER_SIZE 1024 * 1024 * 24 //24MB
+
 #if defined(__GCU_ARCH__) && (__GCU_ARCH__ == 200)
   constexpr static int VDMEM_SIZE = 0x80000;
 #elif defined(__AGCU_ARCH__) && (__AGCU_ARCH__ == 200)
@@ -48,6 +50,20 @@ using IndexType = size_t;
 #endif
 #else
 using IndexType = size_t;
+#endif
+
+#ifndef __UNDERLYING_TYPE__
+#define __UNDERLYING_TYPE__
+  template <typename T> struct UnderlyingType;
+  template <> struct UnderlyingType<float> { using type = float; };
+  template <> struct UnderlyingType<tops::half> { using type = __fp16; };
+  template <> struct UnderlyingType<tops::bfloat16> { using type = __bf16; };
+  template <> struct UnderlyingType<int32_t> { using type = int; };
+  template <> struct UnderlyingType<int16_t> { using type = short; };
+  template <> struct UnderlyingType<int8_t> { using type = char; };
+  template <> struct UnderlyingType<uint32_t> { using type =  unsigned int; };
+  template <> struct UnderlyingType<uint16_t> { using type = unsigned short; };
+  template <> struct UnderlyingType<uint8_t> { using type = unsigned char; };
 #endif
 
 template <typename RET_TYPE>

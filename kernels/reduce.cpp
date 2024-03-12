@@ -50,6 +50,7 @@ __forceinline__ __device__ void reduce_kernel(T* in, T* out, const size_t elemen
     const int N = element_num / reduce_dim_size;
     __local__ __valigned__ T in_buffer[41984];
     __local__ __valigned__ T out_buffer[41984];
+    __shared__ char raw_cache[SHARE_BUFFER_SIZE];
 
     tops_dte_ctx_t ctxs_in;
     tops_dte_ctx_t ctxs_out;
@@ -58,7 +59,17 @@ __forceinline__ __device__ void reduce_kernel(T* in, T* out, const size_t elemen
     tops::dte_scope s_in0(ctxs_in);
     tops::dte_scope s_out0(ctxs_out);
 
+    bool cachable = element_num * sizeof(T) < SHARE_BUFFER_SIZE;
+    T* sharedBuffer = reinterpret_cast<T*>(raw_cache);
+
+    if (thread_id == 0 && cachable) {
+      tops::memcpy(ctxs_in, tops::mdspan(tops::Shared, sharedBuffer, element_num), tops::mdspan(tops::Global, in, element_num));
+    }
+    __syncthreads();
+
     tops::mdspan hbm_in(tops::Global, in, N, reduce_dim_size);
+    tops::mdspan shared_in(tops::Shared, sharedBuffer, N, reduce_dim_size);
+
     tops::mdspan thread_in0(tops::Private, in_buffer, 1, reduce_dim_size);
 
     tops::mdspan hbm_out(tops::Global, out, N, 1);
@@ -80,7 +91,7 @@ __forceinline__ __device__ void reduce_kernel(T* in, T* out, const size_t elemen
     for (int i = 0; i < thread_step; i++) {
       int idx = thread_id * THREAD_STEP + i;
       if (idx < N) {
-          ctxs_in.config_slice(thread_in0, hbm_in, {0, 0});
+          ctxs_in.config_slice(thread_in0, cachable ? shared_in : hbm_in, {0, 0});
           ctxs_in.set_src_offset(0, idx);
           ctxs_in.trigger_and_wait();
           if(tp == REDUCE_MIN) {
@@ -131,6 +142,7 @@ __device__ void softmax_kernel(T *input, T* output,
     __local__ __valigned__ float buffer1[TILE_SIZE];
     __local__ __valigned__ float buffer2[TILE_SIZE];
     __local__ __valigned__ T bufferTmp[TILE_SIZE];
+    __shared__ char raw_cache[SHARE_BUFFER_SIZE];
 
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx);
@@ -151,6 +163,14 @@ __device__ void softmax_kernel(T *input, T* output,
       }
     }
 
+    bool cachable = chunks * last_dim_size * sizeof(T) < SHARE_BUFFER_SIZE;
+    T* sharedBuffer = reinterpret_cast<T*>(raw_cache);
+
+    if (thread_id == 0 && cachable) {
+      tops::memcpy(ctx, tops::mdspan(tops::Shared, sharedBuffer, chunks * last_dim_size), tops::mdspan(tops::Global, input, chunks * last_dim_size));
+    }
+    __syncthreads();
+
     // printf("N %d, MAX_THREADS %d, THREAD_STEP %d, thread_step %d, chunks %lu, last_dim_size %lu \n", 
     //     N, MAX_THREADS, THREAD_STEP, thread_step, chunks, last_dim_size);
     //yi = exp(xi - max)/(sum(exp(xi - max))
@@ -162,8 +182,9 @@ __device__ void softmax_kernel(T *input, T* output,
       // printf("offset %lu\n", offset * last_dim_size);
       tops::mdspan l1_input(tops::Private, bufferTmp, last_dim_size);
       tops::mdspan hbm_input(tops::Global, input + offset * last_dim_size, last_dim_size);
+      tops::mdspan shared_input(tops::Shared, sharedBuffer + offset * last_dim_size, last_dim_size);
 
-      tops::memcpy(ctx, l1_input, hbm_input);
+      tops::memcpy(ctx, l1_input, cachable ? shared_input : hbm_input);
       convert<float, T>(reinterpret_cast<float*>(buffer1), reinterpret_cast<T*>(bufferTmp), last_dim_size);
       
       atomic_reduce_max(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), last_dim_size);
@@ -221,7 +242,7 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias,
     __local__ __valigned__ T bufferOut[TILE_SIZE];
     __local__ __valigned__ float bufTmp[256];
     __local__ __valigned__ float bufTmp1[256];
-
+    __shared__ char raw_cache[SHARE_BUFFER_SIZE];
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx);
 
@@ -246,10 +267,18 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias,
     tops::mdspan hbm_weight(tops::Global, weight, last_dims_size);
     tops::memcpy(ctx, l1_weight, hbm_weight);
 
+    bool cachable = chunks * last_dims_size * sizeof(T) < SHARE_BUFFER_SIZE;
+    T* sharedBuffer = reinterpret_cast<T*>(raw_cache);
+
     if (affine >0) {
       tops::mdspan hbm_bias(tops::Global, bias, last_dims_size);
       tops::memcpy(ctx, l1_bias, hbm_bias);
     }
+
+    if (thread_id == 0 && cachable) {
+      tops::memcpy(ctx, tops::mdspan(tops::Shared, sharedBuffer, chunks * last_dims_size), tops::mdspan(tops::Global, input, chunks * last_dims_size));
+    }
+    __syncthreads();
 
     // printf("N %d, MAX_THREADS %d, THREAD_STEP %d, thread_step %d, chunks %lu, last_dims_size %lu remove_mean %d, affine %d\n", 
     //     N, MAX_THREADS, THREAD_STEP, thread_step, chunks, last_dims_size, remove_mean, affine);
@@ -267,8 +296,9 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias,
       // printf("offset %lu\n", offset * last_dims_size);
       tops::mdspan l1_input(tops::Private, bufferTmp, last_dims_size);
       tops::mdspan hbm_input(tops::Global, input + offset * last_dims_size, last_dims_size);
+      tops::mdspan shared_input(tops::Shared, sharedBuffer + offset * last_dims_size, last_dims_size);
 
-      tops::memcpy(ctx, l1_input, hbm_input);
+      tops::memcpy(ctx, l1_input, cachable ? shared_input : hbm_input);
       if (remove_mean == 0) {
         convert<float, T>(reinterpret_cast<float*>(buffer2), reinterpret_cast<T*>(bufferTmp), last_dims_size);
       } else {

@@ -51,6 +51,9 @@ __device__ void cast_kernel(T* in, OUTT* out, int len) {
 
     __local__ __valigned__ T buffer1[TILE_SIZE];
     __local__ __valigned__ OUTT buffer2[TILE_SIZE];
+    __shared__ char raw_cache[SHARE_BUFFER_SIZE]; 
+    bool cachable = len * sizeof(T) < SHARE_BUFFER_SIZE; 
+    T* sharedBuffer = reinterpret_cast<T*>(raw_cache); 
     tops::mdspan buffer_l1(tops::Private, buffer1, TILE_SIZE);
 
     tops::mdspan out_hbm(tops::Global, out, len);
@@ -67,10 +70,17 @@ __device__ void cast_kernel(T* in, OUTT* out, int len) {
       }
     }
 
+    if (thread_id == 0 && cachable) { 
+      tops::memcpy(ctx, tops::mdspan(tops::Shared, sharedBuffer, len), tops::mdspan(tops::Global, in, len)); 
+    } 
+    __syncthreads(); 
+
     for (int i = 0; i < thread_step; i+=TILE_SIZE) {
       int bufsize = (i + TILE_SIZE < thread_step) ? TILE_SIZE : thread_step - i;
       int offset = thread_id * THREAD_STEP + i;
-      tops::memcpy(ctx, buffer_l1, tops::mdspan(tops::Global, in + offset, bufsize));
+      tops::mdspan shared_in(tops::Shared, sharedBuffer + offset, bufsize);
+      tops::mdspan hbm_in(tops::Global, in + offset, bufsize);
+      tops::memcpy(ctx, buffer_l1, cachable ? shared_in : hbm_in);
       convert<OUTT, T>(reinterpret_cast<OUTT*>(buffer2), buffer1, bufsize);
       tops::memcpy(ctx, tops::mdspan(tops::Global, out + offset, bufsize), tops::mdspan(tops::Private, buffer2, bufsize));
     }
