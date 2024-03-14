@@ -60,6 +60,8 @@ __forceinline__ __device__ void  square(__bf16* out, __bf16* in,
     mul(out, in, in, len);
 }
 
+
+#if 0
 #define UNARY_OP(T, FN_NAME, ATOMIC_FUNC) \
 extern "C" __global__ void FN_NAME( \
     const size_t numel, \
@@ -101,6 +103,116 @@ extern "C" __global__ void FN_NAME( \
       tops::deslice(ctx, out_hbm, tops::mdspan(tops::Private, buffer2, bufsize), {offset}); \
     } \
 } \
+
+#endif
+
+
+#define PING_PONG_SIZE 2
+#define TILE_SIZE AlignDown(((VDMEM_SIZE) / 32), 256)
+
+#define UNARY_OP(T, FN_NAME, ATOMIC_FUNC) \
+extern "C" __global__ void FN_NAME( \
+    const size_t numel, \
+    T *in, \
+    T *out) {\
+  tops_dte_ctx_t ctx; \
+  tops::dte_scope s(ctx); \ 
+  tops_dte_ctx_t ctxs_in[PING_PONG_SIZE];\
+  tops_dte_ctx_t ctxs_out[PING_PONG_SIZE];\
+  tops::event evs_in[PING_PONG_SIZE];\
+  tops::event evs_out[PING_PONG_SIZE];\
+  __local__ __valigned__ T in_buffer[PING_PONG_SIZE][TILE_SIZE];\
+  __local__ __valigned__ T out_buffer[PING_PONG_SIZE][TILE_SIZE];\
+  int N = numel;\
+  tops::mdspan output(tops::Global, out, N);\
+  int thread_num = GetThreadNum();\
+  int thread_id = GetThreadIdx();\
+  int thread_off_leading = thread_id * TILE_SIZE;\
+  int thread_len_leading = N - thread_off_leading >= TILE_SIZE ? TILE_SIZE : N - thread_off_leading;\
+  int thread_step = TILE_SIZE * thread_num;\
+  int thread_off_leading_next = thread_off_leading + thread_step;\
+  int thread_remain_leading = N - thread_off_leading_next;\
+  int thread_len_leading_next = thread_remain_leading >= TILE_SIZE ? TILE_SIZE : thread_remain_leading;\
+  int pp_flag = 0;\
+  tops::dte_scope s_in0(ctxs_in[0]);\
+  tops::dte_scope s_in1(ctxs_in[1]);\
+  tops::dte_scope s_out0(ctxs_out[0]);\
+  tops::dte_scope s_out1(ctxs_out[1]);\
+  if (thread_len_leading > 0) {\
+    ctxs_in[0].config_memcpy(\
+        tops::mdspan(tops::Private, in_buffer[pp_flag], thread_len_leading),\
+        tops::mdspan(tops::Global, in + thread_off_leading,\
+                     thread_len_leading));\
+    ctxs_out[0].config_memcpy(\
+        tops::mdspan(tops::Global, out + thread_off_leading,\
+                     thread_len_leading),\
+        tops::mdspan(tops::Private, out_buffer[pp_flag], thread_len_leading));\
+    evs_in[pp_flag] = ctxs_in[pp_flag].trigger();\
+  }\
+  if (thread_len_leading_next > 0) {\
+    ctxs_in[1].config_memcpy(\
+        tops::mdspan(tops::Private, in_buffer[1],\
+                     thread_len_leading_next),\
+        tops::mdspan(tops::Global, in + thread_off_leading_next,\
+                     thread_len_leading_next));\
+    ctxs_out[1].config_memcpy(\
+        tops::mdspan(tops::Global, out + thread_off_leading_next,\
+                     thread_len_leading_next),\
+        tops::mdspan(tops::Private, out_buffer[1],\
+                     thread_len_leading_next));\
+  }\
+  for (int i = thread_off_leading; i < N; i += thread_step) {\
+    int pp_flag_next = 1 - pp_flag;\
+    int pp_flag_prev = 1 - pp_flag;\
+    int thread_off_next = i + thread_step;\
+    int thread_remain_next = N - thread_off_next;\
+    int thread_len = N - i >= TILE_SIZE ? TILE_SIZE : N - i;\
+    int thread_len_next = thread_remain_next >= TILE_SIZE ? TILE_SIZE : thread_remain_next;\
+    if (thread_len_next > 0) {\
+      evs_in[pp_flag_next] = ctxs_in[pp_flag_next].trigger();\
+    }\
+    int thread_off_next2 = i + thread_step * 2;\
+    int thread_remain_next2 = N - thread_off_next2;\
+    int thread_len_next2 =\
+        thread_remain_next2 >= TILE_SIZE ? TILE_SIZE : thread_remain_next2;\
+    if (thread_len > 0) {\
+      evs_in[pp_flag].wait();\
+    }\
+    if (thread_len_next2 > 0) {\
+      ctxs_in[pp_flag].config_memcpy(\
+        tops::mdspan(tops::Private, in_buffer[pp_flag],\
+                     thread_len_next2),\
+        tops::mdspan(tops::Global, in + thread_off_next2,\
+                     thread_len_next2));\
+    }\
+    if (thread_len > 0) {\
+      ATOMIC_FUNC(out_buffer[pp_flag], in_buffer[pp_flag], \
+                               thread_len);\
+      evs_out[pp_flag] = ctxs_out[pp_flag].trigger();\
+    }\
+    if (i != thread_off_leading) {\
+      int thread_off_prev = i - thread_step;\
+      int thread_remain_prev = N - thread_off_prev;\
+      int thread_len_prev =\
+          thread_remain_prev >= TILE_SIZE ? TILE_SIZE : thread_remain_prev;\
+      if (thread_len_prev > 0) {\
+        evs_out[pp_flag_prev].wait();\
+      }\
+      if (thread_len_next > 0) {\
+        ctxs_out[pp_flag_prev].config_memcpy(\
+        tops::mdspan(tops::Global, out + thread_off_next,\
+                     thread_len_next),\
+        tops::mdspan(tops::Private, out_buffer[pp_flag_prev],\
+                     thread_len_next));\
+      }\
+    }\
+    pp_flag = 1 - pp_flag;\
+  }\
+  if (thread_len_leading > 0) {\
+    evs_out[1 - pp_flag].wait();\
+  }\
+}\
+
 
 UNARY_OP(__bf16, uneg_bf16, neg)
 UNARY_OP(__bf16, uexp_bf16, exp)
@@ -185,13 +297,17 @@ extern "C" __global__ void FN_NAME( \
       } \
     } \
     if (thread_id == 0 && cachable) { \
-      tops::memcpy(ctx, tops::mdspan(tops::Shared, sharedBuffer, numel), tops::mdspan(tops::Global, in, numel)); \
+      tops::mdspan shared_in(tops::Shared, sharedBuffer, numel);\
+      tops::mdspan hbm_in(tops::Global, in, numel);\
+      tops::memcpy(ctx, shared_in, hbm_in); \
     } \
     __syncthreads(); \
     for (int i = 0; i < thread_step; i+=TILESIZE) { \
       int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i; \
       int offset = thread_id * THREAD_STEP + i; \
-      tops::memcpy(ctx, buffer_l1, cachable ? tops::mdspan(tops::Shared, sharedBuffer + offset, bufsize) :tops::mdspan(tops::Global, in + offset, bufsize)); \
+      tops::mdspan shared_in(tops::Shared, sharedBuffer + offset, bufsize);\
+      tops::mdspan hbm_in(tops::Global, in + offset, bufsize);\
+      tops::memcpy(ctx, buffer_l1, cachable ? shared_in : hbm_in); \
       ATOMIC_FUNC(buffer2, buffer1, bufsize, extValue); \
       tops::deslice(ctx, out_hbm, tops::mdspan(tops::Private, buffer2, bufsize), {offset}); \
     } \

@@ -60,7 +60,7 @@ __device__ __forceinline__ void matmul_kernel(lhs_t *lhs, rhs_t *rhs, rhs_t *out
       int lhs_multicore, int rhs_multicore, int batch_multicore,
       int lhs_transpose, int rhs_transpose,
       float alpha, float beta, float addmm_beta, 
-      int sip_m, int sip_k, int sip_n, int broadcasted_weight, char* buffer_sip, char* raw_cache) {
+      int sip_m, int sip_k, int sip_n, int broadcasted_weight, char* buffer_sip) {
   int thread_num = GetThreadNum();
   int thread_id = GetThreadIdx();
   int sip_cnt_raw = thread_num;
@@ -557,7 +557,7 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
       int lhs_multicore, int rhs_multicore, int batch_multicore,
       int lhs_transpose, int rhs_transpose,
       float alpha, float beta, float addmm_beta, 
-      int sip_m, int sip_k, int sip_n, int broadcasted_weight, char* buffer_sip, char* raw_cache) {
+      int sip_m, int sip_k, int sip_n, int broadcasted_weight, char* buffer_sip) {
   int thread_num = GetThreadNum();
   int thread_id = GetThreadIdx();
   int sip_cnt_raw = thread_num;
@@ -665,13 +665,6 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
   tops::mdspan hbm_lhs(tops::Global, lhs, hbm_lhs_shape);
   tops::mdspan hbm_rhs(tops::Global, rhs, hbm_rhs_shape);
   tops::mdspan hbm_out(tops::Global, out, hbm_out_shape);
-  int right_size = hbm_rhs_shape[1] * hbm_rhs_shape[2] * hbm_rhs_shape[3];
-  tops::mdspan cached_rhs(tops::Shared, reinterpret_cast<rhs_t*>(raw_cache), hbm_rhs_shape);
-  bool weight_cache = right_size * sizeof(rhs_t) < SHARE_BUFFER_SIZE;
-  if (thread_id == 0 && weight_cache) {
-    tops::memcpy(dte_cache, cached_rhs, hbm_rhs);
-  }
-  __syncthreads();
   // tops::mdspan hbm_pre_gelu(tops::Global, pre_gelu, hbm_out_shape);
   // tops::mdspan hbm_bias(tops::Global, bias, N);
   // tops::mdspan hbm_scale(tops::Global, scale, N);
@@ -810,12 +803,12 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
 
       if (need_trans_rhs) {
         e_rhs_trans_0 =
-            tops::slice_async(dte_rhs_trans[0], private_rhs0_trans, weight_cache ? cached_rhs: hbm_rhs,
+            tops::slice_async(dte_rhs_trans[0], private_rhs0_trans, hbm_rhs,
                               {0, r_batch_offset, n_hbm_offset, 0});
         event_rhs0 = tops::transpose_async(dte_rhs[0], private_rhs0,
                                            private_rhs0_trans, {0, 1, 3, 2});
       } else {
-        event_rhs0 = tops::slice_async(dte_rhs[0], private_rhs0, weight_cache ? cached_rhs: hbm_rhs,
+        event_rhs0 = tops::slice_async(dte_rhs[0], private_rhs0, hbm_rhs,
                                        {0, r_batch_offset, 0, n_hbm_offset});
       }
       // load bias, scale
@@ -968,7 +961,7 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
 
               if (need_trans_rhs) {
                 e_rhs_trans_0 = tops::slice_async(
-                    dte_rhs_trans[0], *next_private_rhs_trans, weight_cache ? cached_rhs: hbm_rhs,
+                    dte_rhs_trans[0], *next_private_rhs_trans, hbm_rhs,
                     {0, r_batch_offset, next_subn_offset_global,
                      next_subk_offset_global});
                 next_event_rhs = tops::transpose_async(
@@ -976,7 +969,7 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
                     {0, 1, 3, 2});
               } else {
                 next_event_rhs =
-                    tops::slice_async(dte_rhs[0], *next_private_rhs, weight_cache ? cached_rhs: hbm_rhs,
+                    tops::slice_async(dte_rhs[0], *next_private_rhs, hbm_rhs,
                                       {0, r_batch_offset, next_subk_offset_global,
                                        next_subn_offset_global});
               }
@@ -1054,9 +1047,8 @@ extern "C" __global__ void matmul_f32(float *in_a, float *in_b, float *out,
                                             float alpha, float beta, float addmm_beta, 
                                             int sip_m, int sip_k, int sip_n, int broadcasted_weight) {
     __local__ __valigned__ char buffer_sip[VDMEM_SIZE];
-    __shared__ char raw_cache[SHARE_BUFFER_SIZE];
     matmul_kernel<float, float>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip, raw_cache);
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);
 }
 
 extern "C" __global__ void matmul_f16(tops::half *in_a, tops::half *in_b, tops::half *out,  
@@ -1067,16 +1059,15 @@ extern "C" __global__ void matmul_f16(tops::half *in_a, tops::half *in_b, tops::
                                                 float alpha, float beta, float addmm_beta, 
                                                 int sip_m, int sip_k, int sip_n, int broadcasted_weight) {
     __local__ __valigned__ char buffer_sip[VDMEM_SIZE];
-    __shared__ char raw_cache[SHARE_BUFFER_SIZE];
     if (sip_m % 64 == 0 || input_m % 64 == 0)
       matmul_kernel_aligned<tops::half, tops::half, 64>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip, raw_cache);
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);
     else if (sip_m % 32 == 0 || input_m % 32 == 0)
       matmul_kernel_aligned<tops::half, tops::half, 32>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip, raw_cache);
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);
     else
       matmul_kernel<tops::half, tops::half>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip, raw_cache);
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);
 }
 
 
@@ -1090,16 +1081,15 @@ extern "C" __global__ void matmul_bf16(tops::bfloat *in_a,
                                                   float alpha, float beta, float addmm_beta, 
                                                   int sip_m, int sip_k, int sip_n, int broadcasted_weight) {
     __local__ __valigned__ char buffer_sip[VDMEM_SIZE];
-    __shared__ char raw_cache[SHARE_BUFFER_SIZE];
     if (sip_m % 64 == 0 || input_m % 64 == 0)
       matmul_kernel_aligned<tops::bfloat, tops::bfloat, 64>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip, raw_cache);
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);
     else if (sip_m % 32 == 0 || input_m % 32 == 0)
       matmul_kernel_aligned<tops::bfloat, tops::bfloat, 32>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip, raw_cache);
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);
     else
       matmul_kernel<tops::bfloat, tops::bfloat>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip, raw_cache);
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);
 }
 
 extern "C" __global__ void matmul_i8(int8_t *in_a, int8_t *in_b,
@@ -1111,9 +1101,8 @@ extern "C" __global__ void matmul_i8(int8_t *in_a, int8_t *in_b,
                                             float alpha, float beta, float addmm_beta, 
                                             int sip_m, int sip_k, int sip_n, int broadcasted_weight) {
     __local__ __valigned__ char buffer_sip[VDMEM_SIZE];
-    __shared__ char raw_cache[SHARE_BUFFER_SIZE];
     matmul_kernel<int8_t, int8_t>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip, raw_cache);
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);
 }
 
 int main() {

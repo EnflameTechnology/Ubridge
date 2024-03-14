@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <tops.h>
 #include <tops/half.h>
+#include <tops/bfloat.h>
 #include <algorithm>
 #include <vector>
 #include "tops/tops_runtime.h"
@@ -41,7 +42,7 @@ __device__ __forceinline__ void index_select_kernel(const size_t id_numel,
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNum();
     int N = id_numel;
-    __local__ __valigned__ ID_TYPENAME ids_buffer[4096];
+    __local__ __valigned__ ID_TYPENAME ids_buffer[40960];
 
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx);

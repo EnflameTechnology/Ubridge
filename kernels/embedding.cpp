@@ -137,11 +137,11 @@ __device__ void rope(T* query, T* key, float* cos_sin,
         }
       }
     }
-    __local__ __valigned__ float bufCosSin[1024 * 4];
-    __local__ __valigned__ T bufQuery[1024 * 16];
-    __local__ __valigned__ T bufKey[1024 * 16];
-    __local__ __valigned__ float bufQueryf32[1024 * 16];
-    __local__ __valigned__ float bufKeyf32[1024 * 16];
+    __local__ __valigned__ float bufCosSin[1024 * 64];
+    __local__ __valigned__ T bufQuery[1024 * 64];
+    __local__ __valigned__ T bufKey[1024 * 64];
+    __local__ __valigned__ float bufQueryf32[1024 * 64];
+    __local__ __valigned__ float bufKeyf32[1024 * 64];
 
     tops::mdspan cos_sin_l1(tops::Private, bufCosSin, hidden_size);
     tops::mdspan query_l1(tops::Private, bufQuery, q_stride);
