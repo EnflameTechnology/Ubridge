@@ -70,7 +70,7 @@ __device__ void cast_kernel(T* in, OUTT* out, int len) {
       }
     }
 
-    if (thread_id == 0 && cachable) { 
+    if (GetThreadIdxInBlock() == 0 && cachable) { 
       tops::memcpy(ctx, tops::mdspan(tops::Shared, sharedBuffer, len), tops::mdspan(tops::Global, in, len)); 
     } 
     __syncthreads(); 

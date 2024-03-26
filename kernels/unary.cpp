@@ -91,7 +91,7 @@ extern "C" __global__ void FN_NAME( \
         } \
       } \
     } \
-    if (thread_id == 0 && cachable) { \
+    if (GetThreadIdxInBlock() == 0 && cachable) { \
       tops::memcpy(ctx, tops::mdspan(tops::Shared, sharedBuffer, numel), tops::mdspan(tops::Global, in, numel)); \
     } \
     __syncthreads(); \
@@ -296,7 +296,7 @@ extern "C" __global__ void FN_NAME( \
         } \
       } \
     } \
-    if (thread_id == 0 && cachable) { \
+    if (GetThreadIdxInBlock() == 0 && cachable) { \
       tops::mdspan shared_in(tops::Shared, sharedBuffer, numel);\
       tops::mdspan hbm_in(tops::Global, in, numel);\
       tops::memcpy(ctx, shared_in, hbm_in); \

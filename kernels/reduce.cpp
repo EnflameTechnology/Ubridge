@@ -62,7 +62,7 @@ __forceinline__ __device__ void reduce_kernel(T* in, T* out, const size_t elemen
     bool cachable = element_num * sizeof(T) < SHARE_BUFFER_SIZE;
     T* sharedBuffer = reinterpret_cast<T*>(raw_cache);
 
-    if (thread_id == 0 && cachable) {
+    if (GetThreadIdxInBlock() == 0 && cachable) {
       tops::memcpy(ctxs_in, tops::mdspan(tops::Shared, sharedBuffer, element_num), tops::mdspan(tops::Global, in, element_num));
     }
     __syncthreads();
@@ -166,7 +166,7 @@ __device__ void softmax_kernel(T *input, T* output,
     bool cachable = chunks * last_dim_size * sizeof(T) < SHARE_BUFFER_SIZE;
     T* sharedBuffer = reinterpret_cast<T*>(raw_cache);
 
-    if (thread_id == 0 && cachable) {
+    if (GetThreadIdxInBlock() == 0 && cachable) {
       tops::memcpy(ctx, tops::mdspan(tops::Shared, sharedBuffer, chunks * last_dim_size), tops::mdspan(tops::Global, input, chunks * last_dim_size));
     }
     __syncthreads();
@@ -275,7 +275,7 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias,
       tops::memcpy(ctx, l1_bias, hbm_bias);
     }
 
-    if (thread_id == 0 && cachable) {
+    if (GetThreadIdxInBlock() == 0 && cachable) {
       tops::memcpy(ctx, tops::mdspan(tops::Shared, sharedBuffer, chunks * last_dims_size), tops::mdspan(tops::Global, input, chunks * last_dims_size));
     }
     __syncthreads();
