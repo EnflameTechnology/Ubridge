@@ -34,8 +34,6 @@
 #include "utils.h"
 using namespace std;
 
-#define SHARE_BUFFER_SIZE 1024 * 1024 * 24 //24MB
-__shared__ char raw_cache[SHARE_BUFFER_SIZE];
 // Naive implementation of conv1d.
 template <typename T, typename A>
 __device__ void conv1d(
@@ -55,6 +53,7 @@ __device__ void conv1d(
     __local__ __valigned__ size_t infobuf[20];
     __local__ __valigned__ T kernelbuf[1024 * 4];
     __local__ __valigned__ T dstbuf[1024 * 128];
+    __shared__ char raw_cache[SHARE_BUFFER_SIZE];
 
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx);
@@ -93,10 +92,10 @@ __device__ void conv1d(
     int insize = b_size * c_in * l_in;
     bool cacheable = insize * sizeof(T) < SHARE_BUFFER_SIZE;
     if (!cacheable) {
-      if (thread_id == 0) {
-        printf("in [b_size (%lu), c_in (%lu), l_in (%lu)], out [c_out (%lu), c_in (%lu), k_size (%lu)]\n", b_size, c_in, l_in, c_out, c_in, k_size);
-        printf("Unable to process conv1d because of the input size %d exceed l2 buffer!\n", insize);
-      }
+      // if (thread_id == 0) {
+      //   printf("in [b_size (%lu), c_in (%lu), l_in (%lu)], out [c_out (%lu), c_in (%lu), k_size (%lu)]\n", b_size, c_in, l_in, c_out, c_in, k_size);
+      //   printf("Unable to process conv1d because of the input size %d exceed l2 buffer!\n", insize);
+      // }
       return;
     }
     T* src_cached = reinterpret_cast<T*>(raw_cache);
@@ -157,4 +156,136 @@ CONV1D_OP(uint32_t, uint32_t, conv1d_u32)
 CONV1D_OP(__bf16, float, conv1d_bf16)
 CONV1D_OP(__fp16, float, conv1d_f16)
 
+
+// Naive implementation of conv2d.
+template <typename T, typename A>
+__device__ void conv2d(
+    const size_t src_numel,
+    const size_t w_out,
+    const size_t h_out,
+    const size_t stride,
+    const size_t padding,
+    const size_t dilation,
+    size_t *info,
+    T *src,
+    T *kernel,
+    T *dst
+) {
+  // const size_t dst_i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    __local__ __valigned__ size_t infobuf[20];
+    __local__ __valigned__ T kernelbuf[1024 * 16];
+    __local__ __valigned__ T dstbuf[1024 * 128];
+    __shared__ char raw_cache[SHARE_BUFFER_SIZE];
+
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx);
+    tops::memcpy(ctx, tops::mdspan(tops::Private, infobuf, 16), 
+                tops::mdspan(tops::Global, info, 16));
+
+  // src: (b_size, c_in, h_in, w_in)
+  // k: (c_out, c_in, h_k, w_k)
+    const size_t *src_dims = infobuf;
+    const size_t *src_s = infobuf + 4;
+    const size_t *k_dims = infobuf + 8;
+    const size_t *k_s = infobuf + 12;
+    const size_t h_k = k_dims[2];
+    const size_t w_k = k_dims[3];
+    const size_t c_out = k_dims[0];
+    const size_t c_in = src_dims[1];
+    const size_t h_in = src_dims[2];
+    const size_t w_in = src_dims[3];
+    const size_t b_size = src_dims[0];
+    int insize = b_size * c_in * h_in * w_in;
+    int ksize = c_out * c_in * h_k * w_k;
+    bool cacheable = (insize + ksize) * sizeof(T) < SHARE_BUFFER_SIZE;
+    if (!cacheable) {
+      return;
+    }
+
+    int thread_id = GetThreadIdx();
+    int MAX_THREADS = GetThreadNum();
+    int N = b_size * c_out * w_out * h_out;
+
+    int THREAD_STEP = 1;
+    int thread_step = 1;
+    if (N > MAX_THREADS) {
+      THREAD_STEP = N / MAX_THREADS;
+      thread_step = THREAD_STEP;
+      if (N % MAX_THREADS != 0) {
+        if (thread_id == MAX_THREADS - 1) {
+          thread_step += N % MAX_THREADS; //last thread also process remains
+        }
+      }
+    }
+
+    T* src_cached = reinterpret_cast<T*>(raw_cache);
+    T* kernel_cached = src_cached + insize;
+
+    if (thread_id == 0) {
+        ctx.config_memcpy(
+          tops::mdspan(tops::Shared, src_cached, insize),
+          tops::mdspan(tops::Global, src, insize));
+        ctx.trigger_and_wait();
+        tops::memcpy(ctx, tops::mdspan(tops::Shared, kernel_cached, ksize), 
+        tops::mdspan(tops::Global, kernel, ksize));
+    }
+
+    __syncthreads();
+    for (int i = 0; i < thread_step; i++) {
+      int dst_i = thread_id * THREAD_STEP + i;
+      if (dst_i < N) {
+          const size_t b_idx = dst_i / (w_out * h_out * c_out);
+          const size_t dst_c_idx = (dst_i / (w_out * h_out)) % c_out;
+          // NCHW layout.
+          const size_t dst_h = (dst_i / w_out) % h_out;
+          const size_t dst_w = dst_i % w_out;
+
+          const size_t src_idx0 = b_idx * src_s[0];
+          A d = 0;
+          for (size_t w_offset = 0; w_offset < w_k; ++w_offset) {
+            size_t src_w = stride * dst_w + w_offset * dilation;
+            if (src_w < padding || src_w >= w_in + padding) {
+              continue;
+            }
+            src_w -= padding;
+            for (size_t h_offset = 0; h_offset < h_k; ++h_offset) {
+              size_t src_h = stride * dst_h + h_offset * dilation;
+              if (src_h < padding || src_h >= h_in + padding) {
+                continue;
+              }
+              src_h -= padding;
+              for (size_t src_c_idx = 0; src_c_idx < c_in; ++src_c_idx) {
+                const size_t src_idx = src_idx0 + src_c_idx * src_s[1] + src_h * src_s[2] + src_w * src_s[3];
+                const size_t k_idx = dst_c_idx * k_s[0] + src_c_idx * k_s[1] + h_offset * k_s[2] + w_offset * k_s[3];
+                d += static_cast<A>(src_cached[src_idx]) * static_cast<A>(kernel_cached[k_idx]);
+              }
+            }
+          }
+          dstbuf[i] = static_cast<T>(d);
+      }
+    }
+    tops::memcpy(ctx, tops::mdspan(tops::Global, dst + thread_id * THREAD_STEP, thread_step),
+              tops::mdspan(tops::Private, dstbuf, thread_step));
+}
+
+#define CONV2D_OP(TYPENAME, TYPEACC, FN_NAME) \
+extern "C" __global__ void FN_NAME(  \
+    const size_t src_numel, \
+    const size_t w_out, \
+    const size_t h_out, \
+    const size_t stride, \
+    const size_t padding, \
+    const size_t dilation, \
+    size_t *info, \
+    TYPENAME *src, \
+    TYPENAME *kernel, \
+    TYPENAME *dst \
+) {  \
+  conv2d<TYPENAME, TYPEACC>(src_numel, w_out, h_out, stride, padding, dilation, info, src, kernel, dst); \
+} \
+
+CONV2D_OP(__bf16, float, conv2d_bf16)
+CONV2D_OP(__fp16, float, conv2d_f16)
+CONV2D_OP(float, float, conv2d_f32)
 int main() {}

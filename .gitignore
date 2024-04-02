@@ -1,3 +1,5 @@
 /target
 /lib
 *.patch
+/kernels/conv
+/kernels/conv2d.cpp

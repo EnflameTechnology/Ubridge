@@ -8,6 +8,8 @@
 #include <functional>
 #include <numeric>
 #include <krt/vector_infra.h>
+#include <tops/half.h>
+#include <tops/bfloat.h>
 using namespace std;
 using namespace tops;
 constexpr int MAX_RANK = 4;
@@ -18,7 +20,7 @@ constexpr int MAX_DRD_SIP_NUM = 12;
 constexpr int MAX_SCP_CLUSTER_NUM = 1;
 constexpr int MAX_SCP_SIP_NUM = 12;
 constexpr int SIP_VECTOR_LENGTH = 128;
-#define SHARE_BUFFER_SIZE 1024 * 1024 * 24 //24MB
+#define SHARE_BUFFER_SIZE 1024 * 1024 * 64 //64MB
 
 #if defined(__GCU_ARCH__) && (__GCU_ARCH__ == 200)
   constexpr static int VDMEM_SIZE = 0x80000;

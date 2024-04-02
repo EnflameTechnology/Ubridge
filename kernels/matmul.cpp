@@ -26,8 +26,6 @@
 #include "utils.h"
 #include <acore/acore_op.h>
 
-#define SHARE_BUFFER_SIZE 1024 * 1024 * 24 //24MB
-
 using namespace std;
 #define MAX_NUM 1540096 - 1024
 #define TEMPLATE_ALIGN_UP(a, b) (((a + b - 1) / b) * b)

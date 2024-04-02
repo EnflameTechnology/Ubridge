@@ -273,7 +273,8 @@ impl DeviceExecutor {
 
         let embedding_functions = vec!["rope_f32", "rope_f16", "rope_bf16", ];
 
-        let conv_functions = vec!["conv1d_f32", "conv1d_f16", "conv1d_bf16", "conv1d_f64", "conv1d_u8", "conv1d_u32",];
+        let conv_functions = vec!["conv1d_f32", "conv1d_f16", "conv1d_bf16", "conv1d_f64", "conv1d_u8", "conv1d_u32",
+                "conv2d_f32", "conv2d_f16", "conv2d_bf16"];
 
         let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
         match get_kernels(device_id, kernel_platform) {
