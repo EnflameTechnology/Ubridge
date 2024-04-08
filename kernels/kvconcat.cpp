@@ -105,7 +105,7 @@ extern "C" __global__ void kvconcat_f16(__fp16 *ltensor, __fp16* rtensor, __fp16
     size_t* dims, size_t dim_size, int concat_dim) {
     if (concat_dim == 2)
       kvconcat_dim2_kernel<__fp16>(ltensor, rtensor, out, dims, dim_size);
-    else if (concat_dim == 0) {
+    else if (concat_dim == 0 || concat_dim == 1) {
         if (blockIdx.x == 0 && threadIdx.x ==0) 
           kvconcat_dim0_kernel<__fp16>(ltensor, rtensor, out, dims, dim_size);
     }
@@ -118,7 +118,7 @@ extern "C" __global__ void kvconcat_bf16(__bf16 *ltensor, __bf16* rtensor, __bf1
     size_t* dims, size_t dim_size, int concat_dim) {
     if (concat_dim == 2)
       kvconcat_dim2_kernel<__bf16>(ltensor, rtensor, out, dims, dim_size);
-    else if (concat_dim == 0) {
+    else if (concat_dim == 0 || concat_dim == 1) {
       if (blockIdx.x == 0 && threadIdx.x ==0) 
         kvconcat_dim0_kernel<__bf16>(ltensor, rtensor, out, dims, dim_size);
     }
@@ -131,7 +131,7 @@ extern "C" __global__ void kvconcat_f32(float *ltensor, float* rtensor, float *o
     size_t* dims, size_t dim_size, int concat_dim) {
     if (concat_dim == 2)
       kvconcat_dim2_kernel<float>(ltensor, rtensor, out, dims, dim_size);
-    else if (concat_dim == 0) {
+    else if (concat_dim == 0 || concat_dim == 1) {
       if (blockIdx.x == 0 && threadIdx.x ==0) 
         kvconcat_dim0_kernel<float>(ltensor, rtensor, out, dims, dim_size);
     }
@@ -144,7 +144,7 @@ extern "C" __global__ void kvconcat_f64(double *ltensor, double* rtensor, double
     size_t* dims, size_t dim_size, int concat_dim) {
     if (concat_dim == 2)
       kvconcat_dim2_kernel<double>(ltensor, rtensor, out, dims, dim_size);
-    else if (concat_dim == 0) {
+    else if (concat_dim == 0 || concat_dim == 1) {
       if (blockIdx.x == 0 && threadIdx.x ==0) 
         kvconcat_dim0_kernel<double>(ltensor, rtensor, out, dims, dim_size);
     }
@@ -157,7 +157,7 @@ extern "C" __global__ void kvconcat_u8(uint8_t *ltensor, uint8_t* rtensor, uint8
     size_t* dims, size_t dim_size, int concat_dim) {
     if (concat_dim == 2)
       kvconcat_dim2_kernel<uint8_t>(ltensor, rtensor, out, dims, dim_size);
-    else if (concat_dim == 0) {
+    else if (concat_dim == 0 || concat_dim == 1) {
       if (blockIdx.x == 0 && threadIdx.x ==0) 
         kvconcat_dim0_kernel<uint8_t>(ltensor, rtensor, out, dims, dim_size);
     }

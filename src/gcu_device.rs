@@ -234,13 +234,13 @@ impl GcuDevice {
             unsafe { 
                 println!("alloc_zeros async! (len={})", len);
                 let device_ptr = DeviceBuffer::uninitialized_async(len, &self.stream.unwrap())?;
-                // driv::topsMemsetD8Async(device_ptr.as_device_ptr().as_raw(), 0, std::mem::size_of::<T>() * len, self.stream.unwrap().as_inner()).to_result()?;
+                driv::topsMemsetD8Async(device_ptr.as_device_ptr().as_raw(), 0, std::mem::size_of::<T>() * len, self.stream.unwrap().as_inner()).to_result()?;
                 device_ptr
             }
         } else {
             unsafe { 
                 let device_ptr = DeviceBuffer::uninitialized(len)?;
-                // driv::topsMemsetD8(device_ptr.as_device_ptr().as_raw(), 0, std::mem::size_of::<T>() * len).to_result()?;
+                driv::topsMemsetD8(device_ptr.as_device_ptr().as_raw(), 0, std::mem::size_of::<T>() * len).to_result()?;
                 device_ptr
             }
         };
