@@ -34,6 +34,7 @@
 #include "utils.h"
 using namespace std;
 #define TILE_SIZE AlignDown(((VDMEM_SIZE) / 16), 256)
+#define MAX_IDS_SIZE 40960
 
 template <typename ID_TYPENAME, typename T>
 __device__ __forceinline__ void index_select_kernel(const size_t id_numel,
@@ -42,18 +43,12 @@ __device__ __forceinline__ void index_select_kernel(const size_t id_numel,
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNum();
     int N = id_numel;
-    __local__ __valigned__ ID_TYPENAME ids_buffer[40960];
+    __local__ __valigned__ ID_TYPENAME ids_buffer[MAX_IDS_SIZE];
 
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx);
-
     tops::mdspan l1_ids(tops::Private, ids_buffer, N);
     tops::mdspan hbm_ids(tops::Global, ids, N);
-
-    // printf("id_numel %d, left_size %d, dim_size %d, right_size %d \n", N, left_size, dim_size, right_size);
-
-    // for (int i=0; i< N; i++)
-    //     printf("%d ", ids_buffer[i]);
     tops::memcpy(ctx, l1_ids, hbm_ids);
 
     int THREAD_STEP = 1;
@@ -68,7 +63,6 @@ __device__ __forceinline__ void index_select_kernel(const size_t id_numel,
       }
     }
 
-
     for (int i = 0; i < thread_step; i++) {
       int idx = thread_id * THREAD_STEP + i;
       if (idx < N) {
@@ -77,12 +71,9 @@ __device__ __forceinline__ void index_select_kernel(const size_t id_numel,
             tops::mdspan hbm_inp(tops::Global, inp + (j * dim_size + _idx) * right_size, right_size);
             tops::mdspan hbm_out(tops::Global, out + (idx + j * N) * right_size, right_size);
             tops::memcpy(ctx, hbm_out, hbm_inp);
-            // memcpy(&out[(i + j * numel) * right_size], &inp[(j * dim_size + ids[i]) * right_size], right_size * sizeof(T));
         }
       }
     }
-
-
 }
 
 #define IS_OP(TYPE, ID_TYPE, FN_NAME) \
@@ -95,7 +86,8 @@ extern "C" __global__ void FN_NAME( \
     const size_t dim_size, \
     const size_t right_size) \
 { \
-    index_select_kernel<ID_TYPE, TYPE>(id_numel, ids, inp, out, left_size, dim_size, right_size); \
+    index_select_kernel<ID_TYPE, TYPE> \
+    (id_numel, ids, inp, out, left_size, dim_size, right_size); \
 } \
 
 IS_OP(__bf16, int64_t, is_i64_bf16)

@@ -206,7 +206,7 @@ impl GcuDevice {
         len: usize,
     ) -> DeviceResult<GcuSlice<T>> {
         let device_ptr = if self.is_async {
-            println!("alloc async!  (len={})", len);
+            // println!("alloc async!  (len={})", len);
             unsafe { DeviceBuffer::uninitialized_async(len, &self.stream.unwrap())? }
         } else {
             unsafe { DeviceBuffer::uninitialized(len)? }
@@ -216,6 +216,7 @@ impl GcuDevice {
             len,
             device: self.clone(),
             host_buf: None,
+            host_buf_ptr: None,
         })
     }
 
@@ -232,7 +233,7 @@ impl GcuDevice {
 
         let device_ptr = if self.is_async {
             unsafe { 
-                println!("alloc_zeros async! (len={})", len);
+                // println!("alloc_zeros async! (len={})", len);
                 let device_ptr = DeviceBuffer::uninitialized_async(len, &self.stream.unwrap())?;
                 driv::topsMemsetD8Async(device_ptr.as_device_ptr().as_raw(), 0, std::mem::size_of::<T>() * len, self.stream.unwrap().as_inner()).to_result()?;
                 device_ptr
@@ -254,6 +255,7 @@ impl GcuDevice {
             len,
             device: self.clone(),
             host_buf: None,
+            host_buf_ptr: None,
         })
     }
 
@@ -294,19 +296,23 @@ impl GcuDevice {
     ) -> DeviceResult<()> {
         assert!(src.len() <= dst.len());
         if self.is_async {
-            println!("dtod_copy async! (len={}, len={})", src.len(), dst.len());
-            unsafe { driv::topsMemcpyDtoDAsync(
+            // println!("dtod_copy async! (len={}, len={})", src.len(), dst.len());
+            unsafe { 
+                driv::topsMemcpyDtoDAsync(
                 dst.device_ptr().clone(),
                 src.device_ptr().clone(),
                 src.len() * std::mem::size_of::<T>(),
                 self.stream.unwrap().as_inner(),
-            ).to_result() }
+                ).to_result() 
+            }
         } else {
-            unsafe { driv::topsMemcpyDtoD(
+            unsafe { 
+                driv::topsMemcpyDtoD(
                 dst.device_ptr().clone(),
                 src.device_ptr().clone(),
                 src.len() * std::mem::size_of::<T>(),
-            ).to_result() }
+                ).to_result() 
+            }
         }
     }
 
@@ -317,13 +323,30 @@ impl GcuDevice {
     /// 1. Since `src` is owned by this funcion, it is safe to copy data. Any actions executed
     ///    after this will take place after the data has been successfully copied.
     /// 2. Self is [`Arc<Self>`], and this method increments the rc for self
-    pub fn htod_copy<T: DeviceCopy>(
+    pub fn htod_copy<T: DeviceCopy + Unpin>(
         self: &Arc<Self>,
         src: Vec<T>,
     ) -> DeviceResult<GcuSlice<T>> {
         let mut dst = self.alloc(src.len())?;
         self.htod_copy_into(src, &mut dst)?;
         Ok(dst)
+    }
+
+    pub unsafe fn memcpy_htod_async<T>(
+        dst: driv::topsDeviceptr_t,
+        src: &[T],
+        stream: driv::topsStream_t,
+    ) -> DeviceResult<()> {
+        let size = std::mem::size_of_val(src);
+        let ptr = src.as_ptr() as *mut _;
+        driv::topsHostRegister(ptr, size, 0).to_result()?;
+        driv::topsMemcpyHtoDAsync(
+            dst,
+            ptr,
+            size,
+            stream,
+        )
+        .to_result()
     }
 
     /// Takes ownership of the host data and copies it to device data asynchronously.
@@ -333,25 +356,37 @@ impl GcuDevice {
     /// 1. Since `src` is owned by this funcion, it is safe to copy data. Any actions executed
     ///    after this will take place after the data has been successfully copied.
     /// 2. Self is [`Arc<Self>`], and this method increments the rc for self
-    pub fn htod_copy_into<T: DeviceCopy>(
+    pub fn htod_copy_into<T: DeviceCopy + Unpin>(
         self: &Arc<Self>,
         src: Vec<T>,
         dst: &mut GcuSlice<T>,
     ) -> DeviceResult<()> {
         assert_eq!(src.len(), dst.len);
-
+        let size = std::mem::size_of::<T>() * src.len();
+        
+        // let host_ptr = dst.host_buf.as_ref().unwrap().as_ptr() as *mut c_void;
         if self.is_async {
-            println!("htod_copy_into async! (len={}, len={})", src.len(), dst.len());
-            return unsafe {
-                dst.buffer.async_copy_from(
-                &src,
-                &self.stream.unwrap(),
-            )
+            unsafe { 
+                // if size % 4096 != 0 {
+                    let mut ptr = std::ptr::null_mut();
+                    driv::topsHostMalloc(&mut ptr as *mut *mut c_void, size, 0).to_result()?;
+                    std::ptr::copy(src.as_ptr() as *mut c_void, ptr, size);
+                    dst.host_buf_ptr = Some(ptr);
+                    return driv::topsMemcpyHtoDAsync(
+                        dst.device_ptr(),
+                        ptr,
+                        size,
+                        self.stream.unwrap().as_inner(),
+                    )
+                    .to_result();
+                // } else {
+                    //fix this, not working for topsHostRegister
+                //     dst.host_buf = Some(Pin::new(src));
+                //     return Self::memcpy_htod_async(dst.device_ptr(), dst.host_buf.as_ref().unwrap(), self.stream.unwrap().as_inner());
+                // }
             };
         } else {
-            return dst.buffer.copy_from(
-                &src,
-            );
+            return dst.buffer.copy_from(&src);
         }
     }
 
@@ -373,6 +408,7 @@ impl GcuDevice {
             len: src.len(),
             device: self.clone(),
             host_buf: None,
+            host_buf_ptr: None,
         };
 
         dst.buffer.copy_from(src)?;
@@ -397,13 +433,25 @@ impl GcuDevice {
     ) -> DeviceResult<()> {
         let val = src.as_ref();
         assert_eq!(val.len(), dst.len());
-        unsafe { 
-            driv::topsMemcpyHtoD(
-                dst.device_ptr().clone(),
-                val.as_ptr() as *mut c_void,
-                val.len() * std::mem::size_of::<T>(),
-                ).to_result()
+        if self.is_async {
+            unsafe { 
+                driv::topsMemcpyHtoDAsync(
+                    dst.device_ptr().clone(),
+                    val.as_ptr() as *mut c_void,
+                    val.len() * std::mem::size_of::<T>(),
+                    self.stream.unwrap().as_inner()
+                    ).to_result()?;
+            }
+        } else {
+            unsafe { 
+                driv::topsMemcpyHtoD(
+                    dst.device_ptr().clone(),
+                    val.as_ptr() as *mut c_void,
+                    val.len() * std::mem::size_of::<T>(),
+                    ).to_result()?;
+            }
         }
+        self.synchronize()
     }
 
     /// Synchronously copies device memory into host memory.
@@ -442,13 +490,25 @@ impl GcuDevice {
     ) -> DeviceResult<()> {
         assert_eq!(src.len(), dst.len());
         let val = dst.as_mut();
-        unsafe { 
-            driv::topsMemcpyDtoH(
-                val.as_mut_ptr() as *mut c_void,
-                src.device_ptr().clone(),
-                val.len() * std::mem::size_of::<T>(),
-                ).to_result()
+        if self.is_async {
+            unsafe { 
+                driv::topsMemcpyDtoHAsync(
+                    val.as_mut_ptr() as *mut c_void,
+                    src.device_ptr().clone(),
+                    val.len() * std::mem::size_of::<T>(),
+                    self.stream.unwrap().as_inner()
+                    ).to_result()?;
+            }
+        } else {
+            unsafe { 
+                driv::topsMemcpyDtoH(
+                    val.as_mut_ptr() as *mut c_void,
+                    src.device_ptr().clone(),
+                    val.len() * std::mem::size_of::<T>(),
+                    ).to_result()?;
+            }
         }
+        self.synchronize()
     }
 
     /// Synchronously de-allocates `src` and converts it into it's host value.
@@ -474,7 +534,10 @@ impl GcuDevice {
     pub fn synchronize(self: &Arc<Self>) -> DeviceResult<()> {
         match self.stream {
             Some(_stream) => { _stream.synchronize() }
-            _=> {panic!("Unable to use stream!")}
+            _=> { 
+                println!("Unable to use stream!");
+                Ok(())
+            }
         }
     }
 

@@ -90,9 +90,6 @@ __device__ __forceinline__ void kvconcat_dim2_kernel(T *ltensor, T* rtensor, T *
           tops::mdspan hbm_left(tops::Global, ltensor + idx * lstride, lstride);
           tops::mdspan hbm_right(tops::Global, rtensor + idx * rstride, rstride);
           tops::mdspan hbm_out(tops::Global, out + idx * out_stride, lstride);
-          // printf("\ncopy left %d to %d [size %d]", idx * lstride, idx * out_stride, lstride);
-          // printf("\ncopy right %d to %d [size %d]", idx * rstride, idx * out_stride + lstride, rstride);
-          // printf("\r\n");
           tops::memcpy(ctx, hbm_out, hbm_left);
           tops::mdspan hbm_out1(tops::Global, out + idx * out_stride + lstride, rstride);
           tops::memcpy(ctx, hbm_out1, hbm_right);
@@ -109,9 +106,6 @@ extern "C" __global__ void kvconcat_f16(__fp16 *ltensor, __fp16* rtensor, __fp16
         if (blockIdx.x == 0 && threadIdx.x ==0) 
           kvconcat_dim0_kernel<__fp16>(ltensor, rtensor, out, dims, dim_size);
     }
-    // else {
-    //   printf("Not support kvconcat on dim %d\n", concat_dim);
-    // }
 }
 
 extern "C" __global__ void kvconcat_bf16(__bf16 *ltensor, __bf16* rtensor, __bf16 *out,
@@ -122,9 +116,6 @@ extern "C" __global__ void kvconcat_bf16(__bf16 *ltensor, __bf16* rtensor, __bf1
       if (blockIdx.x == 0 && threadIdx.x ==0) 
         kvconcat_dim0_kernel<__bf16>(ltensor, rtensor, out, dims, dim_size);
     }
-    // else {
-    //   printf("Not support kvconcat on dim %d\n", concat_dim);
-    // }
 }
 
 extern "C" __global__ void kvconcat_f32(float *ltensor, float* rtensor, float *out,
@@ -135,9 +126,6 @@ extern "C" __global__ void kvconcat_f32(float *ltensor, float* rtensor, float *o
       if (blockIdx.x == 0 && threadIdx.x ==0) 
         kvconcat_dim0_kernel<float>(ltensor, rtensor, out, dims, dim_size);
     }
-    // else {
-    //   printf("Not support kvconcat on dim %d\n", concat_dim);
-    // }
 }
 
 extern "C" __global__ void kvconcat_f64(double *ltensor, double* rtensor, double *out,
@@ -148,9 +136,6 @@ extern "C" __global__ void kvconcat_f64(double *ltensor, double* rtensor, double
       if (blockIdx.x == 0 && threadIdx.x ==0) 
         kvconcat_dim0_kernel<double>(ltensor, rtensor, out, dims, dim_size);
     }
-    // else {
-    //   printf("Not support kvconcat on dim %d\n", concat_dim);
-    // }
 }
 
 extern "C" __global__ void kvconcat_u8(uint8_t *ltensor, uint8_t* rtensor, uint8_t *out,
@@ -161,9 +146,6 @@ extern "C" __global__ void kvconcat_u8(uint8_t *ltensor, uint8_t* rtensor, uint8
       if (blockIdx.x == 0 && threadIdx.x ==0) 
         kvconcat_dim0_kernel<uint8_t>(ltensor, rtensor, out, dims, dim_size);
     }
-    // else {
-    //   printf("Not support kvconcat on dim %d\n", concat_dim);
-    // }
 }
 
 int main() {}

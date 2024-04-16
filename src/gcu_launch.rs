@@ -268,10 +268,10 @@ impl GcuFunction {
                     // config.as_mut_ptr() as *mut *mut c_void            
                 ).to_result();
 
-                if ret.is_ok() && self.is_async {
-                    println!("******************driv::topsStreamSynchronize! {}", self.is_async);
-                    ret = driv::topsStreamSynchronize(stream).to_result();
-                }
+                // if ret.is_ok() && self.is_async {
+                //     println!("******************driv::topsStreamSynchronize! {}", self.is_async);
+                //     ret = driv::topsStreamSynchronize(stream).to_result();
+                // }
 
                 if ret.is_err() {
                     println!("Launch Error for function {}", self.func_name);
