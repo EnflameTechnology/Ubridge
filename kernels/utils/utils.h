@@ -21,6 +21,7 @@ constexpr int MAX_SCP_CLUSTER_NUM = 1;
 constexpr int MAX_SCP_SIP_NUM = 12;
 constexpr int SIP_VECTOR_LENGTH = 128;
 #define SHARE_BUFFER_SIZE 1024 * 1024 * 24 //64MB
+// #define KERNEL_TEST
 
 #if defined(__GCU_ARCH__) && (__GCU_ARCH__ == 200)
   constexpr static int VDMEM_SIZE = 0x80000;
@@ -336,16 +337,9 @@ struct DATA {
     }
     for (size_t i = 0; i < size_lhs; i++) {
       lhs_h[i] = (T)0.05;
-      // if (lhs_h[i] == (T)0) {
-      //   if (i%2) {lhs_h[i] = (T)1;} else {
-      //   lhs_h[i] = (T)(-1);}
-      // }
     }
     for (size_t i = 0; i < size_rhs; i++) {
       rhs_h[i] = (T)0.05;
-      // if (rhs_h[i] == (T)0) {
-      //   rhs_h[i] = (T)1;
-      // }
     }
     if (check) {
         printf("Compute CPU Results...\n");

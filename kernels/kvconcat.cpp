@@ -30,7 +30,7 @@
 #include <algorithm>
 #include <vector>
 #include "tops/tops_runtime.h"
-#include "utils.h"
+#include "utils/utils.h"
 using namespace std;
 #define TILE_SIZE AlignDown(((VDMEM_SIZE) / 16), 256)
 

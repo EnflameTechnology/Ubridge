@@ -37,7 +37,7 @@
 #include <krt/leaptr.h>
 #include <krt/vector_infra.h>
 #include <acore/acore_op.h>
-#include "utils.h"
+#include "utils/utils.h"
 using namespace std;
 using namespace tops;
 #define TILE_SIZE AlignDown(((VDMEM_SIZE) / 16), 256)
@@ -204,6 +204,7 @@ CAST_OP(u_int32_t, float, cast_u32_f32)
 CAST_OP(u_int32_t, __fp16, cast_u32_f16)
 CAST_OP(u_int32_t, __bf16, cast_u32_bf16)
 
+#ifdef KERNEL_TEST
 template<typename T, typename OUTT>
 int test() {
   T *lhs_d; OUTT *out_d;
@@ -247,7 +248,10 @@ int test() {
   topsFree(out_d);
   return 0;
 }
+#endif
 
 int main() {
+#ifdef KERNEL_TEST
     return test<__fp16, float>();
+#endif
 }

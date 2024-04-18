@@ -31,7 +31,7 @@
 
 #include <tops/tops_runtime.h>
 #include <tops/topsrtc.h>
-#include "utils.h"
+#include "utils/utils.h"
 using namespace std;
 
 // Naive implementation of conv1d.

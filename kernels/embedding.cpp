@@ -28,35 +28,9 @@
 #include <tops/half.h>
 #include <tops/bfloat.h>
 #include <tops/tops_runtime.h>
-#include "utils.h"
+#include "utils/utils.h"
 #include <acore/acore_op.h>
-
 using namespace std;
-#if 0
-template <typename T>
-__forceinline__ __device__ void atomic_cast(float** dst_ptr, T* src_ptr,
-                                            unsigned int elements) {}
-
-
-template <>
-__forceinline__ __device__ void  atomic_cast(float** dst_ptr, float* src_ptr,
-                                            unsigned int elements) {
-  *dst_ptr = src_ptr;
-}
-
-template <>
-__forceinline__ __device__ void  atomic_cast(float** dst_ptr, __fp16* src_ptr,
-                                            unsigned int elements) {
-  convert<float, __fp16>(*dst_ptr, src_ptr, elements);
-}
-
-template <>
-__forceinline__ __device__ void  atomic_cast(float** dst_ptr, __bf16* src_ptr,
-                                            unsigned int elements) {
-  convert<float, __bf16>(*dst_ptr, src_ptr, elements);
-  
-}
-#endif 
 
 __device__ __forceinline__  void apply_rotary_qkv(float *q_arr, float *k_arr, float *cos_ptr, float *sin_ptr,
                                 int rot_offset, int embed_dim, int gpt_geox) {
@@ -209,7 +183,7 @@ extern "C" __global__ void  rope_bf16(__bf16 *query, __bf16 *key, float *cos_sin
       num_tokens, q_heads, k_heads, hidden_size, split_dim, gpt_geox);
 }
 
-#if 0
+#ifdef KERNEL_TEST
 template <typename T>
 __forceinline__ void apply_rotary_embedding(T *arr, T *cos_ptr, T *sin_ptr,
                                 int rot_offset, int embed_dim, int gpt_geox) {}
@@ -314,7 +288,6 @@ void rope_cpu(T *query, T *key, T *cos_sin,
     }  // loop in num_tokens
 
 }
-#endif
 
 template <typename T>
 void test() {
@@ -377,7 +350,10 @@ void test() {
   }
 
 }
+#endif
 
 int main() {
+#ifdef KERNEL_TEST
   test<__fp16>();
+#endif
 }

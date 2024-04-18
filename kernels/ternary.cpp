@@ -30,7 +30,7 @@
 #include <algorithm>
 #include <vector>
 #include "tops/tops_runtime.h"
-#include "utils.h"
+#include "utils/utils.h"
 #include "tcle.h"
 using namespace tcle;
 using namespace std;
@@ -152,6 +152,7 @@ WHERE_OP(__fp16, uint8_t, where_u8_f16)
 WHERE_OP(__bf16, uint8_t, where_u8_bf16)
 
 int main(void) {
+#ifdef KERNEL_TEST
   topsError_t err = topsSuccess;
   int N = 64 * 4096 + 5;
   int in_size = N * sizeof(float);
@@ -231,6 +232,6 @@ int main(void) {
   free(host_in2);
   free(host_ids);
   free(host_out);
-
+#endif
   return 0;
 }

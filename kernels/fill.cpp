@@ -22,7 +22,7 @@
 #include <tops/half.h>
 #include <tops/bfloat.h>
 #include "tops/tops_runtime.h"
-#include "utils.h"
+#include "utils/utils.h"
 
 #define tile_size 1024
 using namespace std;
@@ -59,18 +59,14 @@ __device__ __forceinline__ void fill__Kernel(T *output, int total_size, T value,
   init_tid_off_arr(total_size, tid_off_arr, thread_num);
   int off_start = thread_id == 0 ? 0 : tid_off_arr[thread_id - 1];
   int off_end = tid_off_arr[thread_id];
-  // printf("thread_id:%d off_start:%d off_end:%d\n", thread_id, off_start,
-  // off_end);
 
   for (int i = off_start; i < off_end; i++) {
     int dsize = i != tid_off_arr[thread_num - 2] ? tile_size
                                                  : total_size - i * tile_size;
-    // printf("thread_id:%d off_start: %d dsize:%d\n", thread_id, i * tile_size,
-    // dsize);
     tops::mdspan output_hbm(tops::Global, output + i * tile_size, dsize);
     tops::memset(ctx, output_hbm, value);
   }
-}  // end of topscc kernel function
+}  
 
 
 extern "C"  __global__ void fill_f32(float *output, int total_size,

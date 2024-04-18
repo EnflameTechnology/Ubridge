@@ -31,7 +31,7 @@
 #include <algorithm>
 #include <vector>
 #include "tops/tops_runtime.h"
-#include "utils.h"
+#include "utils/utils.h"
 using namespace std;
 #define TILE_SIZE AlignDown(((VDMEM_SIZE) / 16), 256)
 #define MAX_IDS_SIZE 40960
@@ -117,6 +117,7 @@ IS_OP(uint32_t, uint8_t, is_u8_u32)
 IS_OP(int64_t, uint8_t, is_u8_i64)
 
 int main(void) {
+#ifdef KERNEL_TEST
   topsError_t err = topsSuccess;
   int N = 64 * 4096 + 5;
   int in_size = N * sizeof(float);
@@ -196,6 +197,6 @@ int main(void) {
   free(host_in2);
   free(host_ids);
   free(host_out);
-
+#endif
   return 0;
 }

@@ -21,9 +21,9 @@
 #include <tops.h>
 #include <tops/half.h>
 #include <tops/bfloat.h>
-#include "matmul_general.h"
 #include "tops/tops_runtime.h"
-#include "utils.h"
+#include "utils/utils.h"
+#include "utils/matmul_general.h"
 #include <acore/acore_op.h>
 
 using namespace std;

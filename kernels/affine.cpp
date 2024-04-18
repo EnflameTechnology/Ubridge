@@ -28,18 +28,10 @@
 #include <tops/topsrtc.h>
 #include <tops/half.h>
 #include <tops/bfloat.h>
-
 #include <tops/tops_runtime.h>
 #include <tops/topsrtc.h>
-#include <krt/scalar.h>
-#include <krt/vector_mask.h>
-#include <krt/dispatch.h>
-#include <krt/leaptr.h>
-#include <krt/vector_infra.h>
-
 #include <acore/acore_op.h>
-
-#include "utils.h"
+#include "utils/utils.h"
 using namespace std;
 using namespace tops;
 #define tile_size 0x8000
@@ -228,6 +220,7 @@ AFFINE_OP(__bf16, vbfloat, affine_bf16, AFFINE_DATA_BF16)
 AFFINE_OP(__fp16, vhalf, affine_f16, AFFINE_DATA_FP16)
 AFFINE_OP(float, vfloat, affine_f32, AFFINE_DATA_F32)
 
+#ifdef KERNEL_TEST
 template<typename T>
 int test() {
   T *lhs_d, *out_d;
@@ -279,7 +272,10 @@ int test() {
   topsFree(out_d);
   return 0;
 }
+#endif
 
 int main() {
+  #ifdef KERNEL_TEST
     return test<__fp16>();
+  #endif
 }

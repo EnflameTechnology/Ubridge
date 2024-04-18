@@ -40,8 +40,7 @@
 #include <krt/mmu.h>
 
 #include <acore/acore_op.h>
-#include "utils.h"
-#include "utils/vector_ex.h"
+#include "utils/utils.h"
 using namespace std;
 using namespace tops;
 #define PING_PONG_SIZE 2
@@ -362,9 +361,6 @@ __device__ void broadcast_kernel(T* in, T* out, int src_rank, const size_t in_si
     bool cacheable_l1 = (in_size + out_size) * sizeof(T) < COPY_L1SIZE;
     bool cacheable_l2 = (in_size + out_size) * sizeof(T) < SHARE_BUFFER_SIZE;
 
-    // PRINTHELPER(src_shape, RANK, "\nsrc_shape: ");
-    // PRINTHELPER(dst_shape, RANK, "\ndst_shape: ");
-
     T* src_cached = reinterpret_cast<T*>(raw_cache);
     if (in_size == 1) {
         tops::mdspan src_mem(tops::Global, in, 1);
@@ -508,124 +504,5 @@ UNARY_COPY_OP(ucopy_multithread_cache, float, vfloat, ucopy_f32, 4)
 UNARY_COPY_OP(ucopy_multithread_cache, u_int8_t, vuchar, ucopy_u8, 2)
 UNARY_COPY_OP(ucopy_multithread_cache, u_int32_t, vuint, ucopy_u32, 4)
 UNARY_COPY_OP(ucopy_multithread_cache, double, vfloatx2, ucopy_f64, 8) //remove this for gather copy
-
-
-#if 0
-// #define PRINTHELPER 
-
-template <typename T, int SRCRANK, int DSTRANK, int BPE>
-__device__ void unary_kernel_non_contiguous(T* in, T* out, const size_t op_type, const size_t origin_numel, 
-        const size_t numel, const size_t start_offset, const size_t origin_num_dims, const size_t num_dims, size_t* dims_and_layout) {
-    tops_dte_ctx_t ctx;
-    tops::dte_scope s(ctx); 
-    int dst_shape[DSTRANK];
-    int dst_layout[DSTRANK];
-    for (int j = 0; j < num_dims; ++j) {
-      dst_shape[j] = dims_and_layout[j + 2 * origin_num_dims];
-      dst_layout[j] = dims_and_layout[2 * origin_num_dims + num_dims + j];
-    }
-    
-    // PRINTHELPER(dst_shape, DSTRANK, "\ndst_shape = ");
-
-    if (op_type == 1 && origin_num_dims > 0) {
-        int src_shape[SRCRANK];
-        int src_layout[SRCRANK];
-        for (int j = 0; j < origin_num_dims; ++j) {
-          src_shape[j] = dims_and_layout[j];
-          src_layout[j] = dims_and_layout[origin_num_dims + j];
-        }
-        // PRINTHELPER(src_shape, origin_num_dims, "\nsrc_shape = ");
-        // PRINTHELPER(src_layout, origin_num_dims, "\nsrc layout = ");
-        // PRINTHELPER(dst_layout, num_dims, "\ntranspose pattern, dst layout = ");
-        tops::mdspan src_mem(tops::Global, in, src_shape);
-        tops::mdspan dst_mem(tops::Global, out, dst_shape);
-        tops::transpose(ctx, dst_mem, src_mem, dst_layout); //Optimization required!
-    } else if (op_type == 2) { 
-      int src_shape[DSTRANK];
-      for (int j = DSTRANK - 1; j >=0; j--) {
-        if (j - (DSTRANK - SRCRANK) < 0) {
-          src_shape[j] = 1;
-        } else {
-          src_shape[j] = dims_and_layout[j - (DSTRANK - SRCRANK)];
-        }
-      }
-      // PRINTHELPER(src_shape, DSTRANK, "\nsrc_shape = ");
-      // PRINTHELPER(dst_shape, DSTRANK, "\nbroadcasting pattern, dst shape = ");
-
-      if (origin_numel == 1) {
-        tops::mdspan src_mem(tops::Global, in, 1);
-        tops::mdspan dst_mem(tops::Global, out, numel);
-        tops::broadcast(ctx, dst_mem, src_mem);
-      } else {
-        tops::mdspan src_mem(tops::Global, in, src_shape);
-        tops::mdspan dst_mem(tops::Global, out, dst_shape);
-        tops::broadcast(ctx, dst_mem, src_mem);
-      }
-
-    } else if (op_type == 3) { //TODO purmutation pattern
-        // printf("\npurmute pattern %d!\n", numel);
-        // PRINTHELPER(dst_layout, DSTRANK, "\npurmute pattern, dst layout = ");
-
-    } else if (op_type == 4) {
-        // PRINTHELPER(dst_shape, DSTRANK, "\nnarrow pattern, dst shape = ");
-        int src_shape[SRCRANK];
-        int offsets[SRCRANK];
-        for (int j = 0; j < SRCRANK; ++j) {
-          src_shape[j] = dims_and_layout[j];
-          offsets[j] = src_shape[j]==dst_shape[j]?0:start_offset;
-        }
-        // PRINTHELPER(src_shape, DSTRANK, "\nnarrow pattern, src shape = ");
-        // PRINTHELPER(offsets, DSTRANK, "\noffsets = ");
-
-        tops::mdspan src_mem(tops::Global, in, src_shape);
-        tops::mdspan dst_mem(tops::Global, out, dst_shape);
-        tops::slice(ctx, dst_mem, src_mem, offsets);
-    } else {
-        printf("\nNot supported pattern type %d!\n", op_type);
-    }
-
-}
-
-int test() {
-  __fp16 *lhs_d, *out_d;
-  int *shape_lhs_d;
-  __fp16 *lhs_h, *out_h;
-  size_t size_lhs = 64;
-  size_t size_out = size_lhs;
-  size_t dim = 1;
-  topsHostMalloc((__fp16**)&lhs_h, size_lhs * sizeof(__fp16));
-  topsHostMalloc((__fp16**)&out_h, size_out * sizeof(__fp16));
-
-    for (size_t i = 0; i < size_lhs; i++) {
-        lhs_h[i] = 0.5f;
-    }
-    for (size_t i = 0; i < size_out; i++) {
-        out_h[i] = 0.0;
-    }
-  topsMalloc(&lhs_d, size_lhs * sizeof(__fp16));
-  topsMalloc(&out_d, size_out * sizeof(__fp16));
-
-  printf("info: copy Host2Device\n");
-  topsMemcpy(lhs_d, lhs_h, size_lhs * sizeof(__fp16),
-                  topsMemcpyHostToDevice);
-  topsMemcpy(out_d, out_h, size_out * sizeof(__fp16),
-                  topsMemcpyHostToDevice);
-
-  // ucopy_f16<<<dim3(1, 1, 1), dim3(1, 12, 1)>>>(size_out, lhs_d, out_d);
-
-  printf("info: copy Device2Host\n");
-  topsMemcpy(out_h, out_d, size_out * sizeof(__fp16), topsMemcpyDeviceToHost);
-
-  for (size_t j = 0; j < size_out; j++) {
-      printf("%.2f, ", out_h[j]);
-  }
-  topsHostFree(lhs_h);
-  topsHostFree(out_h);
-  topsFree(lhs_d);
-  topsFree(out_d);
-  return 0;
-}
-
-#endif
 
 int main() {}

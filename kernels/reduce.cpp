@@ -30,8 +30,8 @@
 #include <algorithm>
 #include <vector>
 #include "tops/tops_runtime.h"
-#include "utils.h"
-#include "reduce_atomic.h"
+#include "utils/utils.h"
+#include "utils/reduce_atomic.h"
 #include <acore/acore_op.h>
 using namespace std;
 #define RANK_MAX 3
@@ -327,6 +327,7 @@ extern "C" __global__ void layernorm_f32(float *input, float *output, float* wei
 }
 
 int main(void) {
+#ifdef KERNEL_TEST
   topsError_t err = topsSuccess;
   int nums = 2;
   int N = 2;
@@ -388,6 +389,6 @@ int main(void) {
   CHECK(topsFree(dev_out));
   free(host_in);
   free(host_out);
-
+#endif
   return 0;
 }
