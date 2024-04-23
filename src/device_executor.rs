@@ -90,8 +90,8 @@ pub(crate) static mut G_KERNEL: (
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
     Option<Stream>,
-    Option<MemPool>,
-) = (None, None, None, None);
+    // Option<MemPool>,
+) = (None, None, None);
 
 static INIT: Once = Once::new();
 
@@ -110,12 +110,12 @@ pub fn init_kernels(
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
     Option<Stream>,
-    Option<MemPool>,
+    // Option<MemPool>,
 ) {
     match init_api(device_id) {
         Some(device) => {
-            let mut mempool = MemPool { 0: std::ptr::null_mut() };
-            unsafe { driv::topsDeviceGetMemPool(&mut mempool.0, device.as_raw()); }
+            // let mut mempool = MemPool { 0: std::ptr::null_mut() };
+            // unsafe { driv::topsDeviceGetMemPool(&mut mempool.0, device.as_raw()); }
 
             let stream = match Stream::new(StreamFlags::NON_BLOCKING, None) {
                 Ok(_stream) => _stream,
@@ -159,9 +159,9 @@ pub fn init_kernels(
             if module_map.len() > 0 {
                 println!("{} kernel(s) loaded!", module_map.len());
             }
-            return (Some(module_map), Some(device), Some(stream), Some(mempool));
+            return (Some(module_map), Some(device), Some(stream));
         }
-        _ => return (None, None, None, None),
+        _ => return (None, None, None),
     };
 }
 
@@ -171,7 +171,7 @@ fn get_kernels(
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
     Option<Stream>,
-    Option<MemPool>,
+    // Option<MemPool>,
 ) {
     unsafe {
         INIT.call_once(|| {
@@ -188,7 +188,7 @@ pub struct DeviceExecutor {
     pub function_map: Option<HashMap<String, Arc<Function<'static>>>>,
     pub device: Option<&'static Device>,
     pub stream: Option<&'static Stream>,
-    pub mem_pool: Option<&'static MemPool>,
+    // pub mem_pool: Option<&'static MemPool>,
     cache_buffer: HashMap<String, Box<DeviceTensor>>,
     cache_shape: HashMap<String, Box<DeviceBuffer<i32>>>,
 }
@@ -278,7 +278,7 @@ impl DeviceExecutor {
 
         let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
         match get_kernels(device_id, kernel_platform) {
-            (Some(_module_map), Some(_device), Some(_stream), Some(_mempool)) => {
+            (Some(_module_map), Some(_device), Some(_stream)) => {
                 for module in _module_map.keys().into_iter() {
                     if module == "unary" {
                         for dt in ["bf16", "f16", "f32"] {
@@ -378,7 +378,7 @@ impl DeviceExecutor {
                     device: Some(_device),
                     module_map: Some(_module_map),
                     function_map: Some(function_map),
-                    mem_pool: Some(_mempool),
+                    // mem_pool: Some(_mempool),
                     cache_buffer: HashMap::<String, Box<DeviceTensor>>::new(),
                     cache_shape: HashMap::<String, Box<DeviceBuffer<i32>>>::new(),
                     stream: Some(_stream),
