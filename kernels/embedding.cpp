@@ -87,11 +87,11 @@ __device__ __forceinline__  void apply_rotary(float *arr, float *cos_ptr, float 
 }
 
 template <typename T>
-__device__ void rope(T* query, T* key, float* cos_sin, int index_pos,
+__device__ void rope(T* query, T* key, float* cos_sin, int cos_sin_stride, int index_pos,
     int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
     int q_stride = q_heads * hidden_size;
     int k_stride = k_heads * hidden_size;
-    float* cos_sin_cur = cos_sin + index_pos * hidden_size;
+    float* cos_sin_cur = cos_sin + index_pos * cos_sin_stride;
     if (split_dim == hidden_size || split_dim <= 0 || split_dim > hidden_size) {
       split_dim = hidden_size;
     }
@@ -162,24 +162,24 @@ __device__ void rope(T* query, T* key, float* cos_sin, int index_pos,
     }  // loop in num_tokens
 }
 
-extern "C" __global__ void  rope_f32(float *query, float *key, float *cos_sin, int index_pos,
+extern "C" __global__ void  rope_f32(float *query, float *key, float *cos_sin, int cos_sin_stride, int index_pos,
                       int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
     rope<float>(
-      query, key, cos_sin, index_pos,
+      query, key, cos_sin, cos_sin_stride, index_pos,
       num_tokens, q_heads, k_heads, hidden_size, split_dim, gpt_geox);
 }
 
-extern "C" __global__ void  rope_f16(__fp16*query, __fp16 *key, float *cos_sin, int index_pos,
+extern "C" __global__ void  rope_f16(__fp16*query, __fp16 *key, float *cos_sin, int cos_sin_stride, int index_pos,
                       int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
     rope<__fp16>(
-      query, key, cos_sin, index_pos,
+      query, key, cos_sin, cos_sin_stride, index_pos,
       num_tokens, q_heads, k_heads, hidden_size, split_dim, gpt_geox);
 }
 
-extern "C" __global__ void  rope_bf16(__bf16 *query, __bf16 *key, float *cos_sin, int index_pos,
+extern "C" __global__ void  rope_bf16(__bf16 *query, __bf16 *key, float *cos_sin, int cos_sin_stride, int index_pos,
                       int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
     rope<__bf16>(
-      query, key, cos_sin, index_pos,
+      query, key, cos_sin, cos_sin_stride, index_pos,
       num_tokens, q_heads, k_heads, hidden_size, split_dim, gpt_geox);
 }
 
