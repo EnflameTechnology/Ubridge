@@ -32,11 +32,12 @@
 #include <acore/acore_op.h>
 using namespace std;
 
-__device__ __forceinline__  void apply_rotary_qkv(float *q_arr, float *k_arr, float *cos_ptr, float *sin_ptr,
+template <typename T>
+__device__ __forceinline__  void apply_rotary_qkv(T *q_arr, T *k_arr, T *cos_ptr, T *sin_ptr,
                                 int rot_offset, int embed_dim, int gpt_geox) {
 
   int x_index, y_index;
-  float cos, sin;
+  T cos, sin;
   if (gpt_geox) {
     // GPT-NeoX style
     x_index = rot_offset;
@@ -51,8 +52,8 @@ __device__ __forceinline__  void apply_rotary_qkv(float *q_arr, float *k_arr, fl
     sin = sin_ptr[x_index / 2];
   }
 
-  float x = q_arr[x_index];
-  float y = q_arr[y_index];
+  T x = q_arr[x_index];
+  T y = q_arr[y_index];
   q_arr[x_index] = x * cos - y * sin;
   q_arr[y_index] = y * cos + x * sin;
   x = k_arr[x_index];
@@ -61,11 +62,12 @@ __device__ __forceinline__  void apply_rotary_qkv(float *q_arr, float *k_arr, fl
   k_arr[y_index] = y * cos + x * sin;
 }
 
-__device__ __forceinline__  void apply_rotary(float *arr, float *cos_ptr, float *sin_ptr,
+template <typename T>
+__device__ __forceinline__  void apply_rotary(T *arr, T *cos_ptr, T *sin_ptr,
                                 int rot_offset, int embed_dim, int gpt_geox) {
 
   int x_index, y_index;
-  float cos, sin;
+  T cos, sin;
   if (gpt_geox) {
     // GPT-NeoX style
     x_index = rot_offset;
@@ -80,18 +82,18 @@ __device__ __forceinline__  void apply_rotary(float *arr, float *cos_ptr, float 
     sin = sin_ptr[x_index / 2];
   }
 
-  float x = arr[x_index];
-  float y = arr[y_index];
+  T x = arr[x_index];
+  T y = arr[y_index];
   arr[x_index] = x * cos - y * sin;
   arr[y_index] = y * cos + x * sin;
 }
 
 template <typename T>
-__device__ void rope(T* query, T* key, float* cos_sin, int cos_sin_stride, int index_pos,
+__device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index_pos,
     int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
     int q_stride = q_heads * hidden_size;
     int k_stride = k_heads * hidden_size;
-    float* cos_sin_cur = cos_sin + index_pos * cos_sin_stride;
+    T* cos_sin_cur = cos_sin + index_pos * cos_sin_stride;
     if (split_dim == hidden_size || split_dim <= 0 || split_dim > hidden_size) {
       split_dim = hidden_size;
     }
@@ -111,11 +113,12 @@ __device__ void rope(T* query, T* key, float* cos_sin, int cos_sin_stride, int i
         }
       }
     }
-    __local__ __valigned__ float bufCosSin[1024 * 64];
-    __local__ __valigned__ T bufQuery[1024 * 64];
-    __local__ __valigned__ T bufKey[1024 * 64];
-    __local__ __valigned__ float bufQueryf32[1024 * 64];
-    __local__ __valigned__ float bufKeyf32[1024 * 64];
+    __local__ __valigned__ T bufCosSin[1024 * 48];
+    __local__ __valigned__ T bufQuery[1024 * 48];
+    __local__ __valigned__ T bufKey[1024 * 48];
+    __local__ __valigned__ float bufCosSinf32[1024 * 48];
+    __local__ __valigned__ float bufQueryf32[1024 * 48];
+    __local__ __valigned__ float bufKeyf32[1024 * 48];
 
     tops::mdspan cos_sin_l1(tops::Private, bufCosSin, hidden_size);
     tops::mdspan query_l1(tops::Private, bufQuery, q_stride);
@@ -135,10 +138,11 @@ __device__ void rope(T* query, T* key, float* cos_sin, int cos_sin_stride, int i
         auto cos_sin_cache = cos_sin_cur + i * split_dim;
         tops::mdspan hbm_cos_sin(tops::Global, cos_sin_cache, split_dim);
         tops::memcpy(ctx, cos_sin_l1, hbm_cos_sin);
+        convert<float, T>(reinterpret_cast<float*>(bufCosSinf32), reinterpret_cast<T*>(bufCosSin), split_dim);
         convert<float, T>(reinterpret_cast<float*>(bufQueryf32), reinterpret_cast<T*>(bufQuery), q_stride);
         convert<float, T>(reinterpret_cast<float*>(bufKeyf32), reinterpret_cast<T*>(bufKey), k_stride);
-        auto cos_ptr = bufCosSin;
-        auto sin_ptr = bufCosSin + embed_dim;
+        auto cos_ptr = bufCosSinf32;
+        auto sin_ptr = bufCosSinf32 + embed_dim;
 
         for (int j = 0; j < nq; j++) {
           int head_idx = j / embed_dim;
@@ -148,10 +152,10 @@ __device__ void rope(T* query, T* key, float* cos_sin, int cos_sin_stride, int i
           auto k_arr = bufKeyf32 + offset;
 
           if (nq == nk) {
-            apply_rotary_qkv(q_arr, k_arr, cos_ptr, sin_ptr, rot_offset, embed_dim, gpt_geox);
+            apply_rotary_qkv<float>(q_arr, k_arr, cos_ptr, sin_ptr, rot_offset, embed_dim, gpt_geox);
           } else {
-            apply_rotary(q_arr, cos_ptr, sin_ptr, rot_offset, embed_dim, gpt_geox);
-            apply_rotary(k_arr, cos_ptr, sin_ptr, rot_offset, embed_dim, gpt_geox);
+            apply_rotary<float>(q_arr, cos_ptr, sin_ptr, rot_offset, embed_dim, gpt_geox);
+            apply_rotary<float>(k_arr, cos_ptr, sin_ptr, rot_offset, embed_dim, gpt_geox);
           }
         }
         convert<T, float>(reinterpret_cast<T*>(bufQuery), reinterpret_cast<float*>(bufQueryf32), q_stride);
@@ -169,14 +173,14 @@ extern "C" __global__ void  rope_f32(float *query, float *key, float *cos_sin, i
       num_tokens, q_heads, k_heads, hidden_size, split_dim, gpt_geox);
 }
 
-extern "C" __global__ void  rope_f16(__fp16*query, __fp16 *key, float *cos_sin, int cos_sin_stride, int index_pos,
+extern "C" __global__ void  rope_f16(__fp16*query, __fp16 *key, __fp16 *cos_sin, int cos_sin_stride, int index_pos,
                       int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
     rope<__fp16>(
       query, key, cos_sin, cos_sin_stride, index_pos,
       num_tokens, q_heads, k_heads, hidden_size, split_dim, gpt_geox);
 }
 
-extern "C" __global__ void  rope_bf16(__bf16 *query, __bf16 *key, float *cos_sin, int cos_sin_stride, int index_pos,
+extern "C" __global__ void  rope_bf16(__bf16 *query, __bf16 *key, __bf16 *cos_sin, int cos_sin_stride, int index_pos,
                       int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
     rope<__bf16>(
       query, key, cos_sin, cos_sin_stride, index_pos,
