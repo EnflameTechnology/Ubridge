@@ -235,13 +235,13 @@ impl GcuDevice {
             unsafe { 
                 // println!("alloc_zeros async! (len={})", len);
                 let device_ptr = DeviceBuffer::uninitialized_async(len, &self.stream.unwrap())?;
-                driv::topsMemsetD8Async(device_ptr.as_device_ptr().as_raw(), 0, std::mem::size_of::<T>() * len, self.stream.unwrap().as_inner()).to_result()?;
+                driv::topsMemsetD8Async(device_ptr.as_device_ptr().as_raw(), 0, (std::mem::size_of::<T>() * len) as u64, self.stream.unwrap().as_inner()).to_result()?;
                 device_ptr
             }
         } else {
             unsafe { 
                 let device_ptr = DeviceBuffer::uninitialized(len)?;
-                driv::topsMemsetD8(device_ptr.as_device_ptr().as_raw(), 0, std::mem::size_of::<T>() * len).to_result()?;
+                driv::topsMemsetD8(device_ptr.as_device_ptr().as_raw(), 0, (std::mem::size_of::<T>() * len) as u64).to_result()?;
                 device_ptr
             }
         };
@@ -301,7 +301,7 @@ impl GcuDevice {
                 driv::topsMemcpyDtoDAsync(
                 dst.device_ptr().clone(),
                 src.device_ptr().clone(),
-                src.len() * std::mem::size_of::<T>(),
+                (src.len() * std::mem::size_of::<T>()) as u64,
                 self.stream.unwrap().as_inner(),
                 ).to_result() 
             }
@@ -310,7 +310,7 @@ impl GcuDevice {
                 driv::topsMemcpyDtoD(
                 dst.device_ptr().clone(),
                 src.device_ptr().clone(),
-                src.len() * std::mem::size_of::<T>(),
+                (src.len() * std::mem::size_of::<T>()) as u64,
                 ).to_result() 
             }
         }
@@ -337,7 +337,7 @@ impl GcuDevice {
         src: &[T],
         stream: driv::topsStream_t,
     ) -> DeviceResult<()> {
-        let size = std::mem::size_of_val(src);
+        let size = std::mem::size_of_val(src) as u64;
         let ptr = src.as_ptr() as *mut _;
         driv::topsHostRegister(ptr, size, 0).to_result()?;
         driv::topsMemcpyHtoDAsync(
@@ -367,23 +367,22 @@ impl GcuDevice {
         // let host_ptr = dst.host_buf.as_ref().unwrap().as_ptr() as *mut c_void;
         if self.is_async {
             unsafe { 
-                // if size % 4096 != 0 {
+                if size % 256 != 0 {
                     let mut ptr = std::ptr::null_mut();
-                    driv::topsHostMalloc(&mut ptr as *mut *mut c_void, size, 0).to_result()?;
+                    driv::topsHostMalloc(&mut ptr as *mut *mut c_void, size as u64, 0).to_result()?;
                     std::ptr::copy(src.as_ptr() as *mut c_void, ptr, size);
                     dst.host_buf_ptr = Some(ptr);
                     return driv::topsMemcpyHtoDAsync(
                         dst.device_ptr(),
                         ptr,
-                        size,
+                        size as u64,
                         self.stream.unwrap().as_inner(),
                     )
                     .to_result();
-                // } else {
-                    //fix this, not working for topsHostRegister
-                //     dst.host_buf = Some(Pin::new(src));
-                //     return Self::memcpy_htod_async(dst.device_ptr(), dst.host_buf.as_ref().unwrap(), self.stream.unwrap().as_inner());
-                // }
+                } else {
+                    dst.host_buf = Some(Pin::new(src));
+                    return Self::memcpy_htod_async(dst.device_ptr(), dst.host_buf.as_ref().unwrap(), self.stream.unwrap().as_inner());
+                }
             };
         } else {
             return dst.buffer.copy_from(&src);
@@ -438,7 +437,7 @@ impl GcuDevice {
                 driv::topsMemcpyHtoDAsync(
                     dst.device_ptr().clone(),
                     val.as_ptr() as *mut c_void,
-                    val.len() * std::mem::size_of::<T>(),
+                    (val.len() * std::mem::size_of::<T>()) as u64,
                     self.stream.unwrap().as_inner()
                     ).to_result()?;
             }
@@ -447,7 +446,7 @@ impl GcuDevice {
                 driv::topsMemcpyHtoD(
                     dst.device_ptr().clone(),
                     val.as_ptr() as *mut c_void,
-                    val.len() * std::mem::size_of::<T>(),
+                    (val.len() * std::mem::size_of::<T>()) as u64,
                     ).to_result()?;
             }
         }
@@ -495,7 +494,7 @@ impl GcuDevice {
                 driv::topsMemcpyDtoHAsync(
                     val.as_mut_ptr() as *mut c_void,
                     src.device_ptr().clone(),
-                    val.len() * std::mem::size_of::<T>(),
+                    (val.len() * std::mem::size_of::<T>()) as u64,
                     self.stream.unwrap().as_inner()
                     ).to_result()?;
             }
@@ -504,7 +503,7 @@ impl GcuDevice {
                 driv::topsMemcpyDtoH(
                     val.as_mut_ptr() as *mut c_void,
                     src.device_ptr().clone(),
-                    val.len() * std::mem::size_of::<T>(),
+                    (val.len() * std::mem::size_of::<T>()) as u64,
                     ).to_result()?;
             }
         }

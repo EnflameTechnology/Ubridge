@@ -63,10 +63,10 @@ unsafe impl<T: Sync + DeviceCopy> Sync for GcuSlice<T> {}
 impl<T: DeviceCopy> Drop for GcuSlice<T> {
     fn drop(&mut self) {
         unsafe {
-            // if let Some(buf) = &self.host_buf {
-            //     let host_ptr = buf.as_ref().as_ptr() as *mut c_void;
-            //     driv::topsHostUnregister(host_ptr);
-            // } 
+            if let Some(buf) = &self.host_buf {
+                let host_ptr = buf.as_ref().as_ptr() as *mut c_void;
+                driv::topsHostUnregister(host_ptr);
+            } 
             if let Some(ptr) = &self.host_buf_ptr {
                 driv::topsHostFree(ptr.clone());
             } 
