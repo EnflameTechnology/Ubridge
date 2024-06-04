@@ -367,7 +367,7 @@ impl GcuDevice {
         // let host_ptr = dst.host_buf.as_ref().unwrap().as_ptr() as *mut c_void;
         if self.is_async {
             unsafe { 
-                if size % 256 != 0 {
+                // if size % 256 != 0 {
                     let mut ptr = std::ptr::null_mut();
                     driv::topsHostMalloc(&mut ptr as *mut *mut c_void, size as u64, 0).to_result()?;
                     std::ptr::copy(src.as_ptr() as *mut c_void, ptr, size);
@@ -379,10 +379,10 @@ impl GcuDevice {
                         self.stream.unwrap().as_inner(),
                     )
                     .to_result();
-                } else {
-                    dst.host_buf = Some(Pin::new(src));
-                    return Self::memcpy_htod_async(dst.device_ptr(), dst.host_buf.as_ref().unwrap(), self.stream.unwrap().as_inner());
-                }
+                // } else {
+                //     dst.host_buf = Some(Pin::new(src));
+                //     return Self::memcpy_htod_async(dst.device_ptr(), dst.host_buf.as_ref().unwrap(), self.stream.unwrap().as_inner());
+                // }
             };
         } else {
             return dst.buffer.copy_from(&src);
