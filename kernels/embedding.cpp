@@ -29,7 +29,7 @@
 #include <tops/bfloat.h>
 #include <tops/tops_runtime.h>
 #include "utils/utils.h"
-#include <acore/acore_op.h>
+#include <acore_op.h>
 using namespace std;
 
 template <typename T>

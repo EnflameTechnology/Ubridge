@@ -24,7 +24,7 @@
 #include "tops/tops_runtime.h"
 #include "utils/utils.h"
 #include "utils/matmul_general.h"
-#include <acore/acore_op.h>
+#include <acore_op.h>
 
 using namespace std;
 #define MAX_NUM 1540096 - 1024
@@ -508,7 +508,7 @@ __device__ __forceinline__ void matmul_kernel(lhs_t *lhs, rhs_t *rhs, rhs_t *out
           if (data_type == TOPSOP_DATA_FP16) {
             if (weight_data_type == TOPSOP_DATA_I8) {
               if (enable_quant == 1) {
-                mul_fp32_scalar(cur_private_output_ptr, cur_private_output_ptr,
+                mul<float, float, float>(cur_private_output_ptr, cur_private_output_ptr,
                                 *reinterpret_cast<float *>(&scale),
                                 subm_size * subn_size);
               }

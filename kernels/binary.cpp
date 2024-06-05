@@ -30,8 +30,7 @@
 #include <tops/half.h>
 #include <tops/bfloat.h>
 #include "tops/tops_runtime.h"
-#include <acore/acore_op.h>
-#include <acore/binary.h>
+#include <acore_op.h>
 #include "utils/utils.h"
 
 using namespace std;

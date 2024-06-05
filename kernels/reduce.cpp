@@ -32,7 +32,7 @@
 #include "tops/tops_runtime.h"
 #include "utils/utils.h"
 #include "utils/reduce_atomic.h"
-#include <acore/acore_op.h>
+#include <acore_op.h>
 using namespace std;
 #define RANK_MAX 3
 

@@ -3,3 +3,4 @@
 *.patch
 /kernels/conv
 /kernels/conv2d.cpp
+/kernels/atomic

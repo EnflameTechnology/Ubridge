@@ -1,60 +1,169 @@
+use anyhow::{Context, Result};
+use rayon::prelude::*;
+use std::path::PathBuf;
+use std::str::FromStr;
+use reqwest::blocking::Client;
 use std::io::Write;
-macro_rules! eprintln {
-    ($($tokens: tt)*) => {
-        println!("cargo:warning={}", format!($($tokens)*))
+
+const KERNELS: [&str; 13] =  ["unary", "fill", "binary", "affine", "cast", 
+            "reduce", "ternary", "indexing", "matmul", "embedding", "kvconcat", "conv", "copy"];
+
+fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
+    let mut command_tar = std::process::Command::new("tar");
+                command_tar.arg("-xf");
+                command_tar.arg(&filename);
+                command_tar.arg("-C");
+                command_tar.arg(&path);
+
+    let output = command_tar
+        .spawn()
+        .context(format!("failed spawning tar"))?
+        .wait_with_output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "tar error while executing: {:?}\n\n# stdout\n{:#}\n\n# stderr\n{:#}",
+            &command_tar,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
     }
+    Ok(())
 }
 
-fn main() {
+fn check_atomic_op(path: PathBuf) -> Result<()> {
+    let lib_file = format!("topsatomic_op_{:}-{:}.tar.gz",  std::env::var("ATOMIC_TAG")?, std::env::var("ATOMIC_VERSION")?);
+    let url = format!("{:}/{:}/{:}", std::env::var("ATOMIC_URL")?, std::env::var("ATOMIC_VERSION")?, lib_file);
+    let filename = path.join("atomic/".to_string() + &lib_file);
+    
+    if !filename.exists() {
+        let _ = std::fs::create_dir(path.join("atomic/"));
+        let client = Client::new();
+        match client.get(&url).send() {
+            Ok(mut response) => {
+                let mut file = std::fs::File::create(&filename)?;
+                std::io::copy(&mut response, &mut file)?;
+                unzip(filename, path.join("atomic/"))?
+            }
+            _ => {
+                anyhow::bail!(
+                    "error while configuring atomic dependencies, unable to obtain {:?}",
+                    url,
+                )
+            }
+        }
+    } else if !path.join("atomic/include").exists() && !path.join("atomic/lib").exists() {
+        unzip(filename, path.join("atomic/"))?
+    }
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    let platform = "scorpio"; 
+    let kernel_dir = PathBuf::from("../kernels/");
+    let absolute_kernel_dir = std::fs::canonicalize(&kernel_dir).unwrap();
+    let kernel_out_dir = absolute_kernel_dir.join(platform.to_string() + "/");
+
+    let num_cpus = std::env::var("RAYON_NUM_THREADS").map_or_else(
+        |_| num_cpus::get_physical(),
+        |s| usize::from_str(&s).unwrap(),
+    );
+
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_cpus)
+        .build_global()
+        .unwrap();
+
     println!("cargo:rerun-if-changed=build.rs");
-    for kernel in ["unary", "fill", "binary", "affine", "cast", 
-            "reduce", "ternary", "indexing", "matmul", "embedding", "kvconcat", "conv", "copy"] {
-        println!("cargo:rerun-if-changed=../kernels/{kernel}.cpp");
+
+    for kernel_file in KERNELS.iter() {
+        println!("cargo:rerun-if-changed=../kernels/{kernel_file}.cpp");
     }
-    gcu::build_kernels();
-}
 
-mod gcu {
-    pub fn build_kernels() -> () {
-        #[cfg(feature = "tops_backend")]
-        let platform = "pavo"; //default kernel path
+    let mut build_dir = PathBuf::from(std::env::var("OUT_DIR").context("OUT_DIR not set")?);
+    if !std::env::set_current_dir(&build_dir).is_ok() {
+        build_dir = PathBuf::from(absolute_kernel_dir.clone());
+    }
 
-        #[cfg(feature = "dorado")]
-        let platform = "dorado"; 
+    let compute_cap = 300 as usize;
+    let compiler = "/opt/tops/bin/topscc";
+    let mut first_atomic_check = true;
+    KERNELS
+        .iter()
+        .map(|f| {
+            let fatbin_file = kernel_out_dir.join(f.to_string() + ".topsfb");
+            let kernel_file = absolute_kernel_dir.join(f.to_string() + ".cpp");
+            let out_modified: Result<_, _> = fatbin_file.metadata().and_then(|m| m.modified());
+            let should_compile = if fatbin_file.exists() {
+                let in_modified = kernel_file.metadata().unwrap().modified().unwrap();
+                in_modified.duration_since(out_modified.unwrap()).is_ok()
+            } else {
+                true
+            };
+            
+            let build_file = build_dir.join(f.to_string() + ".topsfb");
+            if should_compile {
+                if first_atomic_check {
+                    first_atomic_check = false;
+                    check_atomic_op(absolute_kernel_dir.clone())?;
+                }
+                let mut command = std::process::Command::new(compiler);
+                command
+                    .arg(kernel_file)
+                    .arg(format!("-arch=gcu{compute_cap}"))
+                    .arg("-O3")
+                    .arg("-std=c++17")
+                    .arg("-fPIC")
+                    .arg("-ltops")
+                    .arg("-Xclang")
+                    .arg("-fallow-half-arguments-and-returns")
+                    .args(["-o", build_file.to_str().unwrap()])
+                    .arg(format!("-D__GCU_ARCH__={compute_cap}"))
+                    .arg(format!("-D__KRT_ARCH__={compute_cap}"))
+                    .arg("-D__ATOMIC_OP")
+                    .arg("-D__ACORE_OP__")
+                    .arg(format!("-I{:}", absolute_kernel_dir.join("atomic/include").to_str().unwrap()))
+                    .arg(format!("-I{:}", absolute_kernel_dir.join("atomic/include/common").to_str().unwrap()))
+                    .arg(format!("--tops-device-lib-path={:}", absolute_kernel_dir.join("atomic/lib").to_str().unwrap()))
+                    .arg("--tops-device-lib=libacoreop.bc")
+                    .arg("--save-temps");
+    
+                let output = command
+                    .spawn()
+                    .context(format!("failed spawning {compiler}"))?
+                    .wait_with_output()?;
+                let tmp_fatbin_file = build_dir.join(f.to_string() + ".cpp-tops-dtu-enflame-tops.topsfb");
 
-        #[cfg(feature = "scorpio")]
-        let platform = "scorpio"; 
-
-        // for platform in ["pavo", "dorado", "scorpio"] {
-            for kernel in ["unary", "matmul", "fill", "binary", "affine", 
-                    "cast", "reduce", "ternary", "indexing", "embedding", "kvconcat", "conv", "copy"] {
-                let in_file = "../kernels/".to_string() + kernel + ".cpp";
-                let in_filename = std::path::Path::new(&in_file);
-
-                let out_file = "../kernels/".to_string() + platform + "/" + kernel + ".topsfb";
-                let output_filename = std::path::Path::new(&out_file);
-                let ignore = if output_filename.exists() {
-                    let out_modified = output_filename.metadata().unwrap().modified().unwrap();
-                    if in_filename.exists() {
-                        let in_modified = in_filename.metadata().unwrap().modified().unwrap();
-                        out_modified.duration_since(in_modified).is_ok()
-                    } else {
-                        true
-                    }
-
-                } else{
-                    false
-                };
-
-                if !ignore {
-                    let mut command = std::process::Command::new("bash");
-                    command
-                        .arg("../tools/topscc-compile-".to_string() + platform + ".sh")
-                        .arg(kernel);
-                    let _ = command.spawn().expect("failed").wait_with_output();
+                if !output.status.success() && !PathBuf::from(tmp_fatbin_file).exists() {
+                    anyhow::bail!(
+                        "{:?} error while executing compiling: {:?}\n\n# stdout\n{:#}\n\n# stderr\n{:#}",
+                        compiler,
+                        &command,
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    )
+                }
+    
+                let mut command_mv = std::process::Command::new("mv");
+                command_mv.arg(build_dir.join(f.to_string() + ".cpp-tops-dtu-enflame-tops.topsfb"));
+                command_mv.arg(fatbin_file);
+                let output = command_mv
+                    .spawn()
+                    .context(format!("failed spawning {compiler}"))?
+                    .wait_with_output()?;
+                if !output.status.success() {
+                    anyhow::bail!(
+                        "{:?} error while executing compiling: {:?}\n\n# stdout\n{:#}\n\n# stderr\n{:#}",
+                        compiler,
+                        &command_mv,
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    )
                 }
             }
-        // }
-        
-    }
+            
+            Ok(())
+        })
+        .collect::<Result<()>>()?;
+
+    Ok(())
 }

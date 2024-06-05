@@ -30,7 +30,7 @@
 #include <tops/bfloat.h>
 #include <tops/tops_runtime.h>
 #include <tops/topsrtc.h>
-#include <acore/acore_op.h>
+#include <acore_op.h>
 #include "utils/utils.h"
 using namespace std;
 using namespace tops;
@@ -148,27 +148,27 @@ __device__ __forceinline__ void affine_kernel(T* in, T* out, int len, float mulv
         if (tp == AFFINE_DATA_FP16) {
             tops::half mulv_a = tops::half(mulv);
             tops::half addv_a = tops::half(addv);
-            mul_fp16_scalar(reinterpret_cast<__fp16 *>(tmp_buffer[pp_flag]),
+            mul<__fp16, __fp16, __fp16>(reinterpret_cast<__fp16 *>(tmp_buffer[pp_flag]),
                             reinterpret_cast<__fp16 *>(in_buffer[pp_flag]),
                             *reinterpret_cast<__fp16*>(&mulv_a.value), thread_len);
-            add_fp16_scalar(reinterpret_cast<__fp16 *>(out_buffer[pp_flag]),
+            add<__fp16, __fp16, __fp16>(reinterpret_cast<__fp16 *>(out_buffer[pp_flag]),
                             reinterpret_cast<__fp16 *>(tmp_buffer[pp_flag]),
                             *reinterpret_cast<__fp16*>(&addv_a.value), thread_len);
         } else if (tp == AFFINE_DATA_F32) {
-            mul_fp32_scalar(reinterpret_cast<float *>(tmp_buffer[pp_flag]),
+            mul<float, float, float>(reinterpret_cast<float *>(tmp_buffer[pp_flag]),
                             reinterpret_cast<float *>(in_buffer[pp_flag]),
                             *reinterpret_cast<float*>(&mulv), thread_len);
-            add_fp32_scalar(reinterpret_cast<float *>(out_buffer[pp_flag]),
+            add<float, float, float>(reinterpret_cast<float *>(out_buffer[pp_flag]),
                             reinterpret_cast<float *>(tmp_buffer[pp_flag]),
                             *reinterpret_cast<float*>(&addv), thread_len);
         } else if (tp == AFFINE_DATA_BF16) {
             tops::bfloat mulv_a = tops::bfloat(mulv);
             tops::bfloat addv_a = tops::bfloat(addv);
 
-            mul_bf16_scalar(reinterpret_cast<__bf16 *>(tmp_buffer[pp_flag]),
+            mul<__bf16, __bf16, __bf16>(reinterpret_cast<__bf16 *>(tmp_buffer[pp_flag]),
                             reinterpret_cast<__bf16 *>(in_buffer[pp_flag]),
                             *reinterpret_cast<__bf16 *>(&mulv_a.value), thread_len);
-            add_bf16_scalar(reinterpret_cast<__bf16 *>(out_buffer[pp_flag]),
+            add<__bf16, __bf16, __bf16>(reinterpret_cast<__bf16 *>(out_buffer[pp_flag]),
                             reinterpret_cast<__bf16 *>(tmp_buffer[pp_flag]),
                             *reinterpret_cast<__bf16 *>(&addv_a.value), thread_len);
         } 
