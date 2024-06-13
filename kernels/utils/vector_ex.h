@@ -17,42 +17,44 @@
 #define CC_KERNEL_VECTOR_EX_H
 #include <tops.h>
 
+#define KERNEL_INLINE_API __device__ __forceinline__
+
 namespace tops {
 /* ==========================================================================
                          bitcast between vbool types
    ========================================================================== */
 template <typename TO_TYPE, typename FROM_TYPE>
-inline KRT_API TO_TYPE mask_bitcast(const FROM_TYPE& v);
+KERNEL_INLINE_API TO_TYPE mask_bitcast(const FROM_TYPE& v);
 
 #if (__KRT_ARCH__ >= 300)
 template <>
-inline KRT_API vbool16_t mask_bitcast(const vbool16_t& v) {
+KERNEL_INLINE_API vbool16_t mask_bitcast(const vbool16_t& v) {
   return v;
 }
 
 template <>
-inline KRT_API vbool32_t mask_bitcast(const vbool32_t& v) {
+KERNEL_INLINE_API vbool32_t mask_bitcast(const vbool32_t& v) {
   return v;
 }
 
 template <>
-inline KRT_API vbool64_t mask_bitcast(const vbool64_t& v) {
+KERNEL_INLINE_API vbool64_t mask_bitcast(const vbool64_t& v) {
   return v;
 }
 
 template <>
-inline KRT_API vbool128_t mask_bitcast(const vbool128_t& v) {
+KERNEL_INLINE_API vbool128_t mask_bitcast(const vbool128_t& v) {
   return v;
 }
 
 template <>
-inline KRT_API vbool256_t mask_bitcast(const vbool256_t& v) {
+KERNEL_INLINE_API vbool256_t mask_bitcast(const vbool256_t& v) {
   return v;
 }
 
 #define BITCAST_BETWEEN_BOOL_VECTORS(FROM_NUM, TO_NUM) \
   template <>                                          \
-  inline KRT_API vbool##TO_NUM##_t mask_bitcast(       \
+  KERNEL_INLINE_API vbool##TO_NUM##_t mask_bitcast(    \
       const vbool##FROM_NUM##_t& v) {                  \
     return __dtu_bitcast_m##FROM_NUM##_m##TO_NUM(v);   \
   }
@@ -87,11 +89,11 @@ BITCAST_BETWEEN_BOOL_VECTORS(256, 128);
 #define BITCAST_BETWEEN_BOOL_AND_OTHER(BOOL_TYPE, BOOL_SUFFIX, OTHER_TYPE, \
                                        OTHER_SUFFIX, SUFFIX)               \
   template <>                                                              \
-  inline KRT_API BOOL_TYPE mask_bitcast(const OTHER_TYPE& v) {             \
+  KERNEL_INLINE_API BOOL_TYPE mask_bitcast(const OTHER_TYPE& v) {          \
     return __dtu_m_remapva_##OTHER_SUFFIX##_##SUFFIX##_##BOOL_SUFFIX(v);   \
   }                                                                        \
   template <>                                                              \
-  inline KRT_API OTHER_TYPE mask_bitcast(const BOOL_TYPE& v) {             \
+  KERNEL_INLINE_API OTHER_TYPE mask_bitcast(const BOOL_TYPE& v) {          \
     return __dtu_m_remapva_##OTHER_SUFFIX##_##BOOL_SUFFIX##_##SUFFIX(v);   \
   }
 
@@ -190,10 +192,10 @@ struct vector_to_scalar<VEC_TYPE[N]> {
                            vgather without maskbit
    ========================================================================== */
 template <typename TO_TYPE, typename OFFSET_TYPE>
-inline KRT_API TO_TYPE vgather(void* src, const OFFSET_TYPE& offset);
+KERNEL_INLINE_API TO_TYPE vgather(void* src, const OFFSET_TYPE& offset);
 
 template <typename TO_TYPE, typename OFFSET_TYPE>
-inline KRT_API TO_TYPE vgather(void* src, const OFFSET_TYPE& offset) {
+KERNEL_INLINE_API TO_TYPE vgather(void* src, const OFFSET_TYPE& offset) {
   static_assert(
       std::is_integral<typename vector_to_scalar<OFFSET_TYPE>::type>::value &&
           sizeof(typename vector_to_scalar<OFFSET_TYPE>::type) == 4,
@@ -206,11 +208,12 @@ inline KRT_API TO_TYPE vgather(void* src, const OFFSET_TYPE& offset) {
 #if (__KRT_ARCH__ >= 300)
 #define VGATHER_DIRECT_IMPL(TO_TYPE, TO_SUFFIX, OFFSET_TYPE)                 \
   template <>                                                                \
-  inline KRT_API TO_TYPE vgather(void* src, const OFFSET_TYPE& offset) {     \
+  KERNEL_INLINE_API TO_TYPE vgather(void* src, const OFFSET_TYPE& offset) {  \
     return __dtu_m_vldxda_##TO_SUFFIX((__DTU_INTRIN_AS__ char*)src, offset); \
   }                                                                          \
   template <>                                                                \
-  inline KRT_API TO_TYPE vgather(void* src, const OFFSET_TYPE(&offset)[1]) { \
+  KERNEL_INLINE_API TO_TYPE vgather(void* src,                               \
+                                    const OFFSET_TYPE(&offset)[1]) {         \
     return vgather<TO_TYPE>(src, offset[0]);                                 \
   }
 
@@ -240,25 +243,26 @@ VGATHER_DIRECT_IMPL(va64i8, s8, va16u32x4);
 VGATHER_DIRECT_IMPL(va64i8, s8, va16i32x4);
 #undef VGATHER_DIRECT_IMPL
 
-#define VGATHER_DUAL_IMPL(TO_TYPE, OFFSET_TYPE)                              \
-  template <>                                                                \
-  inline KRT_API TO_TYPE vgather(void* src, const OFFSET_TYPE& offset) {     \
-    using ValueType = vector_to_scalar<TO_TYPE>::type;                       \
-    using IntType = vector_to_scalar<OFFSET_TYPE>::type;                     \
-    constexpr int VEC_LENGTH = vector_length<TO_TYPE>::value;                \
-    using HalfVecType = scalar_to_vector<ValueType, VEC_LENGTH / 2>::type;   \
-    using HalfIntType = scalar_to_vector<IntType, VEC_LENGTH / 2>::type;     \
-    HalfIntType offsets[2];                                                  \
-    offsets[0] = vunpack0<HalfIntType>(offset);                              \
-    offsets[1] = vunpack1<HalfIntType>(offset);                              \
-    HalfVecType values[2];                                                   \
-    values[0] = vgather<HalfVecType>(src, offsets[0]);                       \
-    values[1] = vgather<HalfVecType>(src, offsets[1]);                       \
-    return vpack2<TO_TYPE>(values[0], values[1]);                            \
-  }                                                                          \
-  template <>                                                                \
-  inline KRT_API TO_TYPE vgather(void* src, const OFFSET_TYPE(&offset)[1]) { \
-    return vgather<TO_TYPE>(src, offset[0]);                                 \
+#define VGATHER_DUAL_IMPL(TO_TYPE, OFFSET_TYPE)                             \
+  template <>                                                               \
+  KERNEL_INLINE_API TO_TYPE vgather(void* src, const OFFSET_TYPE& offset) { \
+    using ValueType = vector_to_scalar<TO_TYPE>::type;                      \
+    using IntType = vector_to_scalar<OFFSET_TYPE>::type;                    \
+    constexpr int VEC_LENGTH = vector_length<TO_TYPE>::value;               \
+    using HalfVecType = scalar_to_vector<ValueType, VEC_LENGTH / 2>::type;  \
+    using HalfIntType = scalar_to_vector<IntType, VEC_LENGTH / 2>::type;    \
+    HalfIntType offsets[2];                                                 \
+    offsets[0] = vunpack0<HalfIntType>(offset);                             \
+    offsets[1] = vunpack1<HalfIntType>(offset);                             \
+    HalfVecType values[2];                                                  \
+    values[0] = vgather<HalfVecType>(src, offsets[0]);                      \
+    values[1] = vgather<HalfVecType>(src, offsets[1]);                      \
+    return vpack2<TO_TYPE>(values[0], values[1]);                           \
+  }                                                                         \
+  template <>                                                               \
+  KERNEL_INLINE_API TO_TYPE vgather(void* src,                              \
+                                    const OFFSET_TYPE(&offset)[1]) {        \
+    return vgather<TO_TYPE>(src, offset[0]);                                \
   }
 
 VGATHER_DUAL_IMPL(va16f32x4, va16u32x4);
@@ -277,16 +281,17 @@ VGATHER_DUAL_IMPL(va32i16x2, va16u32x4);
 VGATHER_DUAL_IMPL(va32i16x2, va16i32x4);
 #undef VGATHER_DUAL_IMPL
 
-#define VGATHER_DUAL_ARRAY_IMPL(TO_TYPE, OFFSET_TYPE)                         \
-  template <>                                                                 \
-  inline KRT_API TO_TYPE vgather(void* src, const OFFSET_TYPE(&offsets)[2]) { \
-    using ValueType = vector_to_scalar<TO_TYPE>::type;                        \
-    constexpr int VEC_LENGTH = vector_length<TO_TYPE>::value;                 \
-    using HalfVecType = scalar_to_vector<ValueType, VEC_LENGTH / 2>::type;    \
-    HalfVecType values[2];                                                    \
-    values[0] = vgather<HalfVecType>(src, offsets[0]);                        \
-    values[1] = vgather<HalfVecType>(src, offsets[1]);                        \
-    return vpack2<TO_TYPE>(values[0], values[1]);                             \
+#define VGATHER_DUAL_ARRAY_IMPL(TO_TYPE, OFFSET_TYPE)                      \
+  template <>                                                              \
+  KERNEL_INLINE_API TO_TYPE vgather(void* src,                             \
+                                    const OFFSET_TYPE(&offsets)[2]) {      \
+    using ValueType = vector_to_scalar<TO_TYPE>::type;                     \
+    constexpr int VEC_LENGTH = vector_length<TO_TYPE>::value;              \
+    using HalfVecType = scalar_to_vector<ValueType, VEC_LENGTH / 2>::type; \
+    HalfVecType values[2];                                                 \
+    values[0] = vgather<HalfVecType>(src, offsets[0]);                     \
+    values[1] = vgather<HalfVecType>(src, offsets[1]);                     \
+    return vpack2<TO_TYPE>(values[0], values[1]);                          \
   }
 
 VGATHER_DUAL_ARRAY_IMPL(va32f16x4, va16u32x4);
@@ -305,7 +310,8 @@ VGATHER_DUAL_ARRAY_IMPL(va64i8x2, va16i32x4);
 
 #define VGATHER_QUAD_ARRAY_IMPL(TO_TYPE, OFFSET_TYPE)                         \
   template <>                                                                 \
-  inline KRT_API TO_TYPE vgather(void* src, const OFFSET_TYPE(&offsets)[4]) { \
+  KERNEL_INLINE_API TO_TYPE vgather(void* src,                                \
+                                    const OFFSET_TYPE(&offsets)[4]) {         \
     using ValueType = vector_to_scalar<TO_TYPE>::type;                        \
     constexpr int VEC_LENGTH = vector_length<TO_TYPE>::value;                 \
     using QuarterVecType = scalar_to_vector<ValueType, VEC_LENGTH / 4>::type; \
@@ -328,22 +334,22 @@ VGATHER_QUAD_ARRAY_IMPL(va64i8x4, va16i32x4);
                              vgather with maskbit
    ========================================================================== */
 template <typename TO_TYPE, typename MB_TYPE, typename OFFSET_TYPE>
-inline KRT_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,
-                                 const OFFSET_TYPE& offset,
-                                 const TO_TYPE& remain);
+KERNEL_INLINE_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,
+                                    const OFFSET_TYPE& offset,
+                                    const TO_TYPE& remain);
 
 template <typename TO_TYPE, typename MB_TYPE, typename OFFSET_TYPE>
-inline KRT_API TO_TYPE vgather_f(const MB_TYPE& mb, void* src,
-                                 const OFFSET_TYPE& offset,
-                                 const TO_TYPE& remain) {
+KERNEL_INLINE_API TO_TYPE vgather_f(const MB_TYPE& mb, void* src,
+                                    const OFFSET_TYPE& offset,
+                                    const TO_TYPE& remain) {
   auto mask = mask_not(mb);
   return vgather_t<TO_TYPE>(mask, src, offset, remain);
 }
 
 template <typename TO_TYPE, typename MB_TYPE, typename OFFSET_TYPE>
-inline KRT_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,
-                                 const OFFSET_TYPE& offset,
-                                 const TO_TYPE& remain) {
+KERNEL_INLINE_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,
+                                    const OFFSET_TYPE& offset,
+                                    const TO_TYPE& remain) {
   static_assert(
       std::is_integral<typename vector_to_scalar<OFFSET_TYPE>::type>::value &&
           sizeof(typename vector_to_scalar<OFFSET_TYPE>::type) == 4,
@@ -357,9 +363,9 @@ inline KRT_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,
 #if (__KRT_ARCH__ >= 300)
 #define VGATHER_T_DIRECT_IMPL(TO_TYPE, TO_SUFFIX, MB_TYPE, OFFSET_TYPE)      \
   template <>                                                                \
-  inline KRT_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,             \
-                                   const OFFSET_TYPE& offset,                \
-                                   const TO_TYPE& remain) {                  \
+  KERNEL_INLINE_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,          \
+                                      const OFFSET_TYPE& offset,             \
+                                      const TO_TYPE& remain) {               \
     using ValueType = vector_to_scalar<TO_TYPE>::type;                       \
     using QaType = scalar_to_vector<ValueType, TOPS_VECTOR_LENGTH * 4 /      \
                                                    sizeof(ValueType)>::type; \
@@ -369,9 +375,9 @@ inline KRT_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,
                                                offset, remain, mask);        \
   }                                                                          \
   template <>                                                                \
-  inline KRT_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,             \
-                                   const OFFSET_TYPE(&offset)[1],            \
-                                   const TO_TYPE& remain) {                  \
+  KERNEL_INLINE_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,          \
+                                      const OFFSET_TYPE(&offset)[1],         \
+                                      const TO_TYPE& remain) {               \
     return vgather_t(mb, src, offset[0], remain);                            \
   }
 
@@ -403,9 +409,9 @@ VGATHER_T_DIRECT_IMPL(va64i8, s8, vbool64_t, va16i32x4);
 
 #define VGATHER_T_DUAL_IMPL(TO_TYPE, TO_SUFFIX, MB_TYPE, OFFSET_TYPE)        \
   template <>                                                                \
-  inline KRT_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,             \
-                                   const OFFSET_TYPE& offset,                \
-                                   const TO_TYPE& remain) {                  \
+  KERNEL_INLINE_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,          \
+                                      const OFFSET_TYPE& offset,             \
+                                      const TO_TYPE& remain) {               \
     using ValueType = vector_to_scalar<TO_TYPE>::type;                       \
     using IntType = vector_to_scalar<OFFSET_TYPE>::type;                     \
     constexpr int VEC_LENGTH = vector_length<TO_TYPE>::value;                \
@@ -430,9 +436,9 @@ VGATHER_T_DIRECT_IMPL(va64i8, s8, vbool64_t, va16i32x4);
   }                                                                          \
                                                                              \
   template <>                                                                \
-  inline KRT_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,             \
-                                   const OFFSET_TYPE(&offset)[1],            \
-                                   const TO_TYPE& remain) {                  \
+  KERNEL_INLINE_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,          \
+                                      const OFFSET_TYPE(&offset)[1],         \
+                                      const TO_TYPE& remain) {               \
     return vgather_t(mb, src, offset[0], remain);                            \
   }
 
@@ -454,9 +460,9 @@ VGATHER_T_DUAL_IMPL(va32i16x2, s16, vbool64_t, va16i32x4);
 
 #define VGATHER_T_DUAL_ARRAY_IMPL(TO_TYPE, TO_SUFFIX, MB_TYPE, OFFSET_TYPE)  \
   template <>                                                                \
-  inline KRT_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,             \
-                                   const OFFSET_TYPE(&offsets)[2],           \
-                                   const TO_TYPE& remain) {                  \
+  KERNEL_INLINE_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,          \
+                                      const OFFSET_TYPE(&offsets)[2],        \
+                                      const TO_TYPE& remain) {               \
     using ValueType = vector_to_scalar<TO_TYPE>::type;                       \
     constexpr int VEC_LENGTH = vector_length<TO_TYPE>::value;                \
     using HalfVecType = scalar_to_vector<ValueType, VEC_LENGTH / 2>::type;   \
@@ -483,9 +489,9 @@ VGATHER_T_DUAL_ARRAY_IMPL(va64i8x2, s8, vbool128_t, va16i32x4);
 
 #define VGATHER_T_QUAD_ARRAY2_IMPL(TO_TYPE, TO_SUFFIX, MB_TYPE, OFFSET_TYPE)  \
   template <>                                                                 \
-  inline KRT_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,              \
-                                   const OFFSET_TYPE(&offset)[2],             \
-                                   const TO_TYPE& remain) {                   \
+  KERNEL_INLINE_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,           \
+                                      const OFFSET_TYPE(&offset)[2],          \
+                                      const TO_TYPE& remain) {                \
     using ValueType = vector_to_scalar<TO_TYPE>::type;                        \
     using IntType = vector_to_scalar<OFFSET_TYPE>::type;                      \
     constexpr int VEC_LENGTH = vector_length<TO_TYPE>::value;                 \
@@ -526,9 +532,9 @@ VGATHER_T_QUAD_ARRAY2_IMPL(va32i16x4, s16, vbool128_t, va16i32x4);
 
 #define VGATHER_T_QUAD_ARRAY4_IMPL(TO_TYPE, TO_SUFFIX, MB_TYPE, OFFSET_TYPE)  \
   template <>                                                                 \
-  inline KRT_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,              \
-                                   const OFFSET_TYPE(&offsets)[4],            \
-                                   const TO_TYPE& remain) {                   \
+  KERNEL_INLINE_API TO_TYPE vgather_t(const MB_TYPE& mb, void* src,           \
+                                      const OFFSET_TYPE(&offsets)[4],         \
+                                      const TO_TYPE& remain) {                \
     using ValueType = vector_to_scalar<TO_TYPE>::type;                        \
     constexpr int VEC_LENGTH = vector_length<TO_TYPE>::value;                 \
     using QuarterVecType = scalar_to_vector<ValueType, VEC_LENGTH / 4>::type; \
@@ -560,12 +566,12 @@ VGATHER_T_QUAD_ARRAY4_IMPL(va64i8x4, s8, vbool256_t, va16i32x4);
                            vscatter without maskbit
    ========================================================================== */
 template <typename FROM_TYPE, typename OFFSET_TYPE>
-inline KRT_API void vscatter(void* dst, const FROM_TYPE& value,
-                             const OFFSET_TYPE& offset);
+KERNEL_INLINE_API void vscatter(void* dst, const FROM_TYPE& value,
+                                const OFFSET_TYPE& offset);
 
 template <typename FROM_TYPE, typename OFFSET_TYPE>
-inline KRT_API void vscatter(void* dst, const FROM_TYPE& value,
-                             const OFFSET_TYPE& offset) {
+KERNEL_INLINE_API void vscatter(void* dst, const FROM_TYPE& value,
+                                const OFFSET_TYPE& offset) {
   static_assert(
       std::is_integral<typename vector_to_scalar<OFFSET_TYPE>::type>::value &&
           sizeof(typename vector_to_scalar<OFFSET_TYPE>::type) == 4,
@@ -578,13 +584,13 @@ inline KRT_API void vscatter(void* dst, const FROM_TYPE& value,
 #if (__KRT_ARCH__ >= 300)
 #define VSCATTER_DIRECT_IMPL(FROM_TYPE, FROM_SUFFIX, OFFSET_TYPE)              \
   template <>                                                                  \
-  inline KRT_API void vscatter(void* dst, const FROM_TYPE& value,              \
-                               const OFFSET_TYPE& offset) {                    \
+  KERNEL_INLINE_API void vscatter(void* dst, const FROM_TYPE& value,           \
+                                  const OFFSET_TYPE& offset) {                 \
     __dtu_m_vstxda_##FROM_SUFFIX(value, (__DTU_INTRIN_AS__ char*)dst, offset); \
   }                                                                            \
   template <>                                                                  \
-  inline KRT_API void vscatter(void* dst, const FROM_TYPE& value,              \
-                               const OFFSET_TYPE(&offset)[1]) {                \
+  KERNEL_INLINE_API void vscatter(void* dst, const FROM_TYPE& value,           \
+                                  const OFFSET_TYPE(&offset)[1]) {             \
     vscatter(dst, value, offset[0]);                                           \
   }
 
@@ -612,8 +618,8 @@ VSCATTER_DIRECT_IMPL(va32i16, s16, va16i32x2);
 
 #define VSCATTER_BPE1_IMPL(FROM_TYPE, FROM_SUFFIX, OFFSET_TYPE)        \
   template <>                                                          \
-  inline KRT_API void vscatter(void* dst, const FROM_TYPE& value,      \
-                               const OFFSET_TYPE& offset) {            \
+  KERNEL_INLINE_API void vscatter(void* dst, const FROM_TYPE& value,   \
+                                  const OFFSET_TYPE& offset) {         \
     using IntType = vector_to_scalar<OFFSET_TYPE>::type;               \
     constexpr int OFF_LENGTH = vector_length<OFFSET_TYPE>::value;      \
     using DaIntType = scalar_to_vector<IntType, OFF_LENGTH / 2>::type; \
@@ -626,8 +632,8 @@ VSCATTER_DIRECT_IMPL(va32i16, s16, va16i32x2);
                                  offsets[1], 1);                       \
   }                                                                    \
   template <>                                                          \
-  inline KRT_API void vscatter(void* dst, const FROM_TYPE& value,      \
-                               const OFFSET_TYPE(&offset)[1]) {        \
+  KERNEL_INLINE_API void vscatter(void* dst, const FROM_TYPE& value,   \
+                                  const OFFSET_TYPE(&offset)[1]) {     \
     vscatter(dst, value, offset[0]);                                   \
   }
 
@@ -639,8 +645,8 @@ VSCATTER_BPE1_IMPL(va64i8, s8, va16i32x4);
 
 #define VSCATTER_DUAL_IMPL(FROM_TYPE, OFFSET_TYPE)                         \
   template <>                                                              \
-  inline KRT_API void vscatter(void* dst, const FROM_TYPE& value,          \
-                               const OFFSET_TYPE& offset) {                \
+  KERNEL_INLINE_API void vscatter(void* dst, const FROM_TYPE& value,       \
+                                  const OFFSET_TYPE& offset) {             \
     using ValueType = vector_to_scalar<FROM_TYPE>::type;                   \
     using IntType = vector_to_scalar<OFFSET_TYPE>::type;                   \
     constexpr int VEC_LENGTH = vector_length<FROM_TYPE>::value;            \
@@ -657,8 +663,8 @@ VSCATTER_BPE1_IMPL(va64i8, s8, va16i32x4);
     vscatter(dst, values[1], offsets[1]);                                  \
   }                                                                        \
   template <>                                                              \
-  inline KRT_API void vscatter(void* dst, const FROM_TYPE& value,          \
-                               const OFFSET_TYPE(&offset)[1]) {            \
+  KERNEL_INLINE_API void vscatter(void* dst, const FROM_TYPE& value,       \
+                                  const OFFSET_TYPE(&offset)[1]) {         \
     vscatter(dst, value, offset[0]);                                       \
   }
 
@@ -680,8 +686,8 @@ VSCATTER_DUAL_IMPL(va32i16x2, va16i32x4);
 
 #define VSCATTER_DUAL_ARRAY_IMPL(FROM_TYPE, OFFSET_TYPE)                   \
   template <>                                                              \
-  inline KRT_API void vscatter(void* dst, const FROM_TYPE& value,          \
-                               const OFFSET_TYPE(&offsets)[2]) {           \
+  KERNEL_INLINE_API void vscatter(void* dst, const FROM_TYPE& value,       \
+                                  const OFFSET_TYPE(&offsets)[2]) {        \
     using ValueType = vector_to_scalar<FROM_TYPE>::type;                   \
     constexpr int VEC_LENGTH = vector_length<FROM_TYPE>::value;            \
     using HalfVecType = scalar_to_vector<ValueType, VEC_LENGTH / 2>::type; \
@@ -708,8 +714,8 @@ VSCATTER_DUAL_ARRAY_IMPL(va64i8x2, va16i32x4);
 
 #define VSCATTER_QUAD_ARRAY_IMPL(FROM_TYPE, OFFSET_TYPE)                      \
   template <>                                                                 \
-  inline KRT_API void vscatter(void* dst, const FROM_TYPE& value,             \
-                               const OFFSET_TYPE(&offsets)[4]) {              \
+  KERNEL_INLINE_API void vscatter(void* dst, const FROM_TYPE& value,          \
+                                  const OFFSET_TYPE(&offsets)[4]) {           \
     using ValueType = vector_to_scalar<FROM_TYPE>::type;                      \
     constexpr int VEC_LENGTH = vector_length<FROM_TYPE>::value;               \
     using QuarterVecType = scalar_to_vector<ValueType, VEC_LENGTH / 4>::type; \
@@ -735,22 +741,22 @@ VSCATTER_QUAD_ARRAY_IMPL(va64i8x4, va16i32x4);
                              vscatter with maskbit
    ========================================================================== */
 template <typename MB_TYPE, typename FROM_TYPE, typename OFFSET_TYPE>
-inline KRT_API void vscatter_t(const MB_TYPE& mb, void* dst,
-                               const FROM_TYPE& value,
-                               const OFFSET_TYPE& offset);
+KERNEL_INLINE_API void vscatter_t(const MB_TYPE& mb, void* dst,
+                                  const FROM_TYPE& value,
+                                  const OFFSET_TYPE& offset);
 
 template <typename MB_TYPE, typename FROM_TYPE, typename OFFSET_TYPE>
-inline KRT_API void vscatter_f(const MB_TYPE& mb, void* dst,
-                               const FROM_TYPE& value,
-                               const OFFSET_TYPE& offset) {
+KERNEL_INLINE_API void vscatter_f(const MB_TYPE& mb, void* dst,
+                                  const FROM_TYPE& value,
+                                  const OFFSET_TYPE& offset) {
   auto mask = mask_not(mb);
   return vscatter_t(mask, dst, value, offset);
 }
 
 template <typename MB_TYPE, typename FROM_TYPE, typename OFFSET_TYPE>
-inline KRT_API void vscatter_t(const MB_TYPE& mb, void* dst,
-                               const FROM_TYPE& value,
-                               const OFFSET_TYPE& offset) {
+KERNEL_INLINE_API void vscatter_t(const MB_TYPE& mb, void* dst,
+                                  const FROM_TYPE& value,
+                                  const OFFSET_TYPE& offset) {
   static_assert(
       std::is_integral<typename vector_to_scalar<OFFSET_TYPE>::type>::value &&
           sizeof(typename vector_to_scalar<OFFSET_TYPE>::type) == 4,
@@ -764,9 +770,9 @@ inline KRT_API void vscatter_t(const MB_TYPE& mb, void* dst,
 #if (__KRT_ARCH__ >= 300)
 #define VSCATTER_T_DIRECT_IMPL(FROM_TYPE, FROM_SUFFIX, MB_TYPE, OFFSET_TYPE)   \
   template <>                                                                  \
-  inline KRT_API void vscatter_t(const MB_TYPE& mb, void* dst,                 \
-                                 const FROM_TYPE& value,                       \
-                                 const OFFSET_TYPE& offset) {                  \
+  KERNEL_INLINE_API void vscatter_t(const MB_TYPE& mb, void* dst,              \
+                                    const FROM_TYPE& value,                    \
+                                    const OFFSET_TYPE& offset) {               \
     using ValueType = vector_to_scalar<FROM_TYPE>::type;                       \
     using QaType = scalar_to_vector<ValueType, TOPS_VECTOR_LENGTH * 4 /        \
                                                    sizeof(ValueType)>::type;   \
@@ -776,9 +782,9 @@ inline KRT_API void vscatter_t(const MB_TYPE& mb, void* dst,
                                           offset, mask);                       \
   }                                                                            \
   template <>                                                                  \
-  inline KRT_API void vscatter_t(const MB_TYPE& mb, void* dst,                 \
-                                 const FROM_TYPE& value,                       \
-                                 const OFFSET_TYPE(&offset)[1]) {              \
+  KERNEL_INLINE_API void vscatter_t(const MB_TYPE& mb, void* dst,              \
+                                    const FROM_TYPE& value,                    \
+                                    const OFFSET_TYPE(&offset)[1]) {           \
     vscatter_t(mb, dst, value, offset[0]);                                     \
   }
 
@@ -806,9 +812,9 @@ VSCATTER_T_DIRECT_IMPL(va32i16, s16, vbool32_t, va16i32x2);
 
 #define VSCATTER_T_BPE1_IMPL(VA_TYPE, FROM_SUFFIX, OFFSET_TYPE)                \
   template <>                                                                  \
-  inline KRT_API void vscatter_t(const vbool64_t& mb, void* dst,               \
-                                 const VA_TYPE& value,                         \
-                                 const OFFSET_TYPE& offset) {                  \
+  KERNEL_INLINE_API void vscatter_t(const vbool64_t& mb, void* dst,            \
+                                    const VA_TYPE& value,                      \
+                                    const OFFSET_TYPE& offset) {               \
     using FROM_TYPE = VA_TYPE;                                                 \
     using ValueType = vector_to_scalar<FROM_TYPE>::type;                       \
     using IntType = vector_to_scalar<OFFSET_TYPE>::type;                       \
@@ -827,16 +833,16 @@ VSCATTER_T_DIRECT_IMPL(va32i16, s16, vbool32_t, va16i32x2);
                                           offsets[1], 1, mask);                \
   }                                                                            \
   template <>                                                                  \
-  inline KRT_API void vscatter_t(const vbool64_t& mb, void* dst,               \
-                                 const VA_TYPE& value,                         \
-                                 const OFFSET_TYPE(&offset)[1]) {              \
+  KERNEL_INLINE_API void vscatter_t(const vbool64_t& mb, void* dst,            \
+                                    const VA_TYPE& value,                      \
+                                    const OFFSET_TYPE(&offset)[1]) {           \
     vscatter_t(mb, dst, value, offset[0]);                                     \
   }                                                                            \
                                                                                \
   template <>                                                                  \
-  inline KRT_API void vscatter_t(const vbool128_t& mb, void* dst,              \
-                                 const VA_TYPE##x2& value,                     \
-                                 const OFFSET_TYPE(&offset)[2]) {              \
+  KERNEL_INLINE_API void vscatter_t(const vbool128_t& mb, void* dst,           \
+                                    const VA_TYPE##x2& value,                  \
+                                    const OFFSET_TYPE(&offset)[2]) {           \
     using FROM_TYPE = VA_TYPE##x2;                                             \
     using ValueType = vector_to_scalar<FROM_TYPE>::type;                       \
     using IntType = vector_to_scalar<OFFSET_TYPE>::type;                       \
@@ -867,9 +873,9 @@ VSCATTER_T_DIRECT_IMPL(va32i16, s16, vbool32_t, va16i32x2);
   }                                                                            \
                                                                                \
   template <>                                                                  \
-  inline KRT_API void vscatter_t(const vbool256_t& mb, void* dst,              \
-                                 const VA_TYPE##x4& value,                     \
-                                 const OFFSET_TYPE(&offset)[4]) {              \
+  KERNEL_INLINE_API void vscatter_t(const vbool256_t& mb, void* dst,           \
+                                    const VA_TYPE##x4& value,                  \
+                                    const OFFSET_TYPE(&offset)[4]) {           \
     using FROM_TYPE = VA_TYPE##x4;                                             \
     using ValueType = vector_to_scalar<FROM_TYPE>::type;                       \
     using IntType = vector_to_scalar<OFFSET_TYPE>::type;                       \
@@ -917,9 +923,9 @@ VSCATTER_T_BPE1_IMPL(va64i8, s8, va16i32x4);
 
 #define VSCATTER_T_DUAL_IMPL(FROM_TYPE, FROM_SUFFIX, MB_TYPE, OFFSET_TYPE)   \
   template <>                                                                \
-  inline KRT_API void vscatter_t(const MB_TYPE& mb, void* dst,               \
-                                 const FROM_TYPE& value,                     \
-                                 const OFFSET_TYPE& offset) {                \
+  KERNEL_INLINE_API void vscatter_t(const MB_TYPE& mb, void* dst,            \
+                                    const FROM_TYPE& value,                  \
+                                    const OFFSET_TYPE& offset) {             \
     using ValueType = vector_to_scalar<FROM_TYPE>::type;                     \
     using IntType = vector_to_scalar<OFFSET_TYPE>::type;                     \
     constexpr int VEC_LENGTH = vector_length<FROM_TYPE>::value;              \
@@ -941,9 +947,9 @@ VSCATTER_T_BPE1_IMPL(va64i8, s8, va16i32x4);
         values[1], (__DTU_INTRIN_AS__ char*)dst, offsets[1], mask);          \
   }                                                                          \
   template <>                                                                \
-  inline KRT_API void vscatter_t(const MB_TYPE& mb, void* dst,               \
-                                 const FROM_TYPE& value,                     \
-                                 const OFFSET_TYPE(&offset)[1]) {            \
+  KERNEL_INLINE_API void vscatter_t(const MB_TYPE& mb, void* dst,            \
+                                    const FROM_TYPE& value,                  \
+                                    const OFFSET_TYPE(&offset)[1]) {         \
     vscatter_t(mb, dst, value, offset[0]);                                   \
   }
 
@@ -966,9 +972,9 @@ VSCATTER_T_DUAL_IMPL(va32i16x2, s16, vbool64_t, va16i32x4);
 #define VSCATTER_T_QUAD_ARRAY2_IMPL(FROM_TYPE, FROM_SUFFIX, MB_TYPE,          \
                                     OFFSET_TYPE)                              \
   template <>                                                                 \
-  inline KRT_API void vscatter_t(const MB_TYPE& mb, void* dst,                \
-                                 const FROM_TYPE& value,                      \
-                                 const OFFSET_TYPE(&offset)[2]) {             \
+  KERNEL_INLINE_API void vscatter_t(const MB_TYPE& mb, void* dst,             \
+                                    const FROM_TYPE& value,                   \
+                                    const OFFSET_TYPE(&offset)[2]) {          \
     using ValueType = vector_to_scalar<FROM_TYPE>::type;                      \
     using IntType = vector_to_scalar<OFFSET_TYPE>::type;                      \
     constexpr int VEC_LENGTH = vector_length<FROM_TYPE>::value;               \
@@ -1006,6 +1012,82 @@ VSCATTER_T_QUAD_ARRAY2_IMPL(va32i16x4, s16, vbool128_t, va16i32x4);
 #undef VSCATTER_T_QUAD_ARRAY2_IMPL
 #endif  // __KRT_ARCH__ >= 300
 
+/* ==========================================================================
+                        iota to an OACC with fixed size
+   ========================================================================== */
+template <typename RET_TYPE>
+KERNEL_INLINE_API RET_TYPE viota(unsigned int start);
+template <typename RET_TYPE, typename MB_TYPE>
+KERNEL_INLINE_API RET_TYPE viota_t(const MB_TYPE& mb, unsigned int start,
+                                   const RET_TYPE& remain);
+template <typename RET_TYPE, typename MB_TYPE>
+KERNEL_INLINE_API RET_TYPE viota_f(const MB_TYPE& mb, unsigned int start,
+                                   const RET_TYPE& remain) {
+  auto mask = mask_not(mb);
+  return viota_t<RET_TYPE>(mask, start, remain);
+}
+
+template <typename RET_TYPE>
+KERNEL_INLINE_API RET_TYPE viota_dup(unsigned int start);
+template <typename RET_TYPE, typename MB_TYPE>
+KERNEL_INLINE_API RET_TYPE viota_dup_t(const MB_TYPE& mb, unsigned int start,
+                                       const RET_TYPE& remain);
+template <typename RET_TYPE, typename MB_TYPE>
+KERNEL_INLINE_API RET_TYPE viota_dup_f(const MB_TYPE& mb, unsigned int start,
+                                       const RET_TYPE& remain) {
+  auto mask = mask_not(mb);
+  return viota_dup_t<RET_TYPE>(mask, start, remain);
+}
+
+#if (__KRT_ARCH__ >= 300)
+#define VIOTA_IMPL(TYPE, NUM, BOOL_NUM)                               \
+  template <>                                                         \
+  KERNEL_INLINE_API va##NUM##TYPE##x4 viota(unsigned int start) {     \
+    return __dtu_m_mid_m0_##TYPE(start);                              \
+  }                                                                   \
+  template <>                                                         \
+  KERNEL_INLINE_API va##NUM##TYPE##x4 viota_dup(unsigned int start) { \
+    return __dtu_m_mid_m1_##TYPE(start);                              \
+  }                                                                   \
+  template <>                                                         \
+  KERNEL_INLINE_API va##NUM##TYPE##x4 viota_t(                        \
+      const vbool##BOOL_NUM##_t& mb, unsigned int start,              \
+      const va##NUM##TYPE##x4& remain) {                              \
+    return __dtu_m_mid_m0_##TYPE##_vm(start, remain, mb);             \
+  }                                                                   \
+  template <>                                                         \
+  KERNEL_INLINE_API va##NUM##TYPE##x4 viota_dup_t(                    \
+      const vbool##BOOL_NUM##_t& mb, unsigned int start,              \
+      const va##NUM##TYPE##x4& remain) {                              \
+    return __dtu_m_mid_m1_##TYPE##_vm(start, remain, mb);             \
+  }
+
+VIOTA_IMPL(u32, 16, 64);
+VIOTA_IMPL(u16, 32, 128);
+VIOTA_IMPL(u8, 64, 256);
+#undef VIOTA_IMPL
+#endif  // __KRT_ARCH__ >= 300
+
+/* ==========================================================================
+                       set maskbit to 1 if index < end
+   ========================================================================== */
+template <typename TO_TYPE>
+KERNEL_INLINE_API TO_TYPE set_maskbit(unsigned int end);
+
+#if (__KRT_ARCH__ >= 300)
+#define VSET_MASKBIT_IMPL(BOOL_NUM, SUFFIX)                               \
+  template <>                                                             \
+  KERNEL_INLINE_API vbool##BOOL_NUM##_t set_maskbit<vbool##BOOL_NUM##_t>( \
+      unsigned int end) {                                                 \
+    return __dtu_m_vset_mb_##SUFFIX##_m##BOOL_NUM(end);                   \
+  }
+
+VSET_MASKBIT_IMPL(256, b);
+VSET_MASKBIT_IMPL(128, h);
+VSET_MASKBIT_IMPL(64, w);
+#undef VSET_MASKBIT_IMPL
+#endif  // __KRT_ARCH__ >= 300
 }  // namespace tops
 
+#undef KERNEL_INLINE_API
 #endif  // CC_KERNEL_VECTOR_EX_H

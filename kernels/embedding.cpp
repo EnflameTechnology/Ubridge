@@ -17,10 +17,10 @@
  * @brief
  *
  * @author  Guoqing Bao
- * @date    2024-01-08 to 2024-01-30
+ * @date    2024-01-08 to 2024-06-13
  * @version V0.1
  * @par     Copyright (c) Enflame Tech Company.
- * @par     History: Support partial rotary embedding
+ * @par     History: Support partial rotary embedding, vectorized compute
  * @par     Comments: gcu kernel for rotary embedding (partial rotary embedding also supported).
  */
 #include <stdio.h>
@@ -30,8 +30,10 @@
 #include <tops/tops_runtime.h>
 #include "utils/utils.h"
 #include <acore_op.h>
+#include "utils/vector_ex.h"
 using namespace std;
 
+#if 0
 template <typename T>
 __device__ __forceinline__  void apply_rotary_qkv(T *q_arr, T *k_arr, T *cos_ptr, T *sin_ptr,
                                 int rot_offset, int embed_dim, int gpt_geox) {
@@ -87,6 +89,46 @@ __device__ __forceinline__  void apply_rotary(T *arr, T *cos_ptr, T *sin_ptr,
   arr[x_index] = x * cos - y * sin;
   arr[y_index] = y * cos + x * sin;
 }
+#endif
+
+template <typename T>
+__device__ __forceinline__  void apply_rotary_qkv_batch(T *q_arr, T *k_arr, T *cos_ptr, T *sin_ptr,
+                                va16u32x4 offsets, va16u32x4 rot_offsets, va16u32x4 embed_dims, 
+                                const va16u32x4 VEC1, const va16u32x4 VEC2, va16u32x4 vec_bpe,
+                                int gpt_geox) {
+  using vtype = typename tops::scalar_to_vector<T, TOPS_VECTOR_LENGTH>::type;
+  va16u32x4 x_index, y_index;
+  vtype cos, sin, x, y;
+  if (gpt_geox) {
+    // GPT-NeoX style
+    x_index = rot_offsets;
+    y_index = vadd(embed_dims, rot_offsets);
+    cos = vgather<vtype>(cos_ptr, vmul(x_index, vec_bpe));
+    sin = vgather<vtype>(sin_ptr, vmul(x_index, vec_bpe));
+  } else {
+    // GPT-J style
+    x_index = vmul(VEC2, rot_offsets);
+    y_index = vadd(x_index, VEC1);
+    cos = vgather<vtype>(cos_ptr, vmul(vdiv(x_index, VEC2), vec_bpe));
+    sin = vgather<vtype>(sin_ptr, vmul(vdiv(x_index, VEC2), vec_bpe));
+  }
+
+  x_index = vmul(vadd(x_index, offsets), vec_bpe);
+  y_index = vmul(vadd(y_index, offsets), vec_bpe);
+  x = vgather<vtype>(q_arr, x_index);
+  y = vgather<vtype>(q_arr, y_index);
+  
+  auto v1 = vsub(vmul(x, cos), vmul(y, sin));
+  auto v2 = vadd(vmul(y, cos), vmul(x, sin));
+  vscatter<vtype>(q_arr, v1, x_index);
+  vscatter<vtype>(q_arr, v2, y_index);
+  x = vgather<vtype>(k_arr, x_index);
+  y = vgather<vtype>(k_arr, y_index);
+  v1 = vsub(vmul(x, cos), vmul(y, sin));
+  v2 = vadd(vmul(y, cos), vmul(x, sin));
+  vscatter<vtype>(k_arr, v1, x_index);
+  vscatter<vtype>(k_arr, v2, y_index);
+}
 
 template <typename T>
 __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index_pos,
@@ -113,12 +155,9 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
         }
       }
     }
-    __local__ __valigned__ T bufCosSin[1024 * 48];
-    __local__ __valigned__ T bufQuery[1024 * 48];
-    __local__ __valigned__ T bufKey[1024 * 48];
-    __local__ __valigned__ float bufCosSinf32[1024 * 48];
-    __local__ __valigned__ float bufQueryf32[1024 * 48];
-    __local__ __valigned__ float bufKeyf32[1024 * 48];
+    __local__ __valigned__ T bufCosSin[1024 * 64];
+    __local__ __valigned__ T bufQuery[1024 * 64];
+    __local__ __valigned__ T bufKey[1024 * 64];
 
     tops::mdspan cos_sin_l1(tops::Private, bufCosSin, hidden_size);
     tops::mdspan query_l1(tops::Private, bufQuery, q_stride);
@@ -126,8 +165,16 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
     int32_t embed_dim = split_dim / 2;
     int nq = q_heads * embed_dim;
     int nk = k_heads * embed_dim;
-    for (int j = 0; j < thread_step; j++) {
-      int i = thread_id * THREAD_STEP + j;
+    int max_qk = nq > nk ? nq : nk;
+    constexpr int TILESIZE = vector_length<va16u32x4>::value;
+    va16u32x4 embed_dims = vbroadcast<va16u32x4>((unsigned int)embed_dim);
+    va16u32x4 hidden_sizes = vbroadcast<va16u32x4>((unsigned int)hidden_size);
+    const va16u32x4 VEC1 = vbroadcast<va16u32x4>((unsigned int)1);
+    const va16u32x4 VEC2 = vbroadcast<va16u32x4>((unsigned int)2);
+    va16u32x4 vec_bpe = vbroadcast<va16u32x4>((unsigned int)sizeof(T));
+
+    for (int p = 0; p < thread_step; p++) {
+      int i = thread_id * THREAD_STEP + p;
       if (i < N) {
         auto query_sub0 = query + i * q_stride;
         auto key_sub0 = key + i * k_stride;
@@ -138,28 +185,16 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
         auto cos_sin_cache = cos_sin_cur + i * split_dim;
         tops::mdspan hbm_cos_sin(tops::Global, cos_sin_cache, split_dim);
         tops::memcpy(ctx, cos_sin_l1, hbm_cos_sin);
-        convert<float, T>(reinterpret_cast<float*>(bufCosSinf32), reinterpret_cast<T*>(bufCosSin), split_dim);
-        convert<float, T>(reinterpret_cast<float*>(bufQueryf32), reinterpret_cast<T*>(bufQuery), q_stride);
-        convert<float, T>(reinterpret_cast<float*>(bufKeyf32), reinterpret_cast<T*>(bufKey), k_stride);
-        auto cos_ptr = bufCosSinf32;
-        auto sin_ptr = bufCosSinf32 + embed_dim;
-
-        for (int j = 0; j < nq; j++) {
-          int head_idx = j / embed_dim;
-          int offset = head_idx * hidden_size;
-          int rot_offset = j % embed_dim;
-          auto q_arr = bufQueryf32 + offset;
-          auto k_arr = bufKeyf32 + offset;
-
-          if (nq == nk) {
-            apply_rotary_qkv<float>(q_arr, k_arr, cos_ptr, sin_ptr, rot_offset, embed_dim, gpt_geox);
-          } else {
-            apply_rotary<float>(q_arr, cos_ptr, sin_ptr, rot_offset, embed_dim, gpt_geox);
-            apply_rotary<float>(k_arr, cos_ptr, sin_ptr, rot_offset, embed_dim, gpt_geox);
-          }
+        auto cos_ptr = bufCosSin;
+        auto sin_ptr = bufCosSin + embed_dim;
+        for (int j = 0; j < max_qk; j+=TILESIZE) { //This is safe even though nk != nq (redundant compute)
+          auto indexes = viota<va16u32x4>((unsigned int)j);
+          auto head_idxes = vdiv(indexes, embed_dims);
+          auto offsets = vmul(head_idxes, hidden_sizes);
+          auto rot_offsets = vrem(indexes, embed_dims);
+          apply_rotary_qkv_batch<T>(bufQuery, bufKey, cos_ptr, sin_ptr, 
+                                      offsets, rot_offsets, embed_dims, VEC1, VEC2, vec_bpe, gpt_geox);
         }
-        convert<T, float>(reinterpret_cast<T*>(bufQuery), reinterpret_cast<float*>(bufQueryf32), q_stride);
-        convert<T, float>(reinterpret_cast<T*>(bufKey), reinterpret_cast<float*>(bufKeyf32), k_stride);
         tops::memcpy(ctx, hbm_query, query_l1);
         tops::memcpy(ctx, hbm_key, key_l1);
       }
