@@ -31,11 +31,6 @@
 
 #include <tops/tops_runtime.h>
 #include <tops/topsrtc.h>
-#include <krt/scalar.h>
-#include <krt/vector_mask.h>
-#include <krt/dispatch.h>
-#include <krt/leaptr.h>
-#include <krt/vector_infra.h>
 #include <acore_op.h>
 #include "utils/utils.h"
 using namespace std;

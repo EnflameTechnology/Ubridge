@@ -93,36 +93,48 @@ __device__ __forceinline__  void apply_rotary(T *arr, T *cos_ptr, T *sin_ptr,
 
 template <typename T>
 __device__ __forceinline__  void apply_rotary_qkv_batch(T *q_arr, T *k_arr, T *cos_ptr, T *sin_ptr,
-                                va16u32x4 offsets, va16u32x4 rot_offsets, va16u32x4 embed_dims, 
+                                va16u32x4 offsets[2], va16u32x4 rot_offsets[2], va16u32x4 embed_dims, 
                                 const va16u32x4 VEC1, const va16u32x4 VEC2, va16u32x4 vec_bpe,
                                 int gpt_geox) {
-  using vtype = typename tops::scalar_to_vector<T, TOPS_VECTOR_LENGTH>::type;
-  va16u32x4 x_index, y_index;
+  constexpr int vec_elems = sizeof(typename tops::unified_scalar<T>::type) * TOPS_VECTOR_LENGTH / sizeof(T);
+  using vtype = typename tops::scalar_to_vector<T, vec_elems>::type;
+  constexpr int ITERATION = vec_elems / TOPS_VECTOR_LENGTH;
+  // using vtype = typename tops::scalar_to_vector<T, TOPS_VECTOR_LENGTH>::type;
+  va16u32x4 x_index[ITERATION], y_index[ITERATION], x_index_[ITERATION];
   vtype cos, sin, x, y;
   if (gpt_geox) {
     // GPT-NeoX style
-    x_index = rot_offsets;
-    y_index = vadd(embed_dims, rot_offsets);
-    cos = vgather<vtype>(cos_ptr, vmul(x_index, vec_bpe));
-    sin = vgather<vtype>(sin_ptr, vmul(x_index, vec_bpe));
+    for (int k = 0; k < ITERATION; k++) {
+      x_index[k] = rot_offsets[k];
+      y_index[k] = vadd(embed_dims, rot_offsets[k]);
+      x_index_[k] = vmul(x_index[k], vec_bpe);
+    }
+    cos = vgather<vtype>(cos_ptr, x_index_);
+    sin = vgather<vtype>(sin_ptr, x_index_);
   } else {
     // GPT-J style
-    x_index = vmul(VEC2, rot_offsets);
-    y_index = vadd(x_index, VEC1);
-    cos = vgather<vtype>(cos_ptr, vmul(vdiv(x_index, VEC2), vec_bpe));
-    sin = vgather<vtype>(sin_ptr, vmul(vdiv(x_index, VEC2), vec_bpe));
+    for (int k = 0; k < ITERATION; k++) {
+      x_index[k] = vmul(VEC2, rot_offsets[k]);
+      y_index[k] = vadd(x_index[k], VEC1);
+      x_index_[k] = vmul(vdiv(x_index[k], VEC2), vec_bpe);
+    }
+    cos = vgather<vtype>(cos_ptr, x_index_);
+    sin = vgather<vtype>(sin_ptr, x_index_);
+  }
+  for (int k = 0; k < ITERATION; k++) {
+    x_index[k] = vmul(vadd(x_index[k], offsets[k]), vec_bpe);
+    y_index[k] = vmul(vadd(y_index[k], offsets[k]), vec_bpe);
   }
 
-  x_index = vmul(vadd(x_index, offsets), vec_bpe);
-  y_index = vmul(vadd(y_index, offsets), vec_bpe);
+  //gather/scatter 256 elements for fp16/bf16 or 128 elements for float32
   x = vgather<vtype>(q_arr, x_index);
   y = vgather<vtype>(q_arr, y_index);
-  
   auto v1 = vsub(vmul(x, cos), vmul(y, sin));
   auto v2 = vadd(vmul(y, cos), vmul(x, sin));
   vscatter<vtype>(q_arr, v1, x_index);
   vscatter<vtype>(q_arr, v2, y_index);
-  x = vgather<vtype>(k_arr, x_index);
+  
+  x = vgather<vtype>(k_arr, x_index); 
   y = vgather<vtype>(k_arr, y_index);
   v1 = vsub(vmul(x, cos), vmul(y, sin));
   v2 = vadd(vmul(y, cos), vmul(x, sin));
@@ -166,12 +178,15 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
     int nq = q_heads * embed_dim;
     int nk = k_heads * embed_dim;
     int max_qk = nq > nk ? nq : nk;
-    constexpr int TILESIZE = vector_length<va16u32x4>::value;
+    constexpr int TILESIZE = sizeof(typename tops::unified_scalar<T>::type) * TOPS_VECTOR_LENGTH / sizeof(T);
+    constexpr int ITERATION = TILESIZE / TOPS_VECTOR_LENGTH;
     va16u32x4 embed_dims = vbroadcast<va16u32x4>((unsigned int)embed_dim);
     va16u32x4 hidden_sizes = vbroadcast<va16u32x4>((unsigned int)hidden_size);
     const va16u32x4 VEC1 = vbroadcast<va16u32x4>((unsigned int)1);
     const va16u32x4 VEC2 = vbroadcast<va16u32x4>((unsigned int)2);
     va16u32x4 vec_bpe = vbroadcast<va16u32x4>((unsigned int)sizeof(T));
+    va16u32x4 offsets[2];
+    va16u32x4 rot_offsets[2];
 
     for (int p = 0; p < thread_step; p++) {
       int i = thread_id * THREAD_STEP + p;
@@ -188,10 +203,12 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
         auto cos_ptr = bufCosSin;
         auto sin_ptr = bufCosSin + embed_dim;
         for (int j = 0; j < max_qk; j+=TILESIZE) { //This is safe even though nk != nq (redundant compute)
-          auto indexes = viota<va16u32x4>((unsigned int)j);
-          auto head_idxes = vdiv(indexes, embed_dims);
-          auto offsets = vmul(head_idxes, hidden_sizes);
-          auto rot_offsets = vrem(indexes, embed_dims);
+          for (int k = 0; k < ITERATION; k++) {
+            auto indexes = viota<va16u32x4>((unsigned int)(j + k* TOPS_VECTOR_LENGTH));
+            rot_offsets[k] = vrem(indexes, embed_dims);
+            auto head_idxes = vdiv(indexes, embed_dims);
+            offsets[k] = vmul(head_idxes, hidden_sizes);
+          }
           apply_rotary_qkv_batch<T>(bufQuery, bufKey, cos_ptr, sin_ptr, 
                                       offsets, rot_offsets, embed_dims, VEC1, VEC2, vec_bpe, gpt_geox);
         }

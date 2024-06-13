@@ -40,7 +40,7 @@ using namespace std;
 using namespace tops;
 #define PING_PONG_SIZE 2
 #define TILE_SIZE AlignDown(((VDMEM_SIZE) / 32), 256)
-#define GATHER_COPY
+// #define GATHER_COPY
 const int COPY_TILESIZE = 128 * 1024;
 const int COPY_L1SIZE = 896 * 1024;
 
@@ -65,19 +65,6 @@ __device__ __forceinline__ unsigned int get_strided_index(
         idx /= dims[dim_idx];
     }
     return strided_i;
-}
-
-template <int RANK>
-__device__ __forceinline__ VecIndexType get_batch_strided_index(VecIndexType &indexes, VecIndexType results, VecIndexType dst_shape[], VecIndexType dst_strides[]) {
-    VecIndexType vec_rem[RANK];
-    vec_rem[0] = indexes;
-    #pragma clang loop unroll(enable)
-    for (int i = 0; i < RANK; i++) {
-      unsigned int dim_idx = RANK - 1 - i;
-      results = vadd(vmul(vrem(vec_rem[i], dst_shape[dim_idx]), dst_strides[dim_idx]), results); 
-      vec_rem[i + 1] = vdiv(vec_rem[i], dst_shape[dim_idx]);
-    }
-    return results;
 }
 
 template <typename T, int RANK, int BPE>
@@ -153,28 +140,21 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, con
       unmap_mem(src_l3_addr);
 }
 
-#undef GATHER_COPY
 #ifdef GATHER_COPY
-template <int BPE>
-__device__ __forceinline__ void gather_and_store(void* out, void* in,
-                                                 VecIndexType vec_bpe,
-                                                 VecIndexType vec_srt_start,
-                                                 VecIndexType vec_srt_end,
-                                                 VecIndexType strided_indexes) {
-    using ResultValueType = FixedVecValueType<BPE>;
-    
-    auto mask_ge = vge<vbool64_t>(strided_indexes, vec_srt_start);
-    auto mask_lt = vlt<vbool64_t>(strided_indexes, vec_srt_end);
-    auto mask = mask_and(mask_ge, mask_lt);
 
-    auto offsets = vmul(strided_indexes, vec_bpe);
-    ResultValueType result;
-    result = vgather_t(mask, in, offsets, result);
-    vstore(result, out);
+template <int RANK>
+__device__ __forceinline__ VecIndexType get_batch_strided_index(VecIndexType &indexes, VecIndexType results, VecIndexType dst_shape[], VecIndexType dst_strides[]) {
+    VecIndexType vec_rem[RANK];
+    vec_rem[0] = indexes;
+    #pragma clang loop unroll(enable)
+    for (int i = 0; i < RANK; i++) {
+      unsigned int dim_idx = RANK - 1 - i;
+      results = vadd(vmul(vrem(vec_rem[i], dst_shape[dim_idx]), dst_strides[dim_idx]), results); 
+      vec_rem[i + 1] = vdiv(vec_rem[i], dst_shape[dim_idx]);
+    }
+    return results;
 }
-#endif
 
-// #include "utils/unroller_helper.h"
 template <typename T, int RANK, int BPE>
 __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, const size_t out_size, size_t* dims_and_strides, char* raw_cache, T* buffer) {
     tops_dte_ctx_t ctx;
@@ -186,11 +166,10 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNum();
 
-    constexpr int TILESIZE = vector_length<va16u32x4>::value;
-    // constexpr int BUFFER_SIZE = TILESIZE * 1024 / BPE;
+    // constexpr int TILESIZE = vector_length<va16u32x4>::value;
+    constexpr int TILESIZE = sizeof(typename tops::unified_scalar<T>::type) * TOPS_VECTOR_LENGTH / sizeof(T);
     const int BUFFER_SIZE = COPY_TILESIZE / BPE;
-
-    // printf("\nin_size %lu, out_size %lu, TILESIZE %d", in_size, out_size, TILESIZE);
+    constexpr int ITERATION = TILESIZE / TOPS_VECTOR_LENGTH;
     int N = out_size;
     int THREAD_STEP = 1;
     int thread_step = 1;
@@ -205,7 +184,6 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
     }
     int dst_dim[RANK];
     int dst_strides[RANK];
-    // #pragma clang loop unroll(enable)
     for (int j = 0; j < RANK; ++j) {
       dst_dim[j] = dims_and_strides[j];
       dst_strides[j] = dims_and_strides[RANK + j];
@@ -238,23 +216,16 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
 
     __syncthreads();
 
-    __local__ __valigned__ unsigned int idx_buffer[TILESIZE];
-
     va16u32x4 vec_dst_shape[RANK];
     va16u32x4 vec_dst_strides[RANK];
-
-    // #pragma clang loop unroll(enable)
+    // using vtype = typename tops::scalar_to_vector<T, TOPS_VECTOR_LENGTH>::type;
+    using vtype = typename tops::scalar_to_vector<T, TILESIZE>::type;
     for (int i = 0; i < RANK; ++i) {
       vec_dst_shape[i] = vbroadcast<va16u32x4>((unsigned int)dst_dim[i]);
       vec_dst_strides[i] = vbroadcast<va16u32x4>((unsigned int)dst_strides[i]);
     }
-#ifdef GATHER_COPY
-    va16u32x4 vec_src_start = vbroadcast<va16u32x4>((unsigned int)0);
-    va16u32x4 vec_src_end = vbroadcast<va16u32x4>((unsigned int)in_size);
     va16u32x4 vec_bpe = vbroadcast<va16u32x4>((unsigned int)sizeof(T));
-#endif
-    va16u32x4 idx_results = vbroadcast<va16u32x4>((unsigned int)0);
-    constexpr IndexType NUM_UNROLLING = 1;
+    va16u32x4 strided_indexes[ITERATION], strided_indexes_[ITERATION], indexes[ITERATION], indexes_[ITERATION];
     T *pbuffer = buffer;
     size_t buf_written = 0;
     int init_offset = -1;
@@ -262,24 +233,22 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
       int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i;
       int offset = thread_id * THREAD_STEP + i;
       if (init_offset < 0) init_offset = offset;
-      auto indexes = viota<va16u32x4>((unsigned int)offset);
-      auto strided_indexes = get_batch_strided_index<RANK>(indexes, idx_results, vec_dst_shape, vec_dst_strides);
-#ifdef GATHER_COPY
-      if (bufsize == TILESIZE) {
-          gather_and_store<BPE>(pbuffer, src_cached, vec_bpe, vec_src_start,
-                                    vec_src_end, strided_indexes);
-      } else {
-#endif
-        // #pragma clang loop unroll(enable)
-        for (int j = 0; j< bufsize; j++) {
-          pbuffer[j] = src_cached[strided_indexes[j]];
-        }
-#ifdef GATHER_COPY
+      va16u32x4 idx_results = vbroadcast<va16u32x4>((unsigned int)0);
+      for (int k = 0; k < ITERATION; k++) {
+        indexes[k] = viota<va16u32x4>((unsigned int)(offset + k * TOPS_VECTOR_LENGTH));
+        strided_indexes[k] = get_batch_strided_index<RANK>(indexes[k], idx_results, vec_dst_shape, vec_dst_strides);
+        strided_indexes_[k] = vmul(strided_indexes[k], vec_bpe);
       }
-#endif
+      if (bufsize == TILESIZE) {
+        auto result = vgather<vtype>(src_cached, strided_indexes_);
+        vstore(result, pbuffer);
+      } else {
+        for (int j = 0; j < bufsize; j++) {
+          pbuffer[j] = src_cached[strided_indexes[j / TOPS_VECTOR_LENGTH][j % TOPS_VECTOR_LENGTH]];
+        }
+      }
       buf_written += bufsize;
       pbuffer += bufsize;
-
       if (buf_written + TILESIZE >= BUFFER_SIZE || i + bufsize >= thread_step - 1 || bufsize < TILESIZE) {
         tops::mdspan buffer_l1(tops::Private, buffer, buf_written);
         tops::deslice(ctx, out_hbm, buffer_l1, {init_offset});
@@ -288,11 +257,10 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
         init_offset = -1;
       }
     }
-
     if (!cacheable_l1 && !cacheable_l2)
       unmap_mem(src_l3_addr);
-  
 }
+#endif
 
 //dims_and_strides: dst shape, dst stride, dst layout, origin shape
 template <typename T, int RANK>
