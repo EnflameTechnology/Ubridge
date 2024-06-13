@@ -93,40 +93,31 @@ __device__ __forceinline__  void apply_rotary(T *arr, T *cos_ptr, T *sin_ptr,
 
 template <typename T>
 __device__ __forceinline__  void apply_rotary_qkv_batch(T *q_arr, T *k_arr, T *cos_ptr, T *sin_ptr,
-                                va16u32x4 offsets[2], va16u32x4 rot_offsets[2], va16u32x4 embed_dims, 
+                                va16u32x4 offsets, va16u32x4 rot_offsets, va16u32x4 embed_dims, 
                                 const va16u32x4 VEC1, const va16u32x4 VEC2, va16u32x4 vec_bpe,
                                 int gpt_geox) {
-  constexpr int vec_elems = sizeof(typename tops::unified_scalar<T>::type) * TOPS_VECTOR_LENGTH / sizeof(T);
-  using vtype = typename tops::scalar_to_vector<T, vec_elems>::type;
-  constexpr int ITERATION = vec_elems / TOPS_VECTOR_LENGTH;
-  // using vtype = typename tops::scalar_to_vector<T, TOPS_VECTOR_LENGTH>::type;
-  va16u32x4 x_index[ITERATION], y_index[ITERATION], x_index_[ITERATION];
+  using vtype = typename tops::scalar_to_vector<T, TOPS_VECTOR_LENGTH>::type;
+  va16u32x4 x_index, y_index, x_index_;
   vtype cos, sin, x, y;
   if (gpt_geox) {
     // GPT-NeoX style
-    for (int k = 0; k < ITERATION; k++) {
-      x_index[k] = rot_offsets[k];
-      y_index[k] = vadd(embed_dims, rot_offsets[k]);
-      x_index_[k] = vmul(x_index[k], vec_bpe);
-    }
+    x_index = rot_offsets;
+    y_index = vadd(embed_dims, rot_offsets);
+    x_index_ = vmul(x_index, vec_bpe);
     cos = vgather<vtype>(cos_ptr, x_index_);
     sin = vgather<vtype>(sin_ptr, x_index_);
   } else {
     // GPT-J style
-    for (int k = 0; k < ITERATION; k++) {
-      x_index[k] = vmul(VEC2, rot_offsets[k]);
-      y_index[k] = vadd(x_index[k], VEC1);
-      x_index_[k] = vmul(vdiv(x_index[k], VEC2), vec_bpe);
-    }
+    x_index = vmul(VEC2, rot_offsets);
+    y_index = vadd(x_index, VEC1);
+    x_index_ = vmul(vdiv(x_index, VEC2), vec_bpe);
     cos = vgather<vtype>(cos_ptr, x_index_);
     sin = vgather<vtype>(sin_ptr, x_index_);
   }
-  for (int k = 0; k < ITERATION; k++) {
-    x_index[k] = vmul(vadd(x_index[k], offsets[k]), vec_bpe);
-    y_index[k] = vmul(vadd(y_index[k], offsets[k]), vec_bpe);
-  }
 
-  //gather/scatter 256 elements for fp16/bf16 or 128 elements for float32
+  x_index = vmul(vadd(x_index, offsets), vec_bpe);
+  y_index = vmul(vadd(y_index, offsets), vec_bpe);
+
   x = vgather<vtype>(q_arr, x_index);
   y = vgather<vtype>(q_arr, y_index);
   auto v1 = vsub(vmul(x, cos), vmul(y, sin));
@@ -167,9 +158,13 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
         }
       }
     }
-    __local__ __valigned__ T bufCosSin[1024 * 64];
-    __local__ __valigned__ T bufQuery[1024 * 64];
-    __local__ __valigned__ T bufKey[1024 * 64];
+    __local__ __valigned__ T bufCosSin[1024 * 48];
+    __local__ __valigned__ T bufQuery[1024 * 48];
+    __local__ __valigned__ T bufKey[1024 * 48];
+    __local__ __valigned__ float bufCosSinf32[1024 * 48];
+    __local__ __valigned__ float bufQueryf32[1024 * 48];
+    __local__ __valigned__ float bufKeyf32[1024 * 48];
+
 
     tops::mdspan cos_sin_l1(tops::Private, bufCosSin, hidden_size);
     tops::mdspan query_l1(tops::Private, bufQuery, q_stride);
@@ -178,16 +173,12 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
     int nq = q_heads * embed_dim;
     int nk = k_heads * embed_dim;
     int max_qk = nq > nk ? nq : nk;
-    constexpr int TILESIZE = sizeof(typename tops::unified_scalar<T>::type) * TOPS_VECTOR_LENGTH / sizeof(T);
-    constexpr int ITERATION = TILESIZE / TOPS_VECTOR_LENGTH;
+    constexpr int TILESIZE = vector_length<va16u32x4>::value;
     va16u32x4 embed_dims = vbroadcast<va16u32x4>((unsigned int)embed_dim);
     va16u32x4 hidden_sizes = vbroadcast<va16u32x4>((unsigned int)hidden_size);
     const va16u32x4 VEC1 = vbroadcast<va16u32x4>((unsigned int)1);
     const va16u32x4 VEC2 = vbroadcast<va16u32x4>((unsigned int)2);
-    va16u32x4 vec_bpe = vbroadcast<va16u32x4>((unsigned int)sizeof(T));
-    va16u32x4 offsets[2];
-    va16u32x4 rot_offsets[2];
-
+    va16u32x4 vec_bpe = vbroadcast<va16u32x4>((unsigned int)sizeof(float));
     for (int p = 0; p < thread_step; p++) {
       int i = thread_id * THREAD_STEP + p;
       if (i < N) {
@@ -200,18 +191,21 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
         auto cos_sin_cache = cos_sin_cur + i * split_dim;
         tops::mdspan hbm_cos_sin(tops::Global, cos_sin_cache, split_dim);
         tops::memcpy(ctx, cos_sin_l1, hbm_cos_sin);
-        auto cos_ptr = bufCosSin;
-        auto sin_ptr = bufCosSin + embed_dim;
+        convert<float, T>(reinterpret_cast<float*>(bufCosSinf32), reinterpret_cast<T*>(bufCosSin), split_dim);
+        convert<float, T>(reinterpret_cast<float*>(bufQueryf32), reinterpret_cast<T*>(bufQuery), q_stride);
+        convert<float, T>(reinterpret_cast<float*>(bufKeyf32), reinterpret_cast<T*>(bufKey), k_stride);
+        auto cos_ptr = bufCosSinf32;
+        auto sin_ptr = bufCosSinf32 + embed_dim;
         for (int j = 0; j < max_qk; j+=TILESIZE) { //This is safe even though nk != nq (redundant compute)
-          for (int k = 0; k < ITERATION; k++) {
-            auto indexes = viota<va16u32x4>((unsigned int)(j + k* TOPS_VECTOR_LENGTH));
-            rot_offsets[k] = vrem(indexes, embed_dims);
-            auto head_idxes = vdiv(indexes, embed_dims);
-            offsets[k] = vmul(head_idxes, hidden_sizes);
-          }
-          apply_rotary_qkv_batch<T>(bufQuery, bufKey, cos_ptr, sin_ptr, 
+          auto indexes = viota<va16u32x4>((unsigned int)j);
+          auto rot_offsets = vrem(indexes, embed_dims);
+          auto head_idxes = vdiv(indexes, embed_dims);
+          auto offsets = vmul(head_idxes, hidden_sizes);
+          apply_rotary_qkv_batch<float>(bufQueryf32, bufKeyf32, cos_ptr, sin_ptr, 
                                       offsets, rot_offsets, embed_dims, VEC1, VEC2, vec_bpe, gpt_geox);
         }
+        convert<T, float>(reinterpret_cast<T*>(bufQuery), reinterpret_cast<float*>(bufQueryf32), q_stride);
+        convert<T, float>(reinterpret_cast<T*>(bufKey), reinterpret_cast<float*>(bufKeyf32), k_stride);
         tops::memcpy(ctx, hbm_query, query_l1);
         tops::memcpy(ctx, hbm_key, key_l1);
       }
