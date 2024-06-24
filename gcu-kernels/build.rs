@@ -51,7 +51,7 @@ fn check_atomic_op(path: PathBuf) -> Result<()> {
                 )
             }
         }
-    } else if !path.join("atomic/include").exists() && !path.join("atomic/lib").exists() {
+    } else if !path.join("atomic/include").exists() || !path.join("atomic/lib").exists() {
         unzip(filename, path.join("atomic/"))?
     }
     Ok(())

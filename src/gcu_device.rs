@@ -71,7 +71,7 @@ use crate::gcu_slice::{GcuSlice, RangeHelper};
 pub struct GcuDevice {
     pub id: usize,
     device: Option<&'static Device>,
-    stream: Option<&'static Stream>,
+    pub stream: Option<&'static Stream>,
     executor: Arc<&'static mut DeviceExecutor>,
     is_async: bool,
     prop: driv::topsDeviceProp_t,

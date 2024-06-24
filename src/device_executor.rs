@@ -218,7 +218,7 @@ impl DeviceExecutor {
         println!("DeviceExecutor::new");
 
         #[cfg(feature = "tops_backend")]
-        let kernel_platform = "pavo"; //default kernel path
+        let kernel_platform = "scorpio"; //default kernel path
 
         #[cfg(feature = "dorado")]
         let kernel_platform = "dorado"; 

@@ -38,7 +38,9 @@ pub mod prelude {
 
     #[cfg(feature = "tops_backend")]
     pub use tops_backend::memory::CopyDestination;
-
+    #[cfg(feature = "tops_backend")]
+    pub use uhal::stream::StreamTrait;
+    
     #[cfg(feature = "cuda_backend")]
     pub use cuda_backend::memory::CopyDestination;
 }
