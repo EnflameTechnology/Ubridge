@@ -188,8 +188,12 @@ __forceinline__ __device__ void  atomic_reduce_sum(__fp16* dst_ptr, __fp16* src_
 }
 
 template <>
-__forceinline__ __device__ void  atomic_reduce_sum(tops::bfloat* dst_ptr, tops::bfloat* src_ptr,
+__forceinline__ __device__ void  atomic_reduce_sum(__bf16* dst_ptr, __bf16* src_ptr,
                                             unsigned int channel_align) {
+  if (channel_align % TOPS_VECTOR_LENGTH == 0) {
+    dst_ptr[0] = call_reduce_sum<__bf16>(src_ptr, channel_align);
+    return;
+  }
   dst_ptr[0] = src_ptr[0];
   for (int i=1; i< channel_align; i++) {
       dst_ptr[0] += src_ptr[i];
