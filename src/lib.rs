@@ -69,6 +69,7 @@ pub const UNARY: &str = "unary";
 pub const MATMUL: &str = "matmul";
 pub const KCCONCAT: &str = "kvconcat";
 pub const FILLCOPY: &str = "copy2d";
+pub const EMBEDDING: &str = "embedding";
 
 // pub const TRANSPOSE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/transpose.topsfb");
 // pub const DOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/dot.topsfb");
