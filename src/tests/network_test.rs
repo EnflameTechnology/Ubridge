@@ -1,18 +1,18 @@
 /*
- * Copyright 2021-2024 Enflame. All Rights Reserved.
+* Copyright 2021-2024 Enflame. All Rights Reserved.
 
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*      http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
 //Example of UHAL for neural network forward pass (on NV GPU & Enflame GCU)
 use cust_core::DeviceCopy;
 use std::collections::HashMap;
@@ -53,20 +53,28 @@ use cuda::CuApi as Api;
 #[cfg(feature = "cuda_backend")]
 use cuda_backend as cuda;
 
-use crate::device_executor::DeviceExecutor;
-
 fn load_module<'a>(name: &str) -> DeviceResult<Module> {
     #[cfg(not(feature = "scorpio"))]
     #[cfg(feature = "tops_backend")]
-    let ptx = format!("{}/kernels/legacy/pavo/{}.topsfb", env!("CARGO_MANIFEST_DIR"), name).to_string();
+    let ptx = format!(
+        "{}/kernels/legacy/pavo/{}.topsfb",
+        env!("CARGO_MANIFEST_DIR"),
+        name
+    )
+    .to_string();
 
     #[cfg(feature = "scorpio")]
-    let ptx = format!("{}/kernels/legacy/scorpio/{}.topsfb", env!("CARGO_MANIFEST_DIR"), name).to_string();
+    let ptx = format!(
+        "{}/kernels/legacy/scorpio/{}.topsfb",
+        env!("CARGO_MANIFEST_DIR"),
+        name
+    )
+    .to_string();
 
     #[cfg(feature = "cuda_backend")]
     let ptx = format!("{}/kernels/gpu/{}.ptx", env!("CARGO_MANIFEST_DIR"), name).to_string();
 
-    Module::from_file(&ptx)
+    Module::from_file(ptx)
 }
 
 struct Layer<'a, T: DeviceCopy> {
@@ -79,7 +87,7 @@ struct Layer<'a, T: DeviceCopy> {
 pub fn get_block_grid(shape1: usize, shape0: usize) -> (usize, usize, usize) {
     let grid_a: usize = (shape1 + 16 - 1) / 16;
     let grid_b: usize = (shape0 + 16 - 1) / 16;
-    return (16, grid_a, grid_b);
+    (16, grid_a, grid_b)
 }
 
 //A 6-layer neural network forward pass
@@ -205,15 +213,20 @@ pub fn network_test() -> DeviceResult<()> {
             match load_module(function_name) {
                 Ok(module) => {
                     let function_namef32 = "activationf32";
-                    let kernel = module.get_function(&function_namef32)?;
+                    let kernel = module.get_function(function_namef32)?;
                     let param = DeviceBuffer::from_slice(&[
                         (layer.input_size.0 * layer.input_size.1) as i32,
-                        map_act[layer.op] as i32,
+                        map_act[layer.op],
                     ])?;
 
                     let (_block_size, _grid_a, _grid_b) =
                         get_block_grid(layer.input_size.1, layer.input_size.0);
-                    let A = match matA_ref {Some(a)=> {a}, _=> {panic!("error")}};
+                    let A = match matA_ref {
+                        Some(a) => a,
+                        _ => {
+                            panic!("error")
+                        }
+                    };
                     unsafe {
                         #[cfg(feature = "tops_backend")]
                         let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
@@ -231,7 +244,7 @@ pub fn network_test() -> DeviceResult<()> {
 
                         result?;
                     }
-                    out_ref = Some(&A);
+                    out_ref = Some(A);
                     out_size = Some(layer.output_size);
                 }
                 _ => {
@@ -241,7 +254,7 @@ pub fn network_test() -> DeviceResult<()> {
         } else if layer.op == "batch_matmul_legacy" {
             match load_module(layer.op) {
                 Ok(module) => {
-                    let kernel = module.get_function(&layer.op)?;
+                    let kernel = module.get_function(layer.op)?;
                     #[cfg(feature = "tops_backend")]
                     let inputShapeA = DeviceBuffer::from_slice(&[
                         1i32,
@@ -254,9 +267,24 @@ pub fn network_test() -> DeviceResult<()> {
                         layer.input_size.0 as i32,
                         layer.input_size.1 as i32,
                     ])?;
-                    let A = match matA_ref {Some(a)=> {a}, _=> {panic!("error")}};
-                    let B = match matB_ref {Some(a)=> {a}, _=> {panic!("error")}};
-                    let O = match out_ref {Some(a)=> {a}, _=> {panic!("error")}};
+                    let A = match matA_ref {
+                        Some(a) => a,
+                        _ => {
+                            panic!("error")
+                        }
+                    };
+                    let B = match matB_ref {
+                        Some(a) => a,
+                        _ => {
+                            panic!("error")
+                        }
+                    };
+                    let O = match out_ref {
+                        Some(a) => a,
+                        _ => {
+                            panic!("error")
+                        }
+                    };
 
                     unsafe {
                         #[cfg(feature = "tops_backend")]
@@ -281,16 +309,12 @@ pub fn network_test() -> DeviceResult<()> {
                         result?;
                     }
 
-                    matA_ref = Some(&O);
-                    match layer.weight {
-                        Some(w) => {
-                            matB_ref = Some(w);
-                        }
-                        _ => {
-                        }
+                    matA_ref = Some(O);
+                    if let Some(w) = layer.weight {
+                        matB_ref = Some(w);
                     };
 
-                    out_ref = Some(&O);
+                    out_ref = Some(O);
                     out_size = Some(layer.output_size);
                 }
                 _ => {
@@ -300,9 +324,19 @@ pub fn network_test() -> DeviceResult<()> {
         } else if layer.op == "convolution" {
             match load_module(layer.op) {
                 Ok(module) => {
-                    let kernel = module.get_function(&layer.op)?;
-                    let A = match matA_ref {Some(a)=> {a}, _=> {panic!("error")}};
-                    let B = match matB_ref {Some(a)=> {a}, _=> {panic!("error")}};
+                    let kernel = module.get_function(layer.op)?;
+                    let A = match matA_ref {
+                        Some(a) => a,
+                        _ => {
+                            panic!("error")
+                        }
+                    };
+                    let B = match matB_ref {
+                        Some(a) => a,
+                        _ => {
+                            panic!("error")
+                        }
+                    };
 
                     #[cfg(feature = "tops_backend")]
                     let inputShapeA = DeviceBuffer::from_slice(&[
@@ -312,9 +346,9 @@ pub fn network_test() -> DeviceResult<()> {
                         1i32,
                     ])?;
                     #[cfg(feature = "tops_backend")]
-                    let inputShapeB = DeviceBuffer::from_slice(&vec![K as i32, K as i32, 1i32, 1i32])?;
+                    let inputShapeB = DeviceBuffer::from_slice(&[K as i32, K as i32, 1i32, 1i32])?;
                     #[cfg(feature = "tops_backend")]
-                    let channelInfo = DeviceBuffer::from_slice(&vec![1i32, 1i32, 1i32, 1i32])?;
+                    let channelInfo = DeviceBuffer::from_slice(&[1i32, 1i32, 1i32, 1i32])?;
 
                     unsafe {
                         #[cfg(feature = "tops_backend")]
@@ -341,12 +375,8 @@ pub fn network_test() -> DeviceResult<()> {
                         result?;
                     }
                     matA_ref = Some(&matConvOut);
-                    match layer.weight {
-                        Some(w) => {
-                            matB_ref = Some(w);
-                        }
-                        _ => {
-                        }
+                    if let Some(w) = layer.weight {
+                        matB_ref = Some(w);
                     };
                     out_ref = Some(&matConvOut);
                     out_size = Some(layer.output_size);
@@ -375,7 +405,7 @@ pub fn network_test() -> DeviceResult<()> {
                         for y in 0..W {
                             print!("{:.5} ", out_host[x * W + y]);
                         }
-                        println!("{}", "");
+                        println!();
                     }
                 }
                 _ => {

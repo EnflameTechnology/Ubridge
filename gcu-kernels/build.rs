@@ -1,9 +1,7 @@
 use anyhow::{Context, Result};
-use rayon::prelude::*;
 use std::path::PathBuf;
 use std::str::FromStr;
 use reqwest::blocking::Client;
-use std::io::Write;
 
 const KERNELS: [&str; 13] =  ["unary", "fill", "binary", "affine", "cast", 
             "reduce", "ternary", "indexing", "matmul", "embedding", "kvconcat", "conv", "copy"];

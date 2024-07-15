@@ -1,71 +1,61 @@
 /*
- * Copyright 2021-2024 Enflame. All Rights Reserved.
+* Copyright 2021-2024 Enflame. All Rights Reserved.
 
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * @file    gcu_device.rs
- * @brief
- *
- * @author  Guoqing Bao
- * @date    2023-09-05 - 2024-01-10
- * @version V0.1
- * @par     Copyright (c) Enflame Tech Company.
- * @par     History: gemm tuner cache
- * @par     Comments: a gcu device abstraction facilitating memory allocation, memcpy, and stream syncronization.
- */
-use std::collections::HashMap;
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*      http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+* @file    gcu_device.rs
+* @brief
+*
+* @author  Guoqing Bao
+* @date    2023-09-05 - 2024-01-10
+* @version V0.1
+* @par     Copyright (c) Enflame Tech Company.
+* @par     History: gemm tuner cache
+* @par     Comments: a gcu device abstraction facilitating memory allocation, memcpy, and stream syncronization.
+*/
 use std::ffi::c_void;
 
 use std::{marker::Unpin, pin::Pin, sync::Arc, vec::Vec};
-use tops::memory::AsyncCopyDestination;
 use tops::stream::topsStream_t;
-use uhal::device::DeviceTrait;
-use uhal::error::{DeviceResult};
+use uhal::error::DeviceResult;
 
-use uhal::memory::{DeviceBufferTrait, DevicePointerTrait};
-use uhal::module::ModuleTrait;
-use uhal::stream::{StreamTrait};
-use uhal::DriverLibraryTrait;
-pub use cust_core::_hidden::{DeviceCopy};
-use std::{
-    ops::{RangeBounds},
-    string::String,
-};
-use std::path::Path;
-use crate::gemm_tuner::{AtenGemmTuner, AtenGemmInfo, AtenGemmTune, GEMM_OP_PARAS};
+use crate::gemm_tuner::{AtenGemmInfo, AtenGemmTuner, GEMM_OP_PARAS};
 use crate::prelude::GcuLaunchConfig;
+pub use cust_core::_hidden::DeviceCopy;
+use std::string::String;
+use uhal::memory::{DeviceBufferTrait, DevicePointerTrait};
+use uhal::stream::StreamTrait;
 
 //Tops backend
-#[cfg(feature = "tops_backend")]
-use tops_backend as tops;
 #[cfg(feature = "tops_backend")]
 use tops::device::TopsDevice as Device;
 #[cfg(feature = "tops_backend")]
 use tops::memory::CopyDestination;
 #[cfg(feature = "tops_backend")]
 use tops::memory::TopsDeviceBuffer as DeviceBuffer;
+#[cfg(feature = "tops_backend")]
+use tops_backend as tops;
 
 #[cfg(feature = "tops_backend")]
 use tops::stream::TopsStream as Stream;
 
-
-#[cfg(feature = "tops_backend")]
-pub use tops::driv as driv;
-use driv::{topsFunction_t, topsMemPool_t};
-use tops::error::ToResult;
 use crate::device_executor::DeviceExecutor;
-use crate::device_ptr::{DevicePtr, DevicePtrMut, DeviceSlice};
-use crate::gcu_slice::{GcuSlice, RangeHelper};
+use crate::device_ptr::DevicePtr;
+use crate::gcu_slice::GcuSlice;
+use driv::topsFunction_t;
+#[cfg(feature = "tops_backend")]
+pub use tops::driv;
+use tops::error::ToResult;
 
 // #[derive(Clone)]
 pub struct GcuDevice {
@@ -84,7 +74,7 @@ pub struct GcuFunction {
     pub module_name: String,
     pub func: Option<topsFunction_t>,
     pub stream: Option<topsStream_t>,
-    pub is_async: bool, 
+    pub is_async: bool,
     // pub executor: Option<Arc<Mutex<&'static mut DeviceExecutor>>>,
 }
 
@@ -122,10 +112,13 @@ impl std::ops::Deref for GcuDevice {
 impl GcuDevice {
     pub fn new(ordinal: usize, eager_mode: bool) -> DeviceResult<Arc<Self>> {
         match DeviceExecutor::get_gcu_executor(ordinal as u32) {
-            Some(gcu_executor) => { 
+            Some(gcu_executor) => {
                 let mut prop = driv::topsDeviceProp_t::default();
                 unsafe {
-                    driv::topsGetDeviceProperties(&mut prop as *mut driv::topsDeviceProp_t, ordinal as i32);
+                    driv::topsGetDeviceProperties(
+                        &mut prop as *mut driv::topsDeviceProp_t,
+                        ordinal as i32,
+                    );
                 }
                 let mut property = format!("**GCU device property: {:?} \n", prop);
                 property = property.replace(" 0, 0,", "");
@@ -136,8 +129,8 @@ impl GcuDevice {
                     stream: gcu_executor.stream,
                     executor: Arc::new(gcu_executor),
                     is_async: !eager_mode,
-                    prop: prop,
-                    launch_cfg:  GcuLaunchConfig {
+                    prop,
+                    launch_cfg: GcuLaunchConfig {
                         grid_dim: (prop.multiProcessorCount as u32, 1, 1),
                         block_dim: (prop.maxThreadsPerMultiProcessor as u32, 1, 1),
                         shared_mem_bytes: 0,
@@ -145,7 +138,7 @@ impl GcuDevice {
                     tuner: AtenGemmTuner::new(),
                 }))
             }
-            _=> {
+            _ => {
                 panic!("Unable to obtain GCU device!");
             }
         }
@@ -160,54 +153,58 @@ impl GcuDevice {
         //     }
         //     _ => {panic!("Unable to obtain GCU device!");}
         // };
-
-
     }
 
     pub fn ordinal(&self) -> usize {
         self.id
     }
-    pub fn get_or_load_func(&self, func_name: &str, module_name: &str) -> DeviceResult<GcuFunction> {
-        if self.executor.has_function(module_name.to_string(), func_name.to_string()) {
-            match &self.executor.function_map{
-                Some(funcs) => {
-                    return Ok(
-                        GcuFunction {
-                            func_name: func_name.to_string(), 
-                            module_name: module_name.to_string(),
-                            func: Some(funcs[func_name].inner),
-                            stream: Some(self.stream.unwrap().as_inner()),
-                            is_async: self.is_async,
-                        }
-                    );
-                }
-                _=> {}
+    pub fn get_or_load_func(
+        &self,
+        func_name: &str,
+        module_name: &str,
+    ) -> DeviceResult<GcuFunction> {
+        if self
+            .executor
+            .has_function(module_name.to_string(), func_name.to_string())
+        {
+            if let Some(funcs) = &self.executor.function_map {
+                return Ok(GcuFunction {
+                    func_name: func_name.to_string(),
+                    module_name: module_name.to_string(),
+                    func: Some(funcs[func_name].inner),
+                    stream: Some(self.stream.unwrap().as_inner()),
+                    is_async: self.is_async,
+                });
             }
-
         } else {
             println!("Kernel {} not found!", func_name);
         }
-        Ok(GcuFunction::new(func_name.to_string(), module_name.to_string()))
+        Ok(GcuFunction::new(
+            func_name.to_string(),
+            module_name.to_string(),
+        ))
     }
-    
-    pub fn get_gemm_launch_params(&self, datatype: crate::DATATYPE, b: usize, m: usize, k: usize, n: usize) -> &GEMM_OP_PARAS {
+
+    pub fn get_gemm_launch_params(
+        &self,
+        datatype: crate::DATATYPE,
+        b: usize,
+        m: usize,
+        k: usize,
+        n: usize,
+    ) -> &GEMM_OP_PARAS {
         // let bias = self.alloc::<f16>(n).w()?;
         let info = AtenGemmInfo::new(datatype, b, m, k, n);
-        unsafe {
-            self.tuner.tuner(&info)
-        }
+        unsafe { self.tuner.tuner(&info) }
     }
     /// Allocates device memory and increments the reference counter of [GcuDevice].
     ///
     /// # Safety
     /// This is unsafe because the device memory is unset after this call.
-    pub fn alloc<T: DeviceCopy>(
-        self: &Arc<Self>,
-        len: usize,
-    ) -> DeviceResult<GcuSlice<T>> {
+    pub fn alloc<T: DeviceCopy>(self: &Arc<Self>, len: usize) -> DeviceResult<GcuSlice<T>> {
         let device_ptr = if self.is_async {
             // println!("alloc async!  (len={})", len);
-            unsafe { DeviceBuffer::uninitialized_async(len, &self.stream.unwrap())? }
+            unsafe { DeviceBuffer::uninitialized_async(len, self.stream.unwrap())? }
         } else {
             unsafe { DeviceBuffer::uninitialized(len)? }
         };
@@ -226,22 +223,29 @@ impl GcuDevice {
     /// # Safety
     /// 1. `T` is marked as [ValidAsZeroBits], so the device memory is valid to use
     /// 2. Self is [`Arc<Self>`], and this method increments the rc for self
-    pub fn alloc_zeros<T: DeviceCopy>(
-        self: &Arc<Self>,
-        len: usize,
-    ) -> DeviceResult<GcuSlice<T>> {
-
+    pub fn alloc_zeros<T: DeviceCopy>(self: &Arc<Self>, len: usize) -> DeviceResult<GcuSlice<T>> {
         let device_ptr = if self.is_async {
-            unsafe { 
+            unsafe {
                 // println!("alloc_zeros async! (len={})", len);
-                let device_ptr = DeviceBuffer::uninitialized_async(len, &self.stream.unwrap())?;
-                driv::topsMemsetD8Async(device_ptr.as_device_ptr().as_raw(), 0, (std::mem::size_of::<T>() * len) as u64, self.stream.unwrap().as_inner()).to_result()?;
+                let device_ptr = DeviceBuffer::uninitialized_async(len, self.stream.unwrap())?;
+                driv::topsMemsetD8Async(
+                    device_ptr.as_device_ptr().as_raw(),
+                    0,
+                    (std::mem::size_of::<T>() * len) as u64,
+                    self.stream.unwrap().as_inner(),
+                )
+                .to_result()?;
                 device_ptr
             }
         } else {
-            unsafe { 
+            unsafe {
                 let device_ptr = DeviceBuffer::uninitialized(len)?;
-                driv::topsMemsetD8(device_ptr.as_device_ptr().as_raw(), 0, (std::mem::size_of::<T>() * len) as u64).to_result()?;
+                driv::topsMemsetD8(
+                    device_ptr.as_device_ptr().as_raw(),
+                    0,
+                    (std::mem::size_of::<T>() * len) as u64,
+                )
+                .to_result()?;
                 device_ptr
             }
         };
@@ -297,21 +301,23 @@ impl GcuDevice {
         assert!(src.len() <= dst.len());
         if self.is_async {
             // println!("dtod_copy async! (len={}, len={})", src.len(), dst.len());
-            unsafe { 
+            unsafe {
                 driv::topsMemcpyDtoDAsync(
-                dst.device_ptr().clone(),
-                src.device_ptr().clone(),
-                (src.len() * std::mem::size_of::<T>()) as u64,
-                self.stream.unwrap().as_inner(),
-                ).to_result() 
+                    dst.device_ptr(),
+                    src.device_ptr(),
+                    (src.len() * std::mem::size_of::<T>()) as u64,
+                    self.stream.unwrap().as_inner(),
+                )
+                .to_result()
             }
         } else {
-            unsafe { 
+            unsafe {
                 driv::topsMemcpyDtoD(
-                dst.device_ptr().clone(),
-                src.device_ptr().clone(),
-                (src.len() * std::mem::size_of::<T>()) as u64,
-                ).to_result() 
+                    dst.device_ptr(),
+                    src.device_ptr(),
+                    (src.len() * std::mem::size_of::<T>()) as u64,
+                )
+                .to_result()
             }
         }
     }
@@ -340,13 +346,7 @@ impl GcuDevice {
         let size = std::mem::size_of_val(src) as u64;
         let ptr = src.as_ptr() as *mut _;
         driv::topsHostRegister(ptr, size, 0).to_result()?;
-        driv::topsMemcpyHtoDAsync(
-            dst,
-            ptr,
-            size,
-            stream,
-        )
-        .to_result()
+        driv::topsMemcpyHtoDAsync(dst, ptr, size, stream).to_result()
     }
 
     /// Takes ownership of the host data and copies it to device data asynchronously.
@@ -363,29 +363,29 @@ impl GcuDevice {
     ) -> DeviceResult<()> {
         assert_eq!(src.len(), dst.len);
         let size = std::mem::size_of::<T>() * src.len();
-        
+
         // let host_ptr = dst.host_buf.as_ref().unwrap().as_ptr() as *mut c_void;
         if self.is_async {
-            unsafe { 
+            unsafe {
                 // if size % 256 != 0 {
-                    let mut ptr = std::ptr::null_mut();
-                    driv::topsHostMalloc(&mut ptr as *mut *mut c_void, size as u64, 0).to_result()?;
-                    std::ptr::copy(src.as_ptr() as *mut c_void, ptr, size);
-                    dst.host_buf_ptr = Some(ptr);
-                    return driv::topsMemcpyHtoDAsync(
-                        dst.device_ptr(),
-                        ptr,
-                        size as u64,
-                        self.stream.unwrap().as_inner(),
-                    )
-                    .to_result();
+                let mut ptr = std::ptr::null_mut();
+                driv::topsHostMalloc(&mut ptr as *mut *mut c_void, size as u64, 0).to_result()?;
+                std::ptr::copy(src.as_ptr() as *mut c_void, ptr, size);
+                dst.host_buf_ptr = Some(ptr);
+                return driv::topsMemcpyHtoDAsync(
+                    dst.device_ptr(),
+                    ptr,
+                    size as u64,
+                    self.stream.unwrap().as_inner(),
+                )
+                .to_result();
                 // } else {
                 //     dst.host_buf = Some(Pin::new(src));
                 //     return Self::memcpy_htod_async(dst.device_ptr(), dst.host_buf.as_ref().unwrap(), self.stream.unwrap().as_inner());
                 // }
             };
         } else {
-            return dst.buffer.copy_from(&src);
+            dst.buffer.copy_from(&src)
         }
     }
 
@@ -397,11 +397,8 @@ impl GcuDevice {
     ///
     /// 1. Since this function doesn't own `src` it is executed synchronously.
     /// 2. Self is [`Arc<Self>`], and this method increments the rc for self
-    pub fn htod_sync_copy<T: DeviceCopy>(
-        self: &Arc<Self>,
-        src: &[T],
-    ) -> DeviceResult<GcuSlice<T>> {
-        let device_ptr = unsafe { DeviceBuffer::uninitialized(src.len())? }; 
+    pub fn htod_sync_copy<T: DeviceCopy>(self: &Arc<Self>, src: &[T]) -> DeviceResult<GcuSlice<T>> {
+        let device_ptr = unsafe { DeviceBuffer::uninitialized(src.len())? };
         let mut dst = GcuSlice {
             buffer: device_ptr,
             len: src.len(),
@@ -425,7 +422,11 @@ impl GcuDevice {
     /// # Safety
     /// 1. Since this function doesn't own `src` it is executed synchronously.
     /// 2. Self is [`Arc<Self>`], and this method increments the rc for self
-    pub fn htod_sync_copy_into<T: DeviceCopy, I: AsRef<[T]> + AsMut<[T]> + ?Sized, Dst: DevicePtr<T>>(
+    pub fn htod_sync_copy_into<
+        T: DeviceCopy,
+        I: AsRef<[T]> + AsMut<[T]> + ?Sized,
+        Dst: DevicePtr<T>,
+    >(
         self: &Arc<Self>,
         src: &I,
         dst: &mut Dst,
@@ -433,21 +434,23 @@ impl GcuDevice {
         let val = src.as_ref();
         assert_eq!(val.len(), dst.len());
         if self.is_async {
-            unsafe { 
+            unsafe {
                 driv::topsMemcpyHtoDAsync(
-                    dst.device_ptr().clone(),
+                    dst.device_ptr(),
                     val.as_ptr() as *mut c_void,
-                    (val.len() * std::mem::size_of::<T>()) as u64,
-                    self.stream.unwrap().as_inner()
-                    ).to_result()?;
+                    std::mem::size_of_val(val) as u64,
+                    self.stream.unwrap().as_inner(),
+                )
+                .to_result()?;
             }
         } else {
-            unsafe { 
+            unsafe {
                 driv::topsMemcpyHtoD(
-                    dst.device_ptr().clone(),
+                    dst.device_ptr(),
                     val.as_ptr() as *mut c_void,
-                    (val.len() * std::mem::size_of::<T>()) as u64,
-                    ).to_result()?;
+                    std::mem::size_of_val(val) as u64,
+                )
+                .to_result()?;
             }
         }
         self.synchronize()
@@ -488,23 +491,25 @@ impl GcuDevice {
         dst: &mut [T],
     ) -> DeviceResult<()> {
         assert_eq!(src.len(), dst.len());
-        let val = dst.as_mut();
+        let val = dst;
         if self.is_async {
-            unsafe { 
+            unsafe {
                 driv::topsMemcpyDtoHAsync(
                     val.as_mut_ptr() as *mut c_void,
-                    src.device_ptr().clone(),
-                    (val.len() * std::mem::size_of::<T>()) as u64,
-                    self.stream.unwrap().as_inner()
-                    ).to_result()?;
+                    src.device_ptr(),
+                    std::mem::size_of_val(val) as u64,
+                    self.stream.unwrap().as_inner(),
+                )
+                .to_result()?;
             }
         } else {
-            unsafe { 
+            unsafe {
                 driv::topsMemcpyDtoH(
                     val.as_mut_ptr() as *mut c_void,
-                    src.device_ptr().clone(),
-                    (val.len() * std::mem::size_of::<T>()) as u64,
-                    ).to_result()?;
+                    src.device_ptr(),
+                    std::mem::size_of_val(val) as u64,
+                )
+                .to_result()?;
             }
         }
         self.synchronize()
@@ -532,8 +537,8 @@ impl GcuDevice {
     /// Synchronizes the stream.
     pub fn synchronize(self: &Arc<Self>) -> DeviceResult<()> {
         match self.stream {
-            Some(_stream) => { _stream.synchronize() }
-            _=> { 
+            Some(_stream) => _stream.synchronize(),
+            _ => {
                 println!("Unable to use stream!");
                 Ok(())
             }
@@ -541,9 +546,9 @@ impl GcuDevice {
     }
 
     pub fn get_block_number(&self) -> i32 {
-        return self.prop.multiProcessorCount;
+        self.prop.multiProcessorCount
     }
-      
+
     pub fn get_thread_number(&self) -> i32 {
         // if self.prop.gcuArchName.join("") == "dtu-enflame-tops--gcu210" {
         //     let mut block_num = 0i32;
@@ -552,16 +557,15 @@ impl GcuDevice {
         //     }
         //   return block_num;
         // }
-        
-        return self.prop.maxThreadsPerBlock;
-      }
-}
 
+        self.prop.maxThreadsPerBlock
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use crate::gcu_slice::RangeHelper;
     #[test]
     fn test_post_build_arc_count() {
         let device = GcuDevice::new(0, true).unwrap();
@@ -614,7 +618,6 @@ mod tests {
     fn test_post_release_counts() {
         let device = GcuDevice::new(0, true).unwrap();
         let t = device.htod_copy([1.0f32, 2.0, 3.0].to_vec()).unwrap();
-        #[allow(clippy::redundant_clone)]
         // let r = t.clone();
         assert_eq!(Arc::strong_count(&device), 2);
 
@@ -676,7 +679,7 @@ mod tests {
     fn test_leak_and_upgrade() {
         let dev = GcuDevice::new(0, true).unwrap();
 
-        let a = dev
+        let _ = dev
             .htod_copy(std::vec![1.0f32, 2.0, 3.0, 4.0, 5.0])
             .unwrap();
 
@@ -709,7 +712,6 @@ mod tests {
         let _out = dev0.dtoh_sync_copy(&slice).unwrap();
     }
 
-    
     #[test]
     #[allow(clippy::reversed_empty_ranges)]
     fn test_bounds_helper() {
@@ -733,6 +735,3 @@ mod tests {
         assert!(unsafe { slice.transmute_mut::<f32>(26) }.is_none());
     }
 }
-
-
-

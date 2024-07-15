@@ -1,28 +1,28 @@
 /*
- * Copyright 2021-2024 Enflame. All Rights Reserved.
+* Copyright 2021-2024 Enflame. All Rights Reserved.
 
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * @file    device_executor.rs
- * @brief
- *
- * @author  Guoqing Bao
- * @date    2022-10-27 - 2024-01-19
- * @version V0.1
- * @par     Copyright (c) Enflame Tech Company.
- * @par     History: Add supports for fused kernels
- * @par     Comments: a gcu executor for kernel management, and gcu kernel computations.
- */
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*      http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+* @file    device_executor.rs
+* @brief
+*
+* @author  Guoqing Bao
+* @date    2022-10-27 - 2024-01-19
+* @version V0.1
+* @par     Copyright (c) Enflame Tech Company.
+* @par     History: Add supports for fused kernels
+* @par     Comments: a gcu executor for kernel management, and gcu kernel computations.
+*/
 use crate::device_opcode::DeviceOpCode;
 use crate::device_tensor::{DeviceTensor, DeviceTensorKind};
 use core::fmt::Debug;
@@ -31,18 +31,15 @@ use std::collections::HashMap;
 
 use std::sync::{Arc, Once};
 
-use cust_core::DeviceCopy;
 use tops::driv;
 //Import UHAL for common computing interfaces
-use uhal::context::CurrentContextTrait;
-use uhal::device::DeviceTrait;
+use std::fs;
 use uhal::error::DeviceResult;
 use uhal::launch;
 use uhal::memory::DeviceBufferTrait;
 use uhal::module::ModuleTrait;
 use uhal::stream::{StreamFlags, StreamTrait};
 use uhal::DriverLibraryTrait;
-use std::fs;
 
 //Tops backend
 #[cfg(feature = "tops_backend")]
@@ -99,13 +96,14 @@ static mut GCU: Option<DeviceExecutor> = None;
 
 pub fn init_api(device_id: u32) -> Option<Device> {
     match Api::quick_init(device_id) {
-        Ok(device) => return Some(device),
-        _ => return None,
-    };
+        Ok(device) => Some(device),
+        _ => None,
+    }
 }
 
 pub fn init_kernels(
-    device_id: u32, kernel_platform: &str
+    device_id: u32,
+    kernel_platform: &str,
 ) -> (
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
@@ -125,12 +123,8 @@ pub fn init_kernels(
             };
             let mut module_map = Box::new(HashMap::<String, Module>::new());
 
-            let full_kernel_folder = format!(
-                "{}/kernels/{}",
-                env!("CARGO_MANIFEST_DIR"),
-                kernel_platform
-            )
-            .to_string();
+            let full_kernel_folder =
+                format!("{}/kernels/{}", env!("CARGO_MANIFEST_DIR"), kernel_platform).to_string();
 
             let paths = fs::read_dir(&full_kernel_folder).unwrap();
 
@@ -141,12 +135,10 @@ pub fn init_kernels(
                 let kernel_name = p.file_stem().unwrap().to_str().unwrap();
                 if filename.ends_with(".topsfb") || filename.ends_with(".ptx") {
                     #[cfg(feature = "cuda_backend")]
-                    let ptx = format!("{}/{}.ptx", full_kernel_folder, kernel_name)
-                        .to_string();
+                    let ptx = format!("{}/{}.ptx", full_kernel_folder, kernel_name).to_string();
 
                     #[cfg(feature = "tops_backend")]
-                    let ptx = format!("{}/{}.topsfb", full_kernel_folder, kernel_name)
-                        .to_string();
+                    let ptx = format!("{}/{}.topsfb", full_kernel_folder, kernel_name).to_string();
 
                     println!("{}", ptx);
 
@@ -159,14 +151,15 @@ pub fn init_kernels(
             if module_map.len() > 0 {
                 println!("{} kernel(s) loaded!", module_map.len());
             }
-            return (Some(module_map), Some(device), Some(stream));
+            (Some(module_map), Some(device), Some(stream))
         }
-        _ => return (None, None, None),
-    };
+        _ => (None, None, None),
+    }
 }
 
 fn get_kernels(
-    device_id: u32, kernel_platform: &str
+    device_id: u32,
+    kernel_platform: &str,
 ) -> &'static (
     Option<Box<HashMap<String, Module>>>,
     Option<Device>,
@@ -180,7 +173,6 @@ fn get_kernels(
         &G_KERNEL
     }
 }
-
 
 #[derive(Debug)]
 pub struct DeviceExecutor {
@@ -197,15 +189,11 @@ impl DeviceExecutor {
     pub fn get_gcu_executor(device_id: u32) -> Option<&'static mut DeviceExecutor> {
         unsafe {
             match &mut GCU {
-                Some(gcu) => {
-                    return Some(gcu);
-                }
+                Some(gcu) => Some(gcu),
                 _ => {
                     GCU = Some(DeviceExecutor::new(device_id));
                     match &mut GCU {
-                        Some(gcu) => {
-                            return Some(gcu);
-                        }
+                        Some(gcu) => Some(gcu),
                         _ => {
                             panic!("Unable to obtain GCU executor!");
                         }
@@ -221,65 +209,176 @@ impl DeviceExecutor {
         let kernel_platform = "scorpio"; //default kernel path
 
         #[cfg(feature = "dorado")]
-        let kernel_platform = "dorado"; 
+        let kernel_platform = "dorado";
 
         #[cfg(feature = "scorpio")]
-        let kernel_platform = "scorpio"; 
+        let kernel_platform = "scorpio";
 
         let unary_functions = vec![
-            "uneg", "uexp", "ulog", "usin", "ucos", "uabs", "usqr", "usqrt", "ursqrt", "ugelu", "ugelu_erf",
-            "urelu", "utanh", "urecip", "uelu", "usigmoid", "usilu", "uelu",
-        ]; 
+            "uneg",
+            "uexp",
+            "ulog",
+            "usin",
+            "ucos",
+            "uabs",
+            "usqr",
+            "usqrt",
+            "ursqrt",
+            "ugelu",
+            "ugelu_erf",
+            "urelu",
+            "utanh",
+            "urecip",
+            "uelu",
+            "usigmoid",
+            "usilu",
+            "uelu",
+        ];
 
         let binary_functions = vec![
-            "badd", "bsub", "bmul", "bdiv", "bmaximum", "bminimum", "mod", "eq", "ne", "ge",
-            "gt", "lt", "le"
+            "badd", "bsub", "bmul", "bdiv", "bmaximum", "bminimum", "mod", "eq", "ne", "ge", "gt",
+            "lt", "le",
         ];
 
         let cast_functions = vec![
-            "cast_f16_i16", "cast_f16_i32", "cast_f16_f32", 
-            "cast_f32_i16", "cast_f32_i32", "cast_f32_f16", 
-            // "cast_i8_i16", "cast_i8_i32", "cast_i8_f32", "cast_i8_f16", "cast_f16_i8", "cast_f32_i8", "cast_i16_i8", "cast_i32_i8", 
-            "cast_bf16_i16", "cast_bf16_i32", "cast_bf16_f16", "cast_bf16_f32", 
-            "cast_f16_bf16", "cast_f32_bf16", "cast_i16_bf16", "cast_i32_bf16", 
-            "cast_u8_bf16", "cast_u16_bf16", "cast_u32_bf16",
-            "cast_i16_i32", "cast_i16_f32", "cast_i16_f16", 
-            "cast_i32_i16", "cast_i32_f32", "cast_i32_f16",
-            "cast_u8_u16", "cast_u8_u32", "cast_u8_f32", "cast_u8_f16", 
-            "cast_u16_u8", "cast_u16_u32", "cast_u16_f32", "cast_u16_f16",
-            "cast_u32_u8", "cast_u32_u16", "cast_u32_f32", "cast_u32_f16"
+            "cast_f16_i16",
+            "cast_f16_i32",
+            "cast_f16_f32",
+            "cast_f32_i16",
+            "cast_f32_i32",
+            "cast_f32_f16",
+            // "cast_i8_i16", "cast_i8_i32", "cast_i8_f32", "cast_i8_f16", "cast_f16_i8", "cast_f32_i8", "cast_i16_i8", "cast_i32_i8",
+            "cast_bf16_i16",
+            "cast_bf16_i32",
+            "cast_bf16_f16",
+            "cast_bf16_f32",
+            "cast_f16_bf16",
+            "cast_f32_bf16",
+            "cast_i16_bf16",
+            "cast_i32_bf16",
+            "cast_u8_bf16",
+            "cast_u16_bf16",
+            "cast_u32_bf16",
+            "cast_i16_i32",
+            "cast_i16_f32",
+            "cast_i16_f16",
+            "cast_i32_i16",
+            "cast_i32_f32",
+            "cast_i32_f16",
+            "cast_u8_u16",
+            "cast_u8_u32",
+            "cast_u8_f32",
+            "cast_u8_f16",
+            "cast_u16_u8",
+            "cast_u16_u32",
+            "cast_u16_f32",
+            "cast_u16_f16",
+            "cast_u32_u8",
+            "cast_u32_u16",
+            "cast_u32_f32",
+            "cast_u32_f16",
         ];
 
-        let reduce_functions = vec!["fast_min_f32", "fast_min_f16","fast_min_i8","fast_min_bf16",
-            "fast_max_f32", "fast_max_f16", "fast_max_i8", "fast_max_bf16",
-            "fast_sum_f32", "fast_sum_f16", "fast_sum_i8", "fast_sum_bf16", 
-            "softmax_f16", "softmax_bf16", "softmax_f32",
-            "layernorm_f16", "layernorm_bf16", "layernorm_f32"];
+        let reduce_functions = vec![
+            "fast_min_f32",
+            "fast_min_f16",
+            "fast_min_i8",
+            "fast_min_bf16",
+            "fast_max_f32",
+            "fast_max_f16",
+            "fast_max_i8",
+            "fast_max_bf16",
+            "fast_sum_f32",
+            "fast_sum_f16",
+            "fast_sum_i8",
+            "fast_sum_bf16",
+            "softmax_f16",
+            "softmax_bf16",
+            "softmax_f32",
+            "layernorm_f16",
+            "layernorm_bf16",
+            "layernorm_f32",
+        ];
 
-        let where_functions = vec!["where_i64_f32", "where_i64_f64", "where_i64_u8", "where_i64_u32", "where_i64_i64",
-            "where_u32_f32", "where_u32_f64", "where_u32_u8", "where_u32_u32", "where_u32_i64",
-            "where_u8_f32", "where_u8_f64", "where_u8_u8", "where_u8_u32", "where_u8_i64", "where_u8_bf16", "where_u8_f16"];
+        let where_functions = vec![
+            "where_i64_f32",
+            "where_i64_f64",
+            "where_i64_u8",
+            "where_i64_u32",
+            "where_i64_i64",
+            "where_u32_f32",
+            "where_u32_f64",
+            "where_u32_u8",
+            "where_u32_u32",
+            "where_u32_i64",
+            "where_u8_f32",
+            "where_u8_f64",
+            "where_u8_u8",
+            "where_u8_u32",
+            "where_u8_i64",
+            "where_u8_bf16",
+            "where_u8_f16",
+        ];
 
-        let index_functions = vec!["is_i64_bf16", "is_u32_bf16", "is_u8_bf16", "is_i64_f16", "is_u32_f16",
-            "is_u8_f16", "is_i64_f32", "is_i64_f64", "is_i64_u8", "is_i64_u32",
-            "is_i64_i64", "is_u32_f32", "is_u32_f64", "is_u32_u8", "is_u32_i64", "is_u32_u32", 
-            "is_u8_f32", "is_u8_f64", "is_u8_u8", "is_u8_u32", "is_u8_i64"];
+        let index_functions = vec![
+            "is_i64_bf16",
+            "is_u32_bf16",
+            "is_u8_bf16",
+            "is_i64_f16",
+            "is_u32_f16",
+            "is_u8_f16",
+            "is_i64_f32",
+            "is_i64_f64",
+            "is_i64_u8",
+            "is_i64_u32",
+            "is_i64_i64",
+            "is_u32_f32",
+            "is_u32_f64",
+            "is_u32_u8",
+            "is_u32_i64",
+            "is_u32_u32",
+            "is_u8_f32",
+            "is_u8_f64",
+            "is_u8_u8",
+            "is_u8_u32",
+            "is_u8_i64",
+        ];
 
-        let copy_functions = vec![ "ucopy_bf16", "ucopy_u8", "ucopy_u32", "ucopy_f64",
-                        "ucopy_f16", "ucopy_f32", ];
+        let copy_functions = vec![
+            "ucopy_bf16",
+            "ucopy_u8",
+            "ucopy_u32",
+            "ucopy_f64",
+            "ucopy_f16",
+            "ucopy_f32",
+        ];
 
-        let kvconcat_functions = vec![ "kvconcat_bf16", "kvconcat_u8", "kvconcat_f64",
-                        "kvconcat_f16", "kvconcat_f32", ];
+        let kvconcat_functions = vec![
+            "kvconcat_bf16",
+            "kvconcat_u8",
+            "kvconcat_f64",
+            "kvconcat_f16",
+            "kvconcat_f32",
+        ];
 
-        let embedding_functions = vec!["rope_f32", "rope_f16", "rope_bf16", ];
+        let embedding_functions = vec!["rope_f32", "rope_f16", "rope_bf16"];
 
-        let conv_functions = vec!["conv1d_f32", "conv1d_f16", "conv1d_bf16", "conv1d_f64", "conv1d_u8", "conv1d_u32",
-                "conv2d_f32", "conv2d_f16", "conv2d_bf16"];
+        let conv_functions = vec![
+            "conv1d_f32",
+            "conv1d_f16",
+            "conv1d_bf16",
+            "conv1d_f64",
+            "conv1d_u8",
+            "conv1d_u32",
+            "conv2d_f32",
+            "conv2d_f16",
+            "conv2d_bf16",
+        ];
 
         let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
         match get_kernels(device_id, kernel_platform) {
             (Some(_module_map), Some(_device), Some(_stream)) => {
-                for module in _module_map.keys().into_iter() {
+                for module in _module_map.keys() {
                     if module == "unary" {
                         for dt in ["bf16", "f16", "f32"] {
                             for func in &unary_functions {
@@ -312,8 +411,7 @@ impl DeviceExecutor {
                             let function = _module_map[module].get_function(&name).unwrap();
                             function_map.insert(name, Arc::new(function));
                         }
-                    } 
-                    else if module == "affine" {
+                    } else if module == "affine" {
                         for dt in ["bf16", "f16", "f32"] {
                             let name = format!("{}_{}", module, dt);
                             println!("Load function {}", name);
@@ -323,53 +421,52 @@ impl DeviceExecutor {
                     } else if module == "cast" {
                         for func in &cast_functions {
                             println!("Load function {}", func);
-                            let function = _module_map[module].get_function(&func).unwrap();
+                            let function = _module_map[module].get_function(func).unwrap();
                             function_map.insert(func.to_string(), Arc::new(function));
                         }
-                    }  else if module == "reduce" {
+                    } else if module == "reduce" {
                         for func in &reduce_functions {
                             println!("Load function {}", func);
-                            let function = _module_map[module].get_function(&func).unwrap();
+                            let function = _module_map[module].get_function(func).unwrap();
                             function_map.insert(func.to_string(), Arc::new(function));
                         }
                     } else if module == "ternary" {
                         for func in &where_functions {
                             println!("Load function {}", func);
-                            let function = _module_map[module].get_function(&func).unwrap();
+                            let function = _module_map[module].get_function(func).unwrap();
                             function_map.insert(func.to_string(), Arc::new(function));
                         }
                     } else if module == "indexing" {
                         for func in &index_functions {
                             println!("Load function {}", func);
-                            let function = _module_map[module].get_function(&func).unwrap();
+                            let function = _module_map[module].get_function(func).unwrap();
                             function_map.insert(func.to_string(), Arc::new(function));
                         }
                     } else if module == "embedding" {
                         for func in &embedding_functions {
                             println!("Load function {}", func);
-                            let function = _module_map[module].get_function(&func).unwrap();
+                            let function = _module_map[module].get_function(func).unwrap();
                             function_map.insert(func.to_string(), Arc::new(function));
                         }
                     } else if module == "kvconcat" {
                         for func in &kvconcat_functions {
                             println!("Load function {}", func);
-                            let function = _module_map[module].get_function(&func).unwrap();
+                            let function = _module_map[module].get_function(func).unwrap();
                             function_map.insert(func.to_string(), Arc::new(function));
                         }
                     } else if module == "conv" {
                         for func in &conv_functions {
                             println!("Load function {}", func);
-                            let function = _module_map[module].get_function(&func).unwrap();
+                            let function = _module_map[module].get_function(func).unwrap();
                             function_map.insert(func.to_string(), Arc::new(function));
                         }
                     } else if module == "copy" {
                         for func in &copy_functions {
                             println!("Load function {}", func);
-                            let function = _module_map[module].get_function(&func).unwrap();
+                            let function = _module_map[module].get_function(func).unwrap();
                             function_map.insert(func.to_string(), Arc::new(function));
                         }
-                    }
-                    else {
+                    } else {
                         println!("Module not load: {}", module);
                     }
                 }
@@ -389,18 +486,12 @@ impl DeviceExecutor {
     }
 
     pub fn has_function(&self, module_name: String, func_name: String) -> bool {
-        match &self.module_map {
-            Some(modules) => {
-                if modules.contains_key(&module_name) {
-                    match &self.function_map {
-                        Some(funcs) => {
-                            return funcs.contains_key(&func_name);
-                        }
-                        _ => {}
-                    }
+        if let Some(modules) = &self.module_map {
+            if modules.contains_key(&module_name) {
+                if let Some(funcs) = &self.function_map {
+                    return funcs.contains_key(&func_name);
                 }
             }
-            _=> {}
         }
         false
     }
@@ -559,7 +650,7 @@ impl DeviceExecutor {
     pub fn get_block_grid(&self, shape1: usize, shape0: usize) -> (usize, usize, usize) {
         let grid_a: usize = (shape1 + 16 - 1) / 16;
         let grid_b: usize = (shape0 + 16 - 1) / 16;
-        return (16, grid_a, grid_b);
+        (16, grid_a, grid_b)
     }
 
     #[allow(non_snake_case)]
@@ -596,7 +687,7 @@ impl DeviceExecutor {
                         matB.as_device_ptr(),
                         matOut.as_device_ptr(),
                         size as i32,
-                        tp as i32
+                        tp
                     ));
 
                     #[cfg(feature = "cuda_backend")]
@@ -689,7 +780,7 @@ impl DeviceExecutor {
                         matB.as_device_ptr(),
                         matOut.as_device_ptr(),
                         size as i32,
-                        tp as i32
+                        tp
                     ));
 
                     #[cfg(feature = "cuda_backend")]
@@ -997,7 +1088,6 @@ impl DeviceExecutor {
         }
     }
 
-
     #[allow(non_snake_case)]
     // pub fn transposed_matmul_owned(
     //     &mut self,
@@ -1048,7 +1138,6 @@ impl DeviceExecutor {
     //     Ok(())
 
     // }
-
     #[allow(non_snake_case)]
     pub fn transposed_matmul(
         &mut self,
@@ -1228,14 +1317,12 @@ impl DeviceExecutor {
 
         if eager_mode {
             match result {
-                Ok(_) => {
-                    match self.synchronize() {
-                        Ok(_) => {}
-                        Err(_) => {
-                            panic!("Unable to synchronize kernels!");
-                        }
+                Ok(_) => match self.synchronize() {
+                    Ok(_) => {}
+                    Err(_) => {
+                        panic!("Unable to synchronize kernels!");
                     }
-                }
+                },
                 _ => {
                     panic!("Unable to synchronize kernels!");
                 }
@@ -1393,7 +1480,7 @@ impl DeviceExecutor {
                     let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
                         matA.as_device_ptr(),
                         size as i32,
-                        map_act[act_type.as_str()] as i32
+                        map_act[act_type.as_str()]
                     ));
 
                     #[cfg(feature = "cuda_backend")]
@@ -1568,7 +1655,7 @@ mod tests {
         let exec = DeviceExecutor::new(0);
         let a = DeviceTensor::ones(vec![9, 9]).unwrap();
         let b = DeviceTensor::fill(vec![3, 3], 0.5f32).unwrap();
-        let cref = DeviceTensor::from_vec_shape(&vec![4.5f32; 7 * 7], vec![7, 7]).unwrap();
+        let cref = DeviceTensor::from_vec_shape(&[4.5f32; 7 * 7], vec![7, 7]).unwrap();
 
         let c = exec.conv2d_owned(&a, &b, true).unwrap();
         assert_eq!(c.ndims(), 2);
@@ -1579,10 +1666,10 @@ mod tests {
     #[test]
     fn test_activation_relu_owned() {
         let exec = DeviceExecutor::new(0);
-        let a = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
-            .unwrap();
-        let cref = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
-            .unwrap();
+        let a =
+            DeviceTensor::from_vec_shape(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let cref =
+            DeviceTensor::from_vec_shape(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
 
         exec.activation_inplace(&a, true, "relu".to_string())
             .unwrap();
@@ -1594,13 +1681,11 @@ mod tests {
     #[test]
     fn test_activation_leaky_owned() {
         let exec = DeviceExecutor::new(0);
-        let a = DeviceTensor::from_vec_shape(&vec![1.0f32, -0.8, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
-            .unwrap();
-        let cref = DeviceTensor::from_vec_shape(
-            &vec![1.0f32, -0.080000006, 3.0, 4.0, 5.0, 6.0],
-            vec![2, 3],
-        )
-        .unwrap();
+        let a =
+            DeviceTensor::from_vec_shape(&[1.0f32, -0.8, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let cref =
+            DeviceTensor::from_vec_shape(&[1.0f32, -0.080000006, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
+                .unwrap();
 
         exec.activation_inplace(&a, true, "leaky".to_string())
             .unwrap();
@@ -1613,10 +1698,10 @@ mod tests {
     #[test]
     fn test_activation_tanh_owned() {
         let exec = DeviceExecutor::new(0);
-        let a = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
-            .unwrap();
+        let a =
+            DeviceTensor::from_vec_shape(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
         let cref = DeviceTensor::from_vec_shape(
-            &vec![
+            &[
                 0.7615942f32,
                 0.9640275,
                 0.9950547,
@@ -1641,24 +1726,19 @@ mod tests {
         let exec = DeviceExecutor::new(0);
         // let a = DeviceTensor::from_vec_shape(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 1.0, 1.0], vec![2, 4]).unwrap();
         // let cref = DeviceTensor::from_vec_shape(vec![0.841192f32, 1.9545977, 2.9963627, 3.9999297, 5.0, 6.0, 0.841192f32, 0.841192f32], vec![2, 4]).unwrap();
-        let a = DeviceTensor::from_vec_shape(&vec![1.0f32; 5 * 5], vec![5, 5]).unwrap();
-        let cref = DeviceTensor::from_vec_shape(&vec![0.841192f32; 5 * 5], vec![5, 5]).unwrap();
+        let a = DeviceTensor::from_vec_shape(&[1.0f32; 5 * 5], vec![5, 5]).unwrap();
+        let cref = DeviceTensor::from_vec_shape(&[0.841192f32; 5 * 5], vec![5, 5]).unwrap();
 
         exec.activation_inplace(&a, true, "gelu".to_string())
             .unwrap();
         match &a.data {
-            Some(data) => match data {
-                DeviceTensorKind::FloatTensor(out) => {
-                    let mut out_host = vec![0.0f32; a.shape[0] * a.shape[1]];
-                    out.copy_to(&mut out_host);
-                    for item in out_host {
-                        print!("{} ", item)
-                    }
-                }
-                _ => {
-                    println!("Unable to obtain results!");
-                }
-            },
+            Some(DeviceTensorKind::FloatTensor(_out)) => {
+                let _out_host = vec![0.0f32; a.shape[0] * a.shape[1]];
+                // out.copy_to(&mut out_host);
+                // for item in out_host {
+                //     print!("{} ", item)
+                // }
+            }
             _ => {
                 println!("Unable to obtain results!");
             }
@@ -1698,11 +1778,11 @@ mod tests {
     #[test]
     fn test_subf32_owned() {
         let exec = DeviceExecutor::new(0);
-        let a = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
-            .unwrap();
-        let b = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
-            .unwrap();
-        let cref = DeviceTensor::from_vec_shape(&vec![0.0f32; 6], vec![2, 3]).unwrap();
+        let a =
+            DeviceTensor::from_vec_shape(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let b =
+            DeviceTensor::from_vec_shape(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let cref = DeviceTensor::from_vec_shape(&[0.0f32; 6], vec![2, 3]).unwrap();
 
         let c = exec.subf32_owned(&a, &b, true).unwrap();
         assert_eq!(c.ndims(), 2);
@@ -1713,13 +1793,12 @@ mod tests {
     #[test]
     fn test_mulf32_owned() {
         let exec = DeviceExecutor::new(0);
-        let a = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
+        let a =
+            DeviceTensor::from_vec_shape(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let b =
+            DeviceTensor::from_vec_shape(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let cref = DeviceTensor::from_vec_shape(&[1.0f32, 4.0, 9.0, 16.0, 25.0, 36.0], vec![2, 3])
             .unwrap();
-        let b = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
-            .unwrap();
-        let cref =
-            DeviceTensor::from_vec_shape(&vec![1.0f32, 4.0, 9.0, 16.0, 25.0, 36.0], vec![2, 3])
-                .unwrap();
 
         let c = exec.mulf32_owned(&a, &b, true).unwrap();
         assert_eq!(c.ndims(), 2);
@@ -1730,11 +1809,11 @@ mod tests {
     #[test]
     fn test_divf32_owned() {
         let exec = DeviceExecutor::new(0);
-        let a = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
-            .unwrap();
-        let b = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
-            .unwrap();
-        let cref = DeviceTensor::from_vec_shape(&vec![1.0f32; 6], vec![2, 3]).unwrap();
+        let a =
+            DeviceTensor::from_vec_shape(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let b =
+            DeviceTensor::from_vec_shape(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let cref = DeviceTensor::from_vec_shape(&[1.0f32; 6], vec![2, 3]).unwrap();
         let c = exec.divf32_owned(&a, &b, true).unwrap();
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [2, 3]);
@@ -1744,10 +1823,10 @@ mod tests {
     #[test]
     fn test_transpose_owned() {
         let exec = DeviceExecutor::new(0);
-        let a = DeviceTensor::from_vec_shape(&vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3])
-            .unwrap();
-        let cref = DeviceTensor::from_vec_shape(&vec![1.0f32, 4.0, 2.0, 5.0, 3.0, 6.0], vec![3, 2])
-            .unwrap();
+        let a =
+            DeviceTensor::from_vec_shape(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+        let cref =
+            DeviceTensor::from_vec_shape(&[1.0f32, 4.0, 2.0, 5.0, 3.0, 6.0], vec![3, 2]).unwrap();
         let c = exec.transpose_owned(&a, true).unwrap();
         assert_eq!(c.ndims(), 2);
         assert_eq!(c.shape(), [3, 2]);

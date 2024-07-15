@@ -1,40 +1,39 @@
-
 /*
- * Copyright 2021-2024 Enflame. All Rights Reserved.
+* Copyright 2021-2024 Enflame. All Rights Reserved.
 
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * @file    gcu_launch.rs
- * @brief
- *
- * @author  Guoqing Bao
- * @date    2023-09-05 - 2024-01-10
- * @version V0.1
- * @par     Copyright (c) Enflame Tech Company.
- * @par     History: compatible with runtime 3.0 kernel launch
- * @par     Comments: a gcu kernel launch abstraction.
- */
-#[cfg(feature = "tops_backend")]
-use tops_backend as tops;
-#[cfg(feature = "tops_backend")]
-use tops::stream::TopsStream as Stream;
-use uhal::error::{DeviceResult, DeviceError};
-pub use cust_core::_hidden::{DeviceCopy};
-use std::ffi::{c_void, c_ulonglong};
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*      http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+* @file    gcu_launch.rs
+* @brief
+*
+* @author  Guoqing Bao
+* @date    2023-09-05 - 2024-01-10
+* @version V0.1
+* @par     Copyright (c) Enflame Tech Company.
+* @par     History: compatible with runtime 3.0 kernel launch
+* @par     Comments: a gcu kernel launch abstraction.
+*/
 use crate::gcu_device::GcuFunction;
+pub use cust_core::_hidden::DeviceCopy;
+use std::ffi::c_void;
 use std::ptr;
 #[cfg(feature = "tops_backend")]
-pub use tops::driv as driv;
+pub use tops::driv;
+#[cfg(feature = "tops_backend")]
+use tops::stream::TopsStream as Stream;
+#[cfg(feature = "tops_backend")]
+use tops_backend as tops;
+use uhal::error::DeviceResult;
 
 use tops::error::ToResult;
 
@@ -52,7 +51,6 @@ pub struct GcuLaunchConfig {
 
 impl GcuLaunchConfig {
     pub fn for_threds(n: u32) -> Self {
-     
         Self {
             grid_dim: (1, 1, 1),
             block_dim: (n, 1, 1),
@@ -77,7 +75,6 @@ impl GcuLaunchConfig {
     pub fn max_sip_num() -> u32 {
         6
     }
-    
 }
 
 /// Consumes a [GcuFunction] to execute asychronously on the device with
@@ -221,20 +218,19 @@ impl_launch!(
 );
 
 impl_launch!(
-    [A, B, C, D, E, F, G, H, I, J, K,   L, M,  N,  O,  P,  Q,   R, S],
+    [A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S],
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
 );
 
 impl_launch!(
-    [A, B, C, D, E, F, G, H, I, J, K,   L, M,  N,  O,  P,  Q,   R, S, T],
+    [A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T],
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
 );
 
 impl_launch!(
-    [A, B, C, D, E, F, G, H, I, J, K,   L, M,  N,  O,  P,  Q,   R, S, T, U],
+    [A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U],
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 );
-
 
 impl GcuFunction {
     #[inline(always)]
@@ -243,44 +239,50 @@ impl GcuFunction {
         cfg: &GcuLaunchConfig,
         params: &mut [*mut std::ffi::c_void],
     ) -> DeviceResult<()> {
-        match self.func {
-            Some(func) => {
-                // println!("Launch {} func {:?}!", self.name, func);
-                // let mut args_ = Vec::new();
-                // for i in 0..args.len(){
-                //     let vaddress = std::mem::transmute::<*mut c_void, *mut *mut c_void>((*params)[i]);
-                //     unsafe {args_.push(*vaddress);}
-                    
-                // }
+        if let Some(func) = self.func {
+            // println!("Launch {} func {:?}!", self.name, func);
+            // let mut args_ = Vec::new();
+            // for i in 0..args.len(){
+            //     let vaddress = std::mem::transmute::<*mut c_void, *mut *mut c_void>((*params)[i]);
+            //     unsafe {args_.push(*vaddress);}
 
-                // let mut size :usize = (std::mem::size_of::<c_ulonglong>() * (params.len() - 1) + std::mem::size_of::<usize>()) as usize;
-                // let _config = vec![0x1 as *const c_void, params.as_mut_ptr() as *const _ as *mut c_void, 0x2 as *const c_void, &mut size as *const _ as *mut c_void, 0x3 as *const c_void];
-                let null = ptr::null_mut();
-                let stream =  if self.is_async {self.stream.unwrap()} else {null};
-                let shared_mem_bytes = 0;
-                let mut ret = driv::topsModuleLaunchKernel(
-                    func, cfg.grid_dim.0, cfg.grid_dim.1, cfg.grid_dim.2,
-                    cfg.block_dim.0, cfg.block_dim.1, cfg.block_dim.2,
-                    shared_mem_bytes as u32,
-                    stream,
-                    params.as_mut_ptr() as *mut *mut c_void,
-                    null as *mut *mut c_void, 
-                    // config.as_mut_ptr() as *mut *mut c_void            
-                ).to_result();
+            // }
 
-                // if ret.is_ok() && self.is_async {
-                //     println!("******************driv::topsStreamSynchronize! {}", self.is_async);
-                //     ret = driv::topsStreamSynchronize(stream).to_result();
-                // }
+            // let mut size :usize = (std::mem::size_of::<c_ulonglong>() * (params.len() - 1) + std::mem::size_of::<usize>()) as usize;
+            // let _config = vec![0x1 as *const c_void, params.as_mut_ptr() as *const _ as *mut c_void, 0x2 as *const c_void, &mut size as *const _ as *mut c_void, 0x3 as *const c_void];
+            let null = ptr::null_mut();
+            let stream = if self.is_async {
+                self.stream.unwrap()
+            } else {
+                null
+            };
+            let shared_mem_bytes = 0;
+            let ret = driv::topsModuleLaunchKernel(
+                func,
+                cfg.grid_dim.0,
+                cfg.grid_dim.1,
+                cfg.grid_dim.2,
+                cfg.block_dim.0,
+                cfg.block_dim.1,
+                cfg.block_dim.2,
+                shared_mem_bytes as u32,
+                stream,
+                params.as_mut_ptr(),
+                null as *mut *mut c_void,
+                // config.as_mut_ptr() as *mut *mut c_void
+            )
+            .to_result();
 
-                if ret.is_err() {
-                    println!("Launch Error for function {}", self.func_name);
-                } 
+            // if ret.is_ok() && self.is_async {
+            //     println!("******************driv::topsStreamSynchronize! {}", self.is_async);
+            //     ret = driv::topsStreamSynchronize(stream).to_result();
+            // }
 
-                return ret;
-
+            if ret.is_err() {
+                println!("Launch Error for function {}", self.func_name);
             }
-            _=> {}
+
+            return ret;
         }
         Ok(())
     }

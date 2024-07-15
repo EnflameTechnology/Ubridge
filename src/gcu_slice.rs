@@ -1,57 +1,55 @@
-
 /*
- * Copyright 2021-2024 Enflame. All Rights Reserved.
+* Copyright 2021-2024 Enflame. All Rights Reserved.
 
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * @file    gcu_slice.rs
- * @brief
- *
- * @author  Guoqing Bao
- * @date    2023-09-05 - 2023-11-17
- * @version V0.1
- * @par     Copyright (c) Enflame Tech Company.
- * @par     History: Fix gcu slicing bug
- * @par     Comments: a gcu tensor slice abstraction (for supporting candle Tensor).
- */
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*      http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+* @file    gcu_slice.rs
+* @brief
+*
+* @author  Guoqing Bao
+* @date    2023-09-05 - 2023-11-17
+* @version V0.1
+* @par     Copyright (c) Enflame Tech Company.
+* @par     History: Fix gcu slicing bug
+* @par     Comments: a gcu tensor slice abstraction (for supporting candle Tensor).
+*/
+use crate::gcu_device::GcuDevice;
+pub use cust_core::_hidden::DeviceCopy;
 use std::ffi::c_void;
-use std::{marker::Unpin, pin::Pin, sync::Arc, vec::Vec};
-use uhal::error::{DeviceResult, DeviceError};
-use uhal::memory::{DeviceBufferTrait, DevicePointerTrait};
 use std::{
     marker::PhantomData,
     ops::{Bound, RangeBounds},
 };
-use crate::gcu_device::GcuDevice;
-pub use cust_core::_hidden::{DeviceCopy};
+use std::{marker::Unpin, pin::Pin, sync::Arc, vec::Vec};
+use uhal::error::{DeviceError, DeviceResult};
+use uhal::memory::DevicePointerTrait;
 
 //Tops backend
 #[cfg(feature = "tops_backend")]
 use tops_backend as tops;
 
-
 #[cfg(feature = "tops_backend")]
 use tops::memory::TopsDeviceBuffer as DeviceBuffer;
 
 #[cfg(feature = "tops_backend")]
-pub use tops::driv as driv;
+pub use tops::driv;
 
 use crate::device_ptr::{DevicePtr, DevicePtrMut, DeviceSlice};
 
 #[derive(Debug)]
 pub struct GcuSlice<T: DeviceCopy> {
     pub buffer: DeviceBuffer<T>,
-    pub len : usize,
+    pub len: usize,
     pub device: Arc<GcuDevice>,
     pub host_buf: Option<Pin<Vec<T>>>,
     pub host_buf_ptr: Option<*mut c_void>,
@@ -66,10 +64,10 @@ impl<T: DeviceCopy> Drop for GcuSlice<T> {
             // if let Some(buf) = &self.host_buf {
             //     let host_ptr = buf.as_ref().as_ptr() as *mut c_void;
             //     driv::topsHostUnregister(host_ptr);
-            // } 
+            // }
             if let Some(ptr) = &self.host_buf_ptr {
-                driv::topsHostFree(ptr.clone());
-            } 
+                driv::topsHostFree(*ptr);
+            }
         }
     }
 }
@@ -84,7 +82,7 @@ impl<T: DeviceCopy> GcuSlice<T> {
 impl<T: DeviceCopy> GcuSlice<T> {
     /// Allocates copy of self and schedules a device to device copy of memory.
     pub fn try_clone(&self) -> DeviceResult<Self> {
-        let mut dst = unsafe { self.device.alloc(self.len) }?;
+        let mut dst = self.device.alloc(self.len)?;
         self.device.dtod_copy(self, &mut dst)?;
         Ok(dst)
     }
@@ -125,11 +123,15 @@ impl<T: DeviceCopy> GcuSlice<T> {
     }
     /// Fallible version of [CudaSlice::slice]
     pub fn try_slice(&self, range: impl RangeBounds<usize>) -> Option<GcuView<'_, T>> {
-        
         range.bounds(..self.len).map(|(start, end)| GcuView {
             root: self.buffer.as_device_ptr_ref().as_ref(),
             // ptr: unsafe { self.buffer.as_device_ptr().offset(isize::try_from(start * std::mem::size_of::<T>()).unwrap()).as_raw()},
-            ptr: unsafe { self.buffer.as_device_ptr().offset(isize::try_from(start).unwrap()).as_raw()},
+            ptr: unsafe {
+                self.buffer
+                    .as_device_ptr()
+                    .offset(isize::try_from(start).unwrap())
+                    .as_raw()
+            },
             len: end - start,
             marker: PhantomData,
         })
@@ -191,8 +193,9 @@ impl<T: DeviceCopy> GcuSlice<T> {
     /// Fallible version of [CudaSlice::slice_mut]
     pub fn try_slice_mut(&mut self, range: impl RangeBounds<usize>) -> Option<GcuViewMut<'_, T>> {
         range.bounds(..self.len).map(|(start, end)| GcuViewMut {
-            // ptr: self.device_ptr + (start * std::mem::size_of::<T>()) as u64, 
-            ptr: (self.device_ptr() as u64 + (start * std::mem::size_of::<T>()) as u64) as *mut c_void,
+            // ptr: self.device_ptr + (start * std::mem::size_of::<T>()) as u64,
+            ptr: (self.device_ptr() as u64 + (start * std::mem::size_of::<T>()) as u64)
+                as *mut c_void,
             // ptr: ((self.device_ptr().clone() as u64) + (start * std::mem::size_of::<T>() as u64)) as *mut c_void, //.offset(isize::try_from().unwrap())},
             root: self.buffer.as_device_ptr_mut().as_mut(),
             len: end - start,
@@ -289,7 +292,6 @@ impl<R: RangeBounds<usize>> RangeHelper for R {
     }
 }
 
-
 impl<T: DeviceCopy> DeviceSlice<T> for GcuSlice<T> {
     fn len(&self) -> usize {
         self.len
@@ -310,7 +312,7 @@ impl<'a, T> DeviceSlice<T> for GcuViewMut<'a, T> {
 
 impl<T: DeviceCopy> DevicePtr<T> for GcuSlice<T> {
     fn device_ptr(&self) -> driv::topsDeviceptr_t {
-        self.buffer.as_device_ptr().as_raw() as *mut c_void
+        self.buffer.as_device_ptr().as_raw()
     }
 }
 
@@ -326,10 +328,9 @@ impl<'a, T> DevicePtr<T> for GcuViewMut<'a, T> {
     }
 }
 
-
 impl<T: DeviceCopy> DevicePtrMut<T> for GcuSlice<T> {
     fn device_ptr_mut(&mut self) -> driv::topsDeviceptr_t {
-        self.buffer.as_device_ptr().as_raw() as *mut c_void
+        self.buffer.as_device_ptr().as_raw()
     }
 }
 
@@ -366,4 +367,3 @@ unsafe impl<'a, T: DeviceCopy> DeviceCopy for &GcuViewMut<'a, T> {
         (&self.ptr) as *const driv::topsDeviceptr_t as *mut std::ffi::c_void
     }
 }
-

@@ -1,34 +1,33 @@
 /*
- * Copyright 2021-2024 Enflame. All Rights Reserved.
+* Copyright 2021-2024 Enflame. All Rights Reserved.
 
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * @file    device_tensor.rs
- * @brief
- *
- * @author  Guoqing Bao
- * @date    2022-10-27 - 2023-09-18
- * @version V0.1
- * @par     Copyright (c) Enflame Tech Company.
- * @par     History: compatibility for Runtime 3.0
- * @par     Comments: a gcu tensor abstraction.
- */
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*      http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+* @file    device_tensor.rs
+* @brief
+*
+* @author  Guoqing Bao
+* @date    2022-10-27 - 2023-09-18
+* @version V0.1
+* @par     Copyright (c) Enflame Tech Company.
+* @par     History: compatibility for Runtime 3.0
+* @par     Comments: a gcu tensor abstraction.
+*/
 use float_eq::float_eq;
 
 use std::fmt::Debug;
 
 //Import UHAL for common computing interfaces
-
 
 use uhal::error::DeviceResult;
 use uhal::memory::{DeviceBufferTrait, DeviceBufferTraitEx, DevicePointerTrait};
@@ -130,12 +129,12 @@ impl DeviceTensor {
         }
     }
 
-    pub fn from_vec_shape(raw_data: &Vec<f32>, shape: Vec<usize>) -> DeviceResult<DeviceTensor> {
-        let data = DeviceBuffer::from_slice(&raw_data);
+    pub fn from_vec_shape(raw_data: &[f32], shape: Vec<usize>) -> DeviceResult<DeviceTensor> {
+        let data = DeviceBuffer::from_slice(raw_data);
         match data {
             Ok(buf) => Ok(DeviceTensor {
                 data: Some(DeviceTensorKind::from(buf)),
-                shape: shape,
+                shape,
             }),
             #[cfg(test)]
             Err(_e) => {
@@ -158,7 +157,7 @@ impl DeviceTensor {
         match data {
             Ok(buf) => Ok(DeviceTensor {
                 data: Some(DeviceTensorKind::from(buf)),
-                shape: shape,
+                shape,
             }),
             #[cfg(test)]
             Err(_e) => {
@@ -172,21 +171,20 @@ impl DeviceTensor {
         }
     }
 
-    pub fn from_raw_parts (
+    pub fn from_raw_parts(
         pointer: &topsDeviceptr_t,
         size: usize,
         shape: Vec<usize>,
     ) -> DeviceResult<DeviceTensor> {
-
-        unsafe { 
-            let data: DeviceBuffer<f32> = DeviceBuffer::from_raw_parts(DevicePointer::from_raw(*pointer), size); 
+        unsafe {
+            let data: DeviceBuffer<f32> =
+                DeviceBuffer::from_raw_parts(DevicePointer::from_raw(*pointer), size);
 
             Ok(DeviceTensor {
                 data: Some(DeviceTensorKind::from(data)),
-                shape: shape,
+                shape,
             })
         }
-
     }
 
     pub fn from_vec_shape_i32(raw_data: Vec<i32>, shape: Vec<usize>) -> DeviceResult<DeviceTensor> {
@@ -194,7 +192,7 @@ impl DeviceTensor {
         match data {
             Ok(buf) => Ok(DeviceTensor {
                 data: Some(DeviceTensorKind::from(buf)),
-                shape: shape,
+                shape,
             }),
             #[cfg(test)]
             Err(_e) => {
@@ -281,9 +279,9 @@ impl PartialEq for DeviceTensor {
                                 DeviceTensorKind::FloatTensor(ret2) => {
                                     let mut out2 = vec![0.0f32; size2];
                                     ret2.copy_to(&mut out2[0..size2]).unwrap();
-                                    return float_eq!(out1, out2, rmax_all <= 0.000001f32);
+                                    float_eq!(out1, out2, rmax_all <= 0.000001f32)
                                 }
-                                _ => return false,
+                                _ => false,
                             }
                         }
                         DeviceTensorKind::DoubleTensor(ret1) => {
@@ -293,9 +291,9 @@ impl PartialEq for DeviceTensor {
                                 DeviceTensorKind::DoubleTensor(ret2) => {
                                     let mut out2 = vec![0.0f64; size2];
                                     ret2.copy_to(&mut out2[0..size2]).unwrap();
-                                    return out1 == out2;
+                                    out1 == out2
                                 }
-                                _ => return false,
+                                _ => false,
                             }
                         }
                         DeviceTensorKind::Int32Tensor(ret1) => {
@@ -305,9 +303,9 @@ impl PartialEq for DeviceTensor {
                                 DeviceTensorKind::Int32Tensor(ret2) => {
                                     let mut out2 = vec![0i32; size2];
                                     ret2.copy_to(&mut out2[0..size2]).unwrap();
-                                    return out1 == out2;
+                                    out1 == out2
                                 }
-                                _ => return false,
+                                _ => false,
                             }
                         }
                         DeviceTensorKind::Int8Tensor(ret1) => {
@@ -317,16 +315,16 @@ impl PartialEq for DeviceTensor {
                                 DeviceTensorKind::Int8Tensor(ret2) => {
                                     let mut out2 = vec![0i8; size2];
                                     ret2.copy_to(&mut out2[0..size2]).unwrap();
-                                    return out1 == out2;
+                                    out1 == out2
                                 }
-                                _ => return false,
+                                _ => false,
                             }
                         }
                     }
                 }
-                _ => return false,
+                _ => false,
             },
-            _ => return false,
+            _ => false,
         }
     }
 }

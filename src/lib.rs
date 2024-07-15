@@ -1,46 +1,46 @@
 /*
- * Copyright 2021-2024 Enflame. All Rights Reserved.
+* Copyright 2021-2024 Enflame. All Rights Reserved.
 
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*      http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
 
 pub mod device_executor;
 pub mod device_opcode;
+pub mod device_ptr;
 pub mod device_tensor;
 pub mod gcu_device;
-pub mod gcu_slice;
-pub mod device_ptr;
 pub mod gcu_launch;
-pub mod tests;
+pub mod gcu_slice;
 pub mod gemm_tuner;
+pub mod tests;
 /// Prelude module for users to import
 pub mod prelude {
     // prelude
     pub use crate::device_executor::*;
-    pub use crate::device_tensor::*;
     pub use crate::device_opcode::*;
-    pub use crate::gcu_device::*;
     pub use crate::device_ptr::*;
-    pub use crate::gcu_slice::*;
+    pub use crate::device_tensor::*;
+    pub use crate::gcu_device::*;
     pub use crate::gcu_launch::*;
-    pub use crate::tests::*;
+    pub use crate::gcu_slice::*;
     pub use crate::gemm_tuner::*;
+    pub use crate::tests::*;
 
     #[cfg(feature = "tops_backend")]
     pub use tops_backend::memory::CopyDestination;
     #[cfg(feature = "tops_backend")]
     pub use uhal::stream::StreamTrait;
-    
+
     #[cfg(feature = "cuda_backend")]
     pub use cuda_backend::memory::CopyDestination;
 }

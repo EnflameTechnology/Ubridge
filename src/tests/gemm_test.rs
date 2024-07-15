@@ -1,22 +1,20 @@
 /*
- * Copyright 2021-2024 Enflame. All Rights Reserved.
+* Copyright 2021-2024 Enflame. All Rights Reserved.
 
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*      http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
 //Example of UHAL for neural network forward pass (on NV GPU & Enflame GCU)
 use cust_core::DeviceCopy;
-use std::collections::HashMap;
-use std::os::raw::c_void;
 
 //Import UHAL for common computing interfaces
 
@@ -40,18 +38,27 @@ use tops::TopsApi as Api;
 #[cfg(feature = "tops_backend")]
 use tops_backend as tops;
 
-use crate::gemm_tuner::{AtenGemmTuner, AtenGemmInfo, AtenGemmTune, GEMM_OP_PARAS};
-
+use crate::gemm_tuner::{AtenGemmInfo, AtenGemmTuner};
 
 fn load_module<'a>(name: &str) -> DeviceResult<Module> {
     #[cfg(not(feature = "scorpio"))]
     #[cfg(feature = "tops_backend")]
-    let ptx = format!("{}/kernels/pavo/{}.topsfb", env!("CARGO_MANIFEST_DIR"), name).to_string();
+    let ptx = format!(
+        "{}/kernels/pavo/{}.topsfb",
+        env!("CARGO_MANIFEST_DIR"),
+        name
+    )
+    .to_string();
 
     #[cfg(feature = "scorpio")]
-    let ptx = format!("{}/kernels/scorpio/{}.topsfb", env!("CARGO_MANIFEST_DIR"), name).to_string();
+    let ptx = format!(
+        "{}/kernels/scorpio/{}.topsfb",
+        env!("CARGO_MANIFEST_DIR"),
+        name
+    )
+    .to_string();
 
-    Module::from_file(&ptx)
+    Module::from_file(ptx)
 }
 
 struct Layer<'a, T: DeviceCopy> {
@@ -79,7 +86,7 @@ pub fn gemm_test() -> DeviceResult<()> {
     info.batch = 16;
     info.is_batch = true;
     let tuner = AtenGemmTuner::new();
-    let param = unsafe { tuner.tuner(&info)};
+    let param = unsafe { tuner.tuner(&info) };
 
     let lhs = vec![0.5f32; B * M * K];
     let rhs = vec![0.5f32; B * K * N];
@@ -99,7 +106,6 @@ pub fn gemm_test() -> DeviceResult<()> {
             out_ref: None,
         }, //weight is N x N matric for next layer
     ];
-  
 
     let mut out_ref: Option<&DeviceBuffer<f32>> = None;
     let mut out_size: Option<(i64, i64, i64)> = None;
@@ -109,35 +115,29 @@ pub fn gemm_test() -> DeviceResult<()> {
                 Ok(module) => {
                     let function_namef32 = "gemm_f32";
 
-                    let kernel = module.get_function(&function_namef32)?;
-                    match layer.weight {
-                        Some(w) => {
-                            unsafe {
-                                // let vaddress = std::mem::transmute::<*mut *mut c_void, *mut c_void>(ptr_param as *mut *mut c_void);
+                    let kernel = module.get_function(function_namef32)?;
+                    if let Some(w) = layer.weight {
+                        unsafe {
+                            // let vaddress = std::mem::transmute::<*mut *mut c_void, *mut c_void>(ptr_param as *mut *mut c_void);
 
-                                #[cfg(feature = "tops_backend")]
-                                let result = launch!(kernel<<<(1, 1, 1), (12, 1, 1), 0, stream>>>(
-                                    matA.as_device_ptr(),
-                                    w.as_device_ptr(),
-                                    matOut.as_device_ptr(),
-                                    matBias.as_device_ptr(),
-                                    param.input_dtype, B, M, K, N,
-                                    param.lhs_multicore, param.rhs_multicore, param.batch_multicore,
-                                    param.lhs_transpose, param.rhs_transpose,
-                                    param.alpha, param.beta, param.addmm_beta, param.bias,
-                                    param.sip_m, param.sip_k, param.sip_n
-                                ));
-        
-                                result?;
-                            }
-                            out_ref = Some(&matOut);
-                            out_size = Some(layer.output_size);
-                        }
-                        _ => {
-                        }
+                            #[cfg(feature = "tops_backend")]
+                            let result = launch!(kernel<<<(1, 1, 1), (12, 1, 1), 0, stream>>>(
+                                matA.as_device_ptr(),
+                                w.as_device_ptr(),
+                                matOut.as_device_ptr(),
+                                matBias.as_device_ptr(),
+                                param.input_dtype, B, M, K, N,
+                                param.lhs_multicore, param.rhs_multicore, param.batch_multicore,
+                                param.lhs_transpose, param.rhs_transpose,
+                                param.alpha, param.beta, param.addmm_beta, param.bias,
+                                param.sip_m, param.sip_k, param.sip_n
+                            ));
 
+                            result?;
+                        }
+                        out_ref = Some(&matOut);
+                        out_size = Some(layer.output_size);
                     }
-
                 }
                 _ => {
                     panic!("\nFailed to load kernel (matmul)!");
@@ -163,14 +163,12 @@ pub fn gemm_test() -> DeviceResult<()> {
                     for b in 0..B1 {
                         for x in 0..N1 {
                             for y in 0..M1 {
-                                print!("{:.5} ", out_host[(b*M1*N1 + x * M1 + y) as usize]);
+                                print!("{:.5} ", out_host[(b * M1 * N1 + x * M1 + y) as usize]);
                             }
-                            println!("{}", "");
+                            println!();
                         }
                         println!("\n\n******************");
-
                     }
-
                 }
                 _ => {
                     panic!("Unable to obtain compute result!")
