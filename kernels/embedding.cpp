@@ -144,10 +144,12 @@ __device__ __forceinline__  void apply_rotary_qkv_batch(T *q_arr, T *k_arr, T *c
 }
 
 template <typename T>
-__device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index_pos,
+__device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index_pos, int batch,
     int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
     int q_stride = q_heads * hidden_size;
     int k_stride = k_heads * hidden_size;
+    int q_stride_whole = q_stride * num_tokens;
+    int k_stride_whole = k_stride * num_tokens;
     T* cos_sin_cur = cos_sin + index_pos * cos_sin_stride;
     if (split_dim == hidden_size || split_dim <= 0 || split_dim > hidden_size) {
       split_dim = hidden_size;
@@ -158,7 +160,7 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
     int MAX_THREADS = GetThreadNum();
     int THREAD_STEP = 1;
     int thread_step = 1;
-    int N = num_tokens;
+    int N = batch * num_tokens;
     if (N > MAX_THREADS) {
       THREAD_STEP = N / MAX_THREADS;
       thread_step = THREAD_STEP;
@@ -190,10 +192,13 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
     const va16u32x4 VEC2 = vbroadcast<va16u32x4>((unsigned int)2);
     va16u32x4 vec_bpe = vbroadcast<va16u32x4>((unsigned int)sizeof(float));
     for (int p = 0; p < thread_step; p++) {
-      int i = thread_id * THREAD_STEP + p;
-      if (i < N) {
-        auto query_sub0 = query + i * q_stride;
-        auto key_sub0 = key + i * k_stride;
+      int idx = thread_id * THREAD_STEP + p;
+      if (idx >= N) break;
+      int batch_idx = idx / num_tokens;
+      int i = idx % num_tokens;
+      if (i < num_tokens) {
+        auto query_sub0 = query + batch_idx * q_stride_whole + i * q_stride;
+        auto key_sub0 = key + batch_idx * k_stride_whole + i * k_stride;
         tops::mdspan hbm_query(tops::Global, query_sub0, q_stride);
         tops::mdspan hbm_key(tops::Global, key_sub0, k_stride);
         tops::memcpy(ctx, query_l1, hbm_query);
@@ -237,100 +242,23 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
 }
 
 extern "C" __global__ void  rope_f32(float *query, float *key, float *cos_sin, int cos_sin_stride, int index_pos,
-                      int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
-    int q_stride = q_heads * hidden_size;
-    int k_stride = k_heads * hidden_size;
-    float* cos_sin_cur = cos_sin + index_pos * cos_sin_stride;
-    if (split_dim == hidden_size || split_dim <= 0 || split_dim > hidden_size) {
-      split_dim = hidden_size;
-    }
-    tops_dte_ctx_t ctx;
-    tops::dte_scope s(ctx);
-    int thread_id = GetThreadIdx();
-    int MAX_THREADS = GetThreadNum();
-    int THREAD_STEP = 1;
-    int thread_step = 1;
-    int N = num_tokens;
-    if (N > MAX_THREADS) {
-      THREAD_STEP = N / MAX_THREADS;
-      thread_step = THREAD_STEP;
-      if (N % MAX_THREADS != 0) {
-        if (thread_id == MAX_THREADS - 1) {
-          thread_step += N % MAX_THREADS; //last thread also process remains
-        }
-      }
-    }
-    __local__ __valigned__ float bufCosSin[1024 * 64];
-    __local__ __valigned__ float bufQuery[1024 * 64];
-    __local__ __valigned__ float bufKey[1024 * 64];
-
-    tops::mdspan cos_sin_l1(tops::Private, bufCosSin, hidden_size);
-    tops::mdspan query_l1(tops::Private, bufQuery, q_stride);
-    tops::mdspan key_l1(tops::Private, bufKey, k_stride);
-    int32_t embed_dim = split_dim / 2;
-    int nq = q_heads * embed_dim;
-    int nk = k_heads * embed_dim;
-    int max_qk = nq > nk ? nq : nk;
-    constexpr int TILESIZE = vector_length<va16u32x4>::value;
-    va16u32x4 embed_dims = vbroadcast<va16u32x4>((unsigned int)embed_dim);
-    va16u32x4 hidden_sizes = vbroadcast<va16u32x4>((unsigned int)hidden_size);
-    const va16u32x4 VEC1 = vbroadcast<va16u32x4>((unsigned int)1);
-    const va16u32x4 VEC2 = vbroadcast<va16u32x4>((unsigned int)2);
-    va16u32x4 vec_bpe = vbroadcast<va16u32x4>((unsigned int)sizeof(float));
-    for (int p = 0; p < thread_step; p++) {
-      int i = thread_id * THREAD_STEP + p;
-      if (i < N) {
-        auto query_sub0 = query + i * q_stride;
-        auto key_sub0 = key + i * k_stride;
-        tops::mdspan hbm_query(tops::Global, query_sub0, q_stride);
-        tops::mdspan hbm_key(tops::Global, key_sub0, k_stride);
-        tops::memcpy(ctx, query_l1, hbm_query);
-        tops::memcpy(ctx, key_l1, hbm_key);
-        auto cos_sin_cache = cos_sin_cur + i * cos_sin_stride;
-        tops::mdspan hbm_cos_sin(tops::Global, cos_sin_cache, cos_sin_stride);
-        tops::memcpy(ctx, cos_sin_l1, hbm_cos_sin);
-
-        auto cos_ptr = bufCosSin;
-        auto sin_ptr = bufCosSin + embed_dim;
-        for (int j = 0; j < max_qk; j+=TILESIZE) { //This is safe even though nk != nq (redundant compute)
-          int bufsize = (j + TILESIZE < max_qk) ? TILESIZE : max_qk - j;
-          if (bufsize == TILESIZE) {
-            auto indexes = viota<va16u32x4>((unsigned int)j);
-            auto rot_offsets = vrem(indexes, embed_dims);
-            auto head_idxes = vdiv(indexes, embed_dims);
-            auto offsets = vmul(head_idxes, hidden_sizes);
-            apply_rotary_qkv_batch<float>(bufQuery, bufKey, cos_ptr, sin_ptr, 
-                                        offsets, rot_offsets, embed_dims, VEC1, VEC2, vec_bpe, gpt_geox, j, nq, nk);
-          } else {
-            for (int k = j; k < max_qk; k++) {
-              int head_idx = k / embed_dim;
-              int offset = head_idx * hidden_size;
-              int rot_offset = k % embed_dim;
-              auto q_arr = bufQuery + offset;
-              auto k_arr = bufKey + offset;
-              apply_rotary_qkv(q_arr, k_arr, cos_ptr, sin_ptr, rot_offset, embed_dim, gpt_geox, k, nq, nk);
-            }
-            break;
-          }
-
-        }
-        tops::memcpy(ctx, hbm_query, query_l1);
-        tops::memcpy(ctx, hbm_key, key_l1);
-      }
-    }  // loop in num_tokens
+                      int batch, int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
+      rope<float>(
+        query, key, cos_sin, cos_sin_stride, index_pos, batch,
+        num_tokens, q_heads, k_heads, hidden_size, split_dim, gpt_geox);
 }
 
 extern "C" __global__ void  rope_f16(__fp16*query, __fp16 *key, __fp16 *cos_sin, int cos_sin_stride, int index_pos,
-                      int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
+                      int batch, int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
     rope<__fp16>(
-      query, key, cos_sin, cos_sin_stride, index_pos,
+      query, key, cos_sin, cos_sin_stride, index_pos, batch,
       num_tokens, q_heads, k_heads, hidden_size, split_dim, gpt_geox);
 }
 
 extern "C" __global__ void  rope_bf16(__bf16 *query, __bf16 *key, __bf16 *cos_sin, int cos_sin_stride, int index_pos,
-                      int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
+                       int batch, int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
     rope<__bf16>(
-      query, key, cos_sin, cos_sin_stride, index_pos,
+      query, key, cos_sin, cos_sin_stride, index_pos, batch,
       num_tokens, q_heads, k_heads, hidden_size, split_dim, gpt_geox);
 }
 

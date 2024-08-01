@@ -137,8 +137,8 @@ REDUCE_OP(tops::bfloat, fast_max_bf16, REDUCE_MAX)
 
 #define TILE_SIZE 1024 * 16
 template <typename T>
-__device__ void softmax_kernel(T *input, T* output, 
-    size_t chunks, size_t last_dim_size) {
+__device__ void softmax_kernel(T *input, T* output, int batch,
+    int chunks, int last_dim_size) {
     __local__ __valigned__ float buffer1[TILE_SIZE];
     __local__ __valigned__ float buffer2[TILE_SIZE];
     __local__ __valigned__ T bufferTmp[TILE_SIZE];
@@ -147,9 +147,10 @@ __device__ void softmax_kernel(T *input, T* output,
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx);
 
+    int stride = chunks * last_dim_size;
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNum();
-    int N = chunks;
+    int N = batch * chunks;
 
     int THREAD_STEP = 1;
     int thread_step = 1;
@@ -163,11 +164,11 @@ __device__ void softmax_kernel(T *input, T* output,
       }
     }
 
-    bool cachable = chunks * last_dim_size * sizeof(T) < SHARE_BUFFER_SIZE;
+    bool cachable = batch * chunks * last_dim_size * sizeof(T) < SHARE_BUFFER_SIZE;
     T* sharedBuffer = reinterpret_cast<T*>(raw_cache);
 
     if (GetThreadIdxInBlock() == 0 && cachable) {
-      tops::memcpy(ctx, tops::mdspan(tops::Shared, sharedBuffer, chunks * last_dim_size), tops::mdspan(tops::Global, input, chunks * last_dim_size));
+      tops::memcpy(ctx, tops::mdspan(tops::Shared, sharedBuffer, batch * chunks * last_dim_size), tops::mdspan(tops::Global, input, batch * chunks * last_dim_size));
     }
     __syncthreads();
 
@@ -175,16 +176,23 @@ __device__ void softmax_kernel(T *input, T* output,
     //     N, MAX_THREADS, THREAD_STEP, thread_step, chunks, last_dim_size);
     //yi = exp(xi - max)/(sum(exp(xi - max))
     for (int i = 0; i < thread_step; i++) {
-      int offset = thread_id * THREAD_STEP + i;
-      if (offset >= N) {
-        break;
-      }
+      int idx = thread_id * THREAD_STEP + i;
+      if (idx >= N) break;
+      int batch_idx = idx / chunks;
+      int offset = idx % chunks;
+      T* input_cur = input + batch_idx * stride;
+      T* output_cur = output + batch_idx * stride;
       // printf("offset %lu\n", offset * last_dim_size);
       tops::mdspan l1_input(tops::Private, bufferTmp, last_dim_size);
-      tops::mdspan hbm_input(tops::Global, input + offset * last_dim_size, last_dim_size);
-      tops::mdspan shared_input(tops::Shared, sharedBuffer + offset * last_dim_size, last_dim_size);
+      tops::mdspan hbm_input(tops::Global, input_cur + offset * last_dim_size, last_dim_size);
+      if (cachable) {
+        T* shared_cur = sharedBuffer + batch_idx * stride;
+        tops::mdspan shared_input(tops::Shared, shared_cur + offset * last_dim_size, last_dim_size);
+        tops::memcpy(ctx, l1_input, shared_input);
+      } else {
+        tops::memcpy(ctx, l1_input, hbm_input);
+      }
 
-      tops::memcpy(ctx, l1_input, cachable ? shared_input : hbm_input);
       convert<float, T>(reinterpret_cast<float*>(buffer1), reinterpret_cast<T*>(bufferTmp), last_dim_size);
       
       atomic_reduce_max(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), last_dim_size);
@@ -194,7 +202,7 @@ __device__ void softmax_kernel(T *input, T* output,
       exp(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(buffer2), last_dim_size);
       atomic_reduce_sum(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), last_dim_size);
       float sum_exp = buffer2[0];
-      tops::mdspan hbm_output(tops::Global, output + offset * last_dim_size, last_dim_size);
+      tops::mdspan hbm_output(tops::Global, output_cur + offset * last_dim_size, last_dim_size);
       div(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), sum_exp, last_dim_size);
       convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer2), last_dim_size);
       tops::mdspan l1_output(tops::Private, bufferTmp, last_dim_size);
@@ -202,19 +210,19 @@ __device__ void softmax_kernel(T *input, T* output,
     }
 }
 
-extern "C" __global__ void softmax_f16(__fp16 *input, __fp16 *output,
-    size_t chunks, size_t last_dim_size) {
-      softmax_kernel<__fp16>(input, output, chunks, last_dim_size);
+extern "C" __global__ void softmax_f16(__fp16 *input, __fp16 *output, int batch,
+    int chunks, int last_dim_size) {
+      softmax_kernel<__fp16>(input, output, batch, chunks, last_dim_size);
 }
 
-extern "C" __global__ void softmax_bf16(__bf16 *input, __bf16 *output,
-    size_t chunks, size_t last_dim_size) {
-      softmax_kernel<__bf16>(input, output, chunks, last_dim_size);
+extern "C" __global__ void softmax_bf16(__bf16 *input, __bf16 *output, int batch,
+    int chunks, int last_dim_size) {
+      softmax_kernel<__bf16>(input, output, batch, chunks, last_dim_size);
 }
 
-extern "C" __global__ void softmax_f32(float *input, float *output,
-    size_t chunks, size_t last_dim_size) {
-      softmax_kernel<float>(input, output, chunks, last_dim_size);
+extern "C" __global__ void softmax_f32(float *input, float *output, int batch,
+    int chunks, int last_dim_size) {
+      softmax_kernel<float>(input, output, batch, chunks, last_dim_size);
 }
 
 // extern "C" __global__ void softmax_f64(double *input, double *output,
@@ -231,8 +239,8 @@ extern "C" __global__ void softmax_f32(float *input, float *output,
 
 #define TILE_SIZE 1024 * 16
 template <typename T>
-__device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias,
-    size_t chunks, size_t last_dims_size, float epsilon, int remove_mean, int affine) {
+__device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias, int batch,
+    int chunks, int last_dims_size, float epsilon, int remove_mean, int affine) {
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx);
     __local__ __valigned__ float buffer1[TILE_SIZE];
@@ -253,10 +261,10 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias,
       tops::mdspan hbm_bias(tops::Global, bias, last_dims_size);
       tops::memcpy(ctx, l1_bias, hbm_bias);
     }
-
+    int stride = chunks * last_dims_size;
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNum();
-    int N = chunks;
+    int N = batch * chunks;
     int THREAD_STEP = 1;
     int thread_step = 1;
     if (N > MAX_THREADS) {
@@ -275,10 +283,16 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias,
     //yi = weight * yi + bias
 
     for (int i = 0; i < thread_step; i++) {
-      int offset = thread_id * THREAD_STEP + i;
-      if (offset >= N) { break; }
+      int idx = thread_id * THREAD_STEP + i;
+      if (idx >= N) { break; }
+
+      int batch_idx = idx / chunks;
+      int offset = idx % chunks;
+      T* input_cur = input + batch_idx * stride;
+      T* output_cur = output + batch_idx * stride;
+
       tops::mdspan l1_input(tops::Private, bufferTmp, last_dims_size);
-      tops::mdspan hbm_input(tops::Global, input + offset * last_dims_size, last_dims_size);
+      tops::mdspan hbm_input(tops::Global, input_cur + offset * last_dims_size, last_dims_size);
       tops::memcpy(ctx, l1_input, hbm_input);
       if (remove_mean == 0) { //rmsnorm
         convert<float, T>(reinterpret_cast<float*>(buffer2), reinterpret_cast<T*>(bufferTmp), last_dims_size);
@@ -298,7 +312,7 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias,
       // buffer1 -> (xi - mean) / sqrt(varience + epsilon)
       div(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(buffer2), bufTmp1[0], last_dims_size);
       convert<T, float>(reinterpret_cast<T*>(bufferOut), reinterpret_cast<float*>(buffer1), last_dims_size);
-      tops::mdspan hbm_output(tops::Global, output + offset * last_dims_size, last_dims_size);
+      tops::mdspan hbm_output(tops::Global, output_cur + offset * last_dims_size, last_dims_size);
       mul(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<T*>(bufferOut), reinterpret_cast<T*>(bufferWeight), last_dims_size); 
       if (affine > 0) { // + bias
         add(reinterpret_cast<T*>(bufferOut), reinterpret_cast<T*>(bufferTmp), reinterpret_cast<T*>(bufferBias), last_dims_size);
@@ -311,19 +325,19 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias,
     }
 }
 
-extern "C" __global__ void layernorm_f16(__fp16 *input, __fp16 *output, __fp16* weight, __fp16* bias,
-    size_t chunks, size_t last_dim_size, float epsilon, int remove_mean, int affine) {
-      layernorm_kernel<__fp16>(input, output, weight, bias, chunks, last_dim_size, epsilon, remove_mean, affine);
+extern "C" __global__ void layernorm_f16(__fp16 *input, __fp16 *output, __fp16* weight, __fp16* bias, int batch,
+    int chunks, int last_dim_size, float epsilon, int remove_mean, int affine) {
+      layernorm_kernel<__fp16>(input, output, weight, bias, batch, chunks, last_dim_size, epsilon, remove_mean, affine);
 }
 
-extern "C" __global__ void layernorm_bf16(__bf16 *input, __bf16 *output, __bf16* weight, __bf16* bias,
-    size_t chunks, size_t last_dim_size, float epsilon, int remove_mean, int affine) {
-      layernorm_kernel<__bf16>(input, output, weight, bias, chunks, last_dim_size, epsilon, remove_mean, affine);
+extern "C" __global__ void layernorm_bf16(__bf16 *input, __bf16 *output, __bf16* weight, __bf16* bias, int batch,
+    int chunks, int last_dim_size, float epsilon, int remove_mean, int affine) {
+      layernorm_kernel<__bf16>(input, output, weight, bias, batch, chunks, last_dim_size, epsilon, remove_mean, affine);
 }
 
-extern "C" __global__ void layernorm_f32(float *input, float *output, float* weight, float* bias,
-    size_t chunks, size_t last_dim_size, float epsilon, int remove_mean, int affine) {
-      layernorm_kernel<float>(input, output, weight, bias, chunks, last_dim_size, epsilon, remove_mean, affine);
+extern "C" __global__ void layernorm_f32(float *input, float *output, float* weight, float* bias, int batch,
+    int chunks, int last_dim_size, float epsilon, int remove_mean, int affine) {
+      layernorm_kernel<float>(input, output, weight, bias, batch, chunks, last_dim_size, epsilon, remove_mean, affine);
 }
 
 int main(void) {
