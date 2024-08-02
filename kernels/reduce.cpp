@@ -35,123 +35,229 @@
 #include <acore_op.h>
 using namespace std;
 #define RANK_MAX 3
-
-enum REDUCE_TYPE {
-  REDUCE_MIN,
-  REDUCE_MAX,
-  REDUCE_SUM,
-};
-
-template <typename T>
-__forceinline__ __device__ void reduce_kernel(T* in, T* out, const size_t element_num, const size_t reduce_dim_size, REDUCE_TYPE tp) {
-    int thread_id = GetThreadIdx();
-    int MAX_THREADS = GetThreadNum();
-
-    const int N = element_num / reduce_dim_size;
-    __local__ __valigned__ T in_buffer[41984];
-    __local__ __valigned__ T out_buffer[41984];
-    __shared__ char raw_cache[SHARE_BUFFER_SIZE];
-
-    tops_dte_ctx_t ctxs_in;
-    tops_dte_ctx_t ctxs_out;
-    ctxs_in.init();
-    ctxs_out.init();
-    tops::dte_scope s_in0(ctxs_in);
-    tops::dte_scope s_out0(ctxs_out);
-
-    bool cachable = element_num * sizeof(T) < SHARE_BUFFER_SIZE;
-    T* sharedBuffer = reinterpret_cast<T*>(raw_cache);
-
-    if (GetThreadIdxInBlock() == 0 && cachable) {
-      tops::memcpy(ctxs_in, tops::mdspan(tops::Shared, sharedBuffer, element_num), tops::mdspan(tops::Global, in, element_num));
-    }
-    __syncthreads();
-
-    tops::mdspan hbm_in(tops::Global, in, N, reduce_dim_size);
-    tops::mdspan shared_in(tops::Shared, sharedBuffer, N, reduce_dim_size);
-
-    tops::mdspan thread_in0(tops::Private, in_buffer, 1, reduce_dim_size);
-
-    tops::mdspan hbm_out(tops::Global, out, N, 1);
-    tops::mdspan thread_out0(tops::Private, out_buffer, 1, 1);
-
-    int THREAD_STEP = 1;
-    int thread_step = 1;
-    if (N > MAX_THREADS) {
-      THREAD_STEP = N / MAX_THREADS;
-      thread_step = THREAD_STEP;
-      if (N % MAX_THREADS != 0) {
-        if (thread_id == MAX_THREADS - 1) {
-          thread_step += N % MAX_THREADS; //last thread also process remains
-        }
-      }
-    }
-
-    // printf("N %d, reduce_dim_size %d, MAX_THREADS %d, THREAD_STEP %d, thread_step %d\n", N, reduce_dim_size, MAX_THREADS, THREAD_STEP, thread_step);
-    for (int i = 0; i < thread_step; i++) {
-      int idx = thread_id * THREAD_STEP + i;
-      if (idx < N) {
-          ctxs_in.config_slice(thread_in0, cachable ? shared_in : hbm_in, {0, 0});
-          ctxs_in.set_src_offset(0, idx);
-          ctxs_in.trigger_and_wait();
-          if(tp == REDUCE_MIN) {
-            atomic_reduce_min<T>(out_buffer, in_buffer, reduce_dim_size);
-          } else if (tp == REDUCE_MAX) {
-            atomic_reduce_max<T>(out_buffer, in_buffer, reduce_dim_size);
-          } else if (tp == REDUCE_SUM) {
-            atomic_reduce_sum<T>(out_buffer, in_buffer, reduce_dim_size);
-          } 
-          ctxs_out.config_deslice(hbm_out, thread_out0, {0, 0});
-          ctxs_out.set_dst_offset(0, idx);
-          ctxs_out.trigger_and_wait();
-      }
-    }
-
-}
-
-#define REDUCE_OP(TYPE, FN_NAME, TP) \
-extern "C" __global__ void FN_NAME( \
-    TYPE *in, \
-    TYPE *out, \
-    const size_t element_num, const size_t reduce_dim_size) \
-{ \
-    reduce_kernel<TYPE>(in, out, element_num, reduce_dim_size, TP); \
-} \
-
-REDUCE_OP(float, fast_sum_f32, REDUCE_SUM)
-REDUCE_OP(tops::half, fast_sum_f16, REDUCE_SUM)
-REDUCE_OP(int8_t, fast_sum_i8, REDUCE_SUM)
-REDUCE_OP(tops::bfloat, fast_sum_bf16, REDUCE_SUM)
-
-REDUCE_OP(float, fast_min_f32, REDUCE_MIN)
-REDUCE_OP(tops::half, fast_min_f16, REDUCE_MIN)
-REDUCE_OP(int8_t, fast_min_i8, REDUCE_MIN)
-REDUCE_OP(tops::bfloat, fast_min_bf16, REDUCE_MIN)
-
-
-REDUCE_OP(float, fast_max_f32, REDUCE_MAX)
-REDUCE_OP(tops::half, fast_max_f16, REDUCE_MAX)
-REDUCE_OP(int8_t, fast_max_i8, REDUCE_MAX)
-REDUCE_OP(tops::bfloat, fast_max_bf16, REDUCE_MAX)
-
-
+#define SHARE_REMAIN_BUFFER_SIZE 2 * 1024 * 1024
 #define TILE_SIZE 1024 * 16
-template <typename T>
-__device__ void softmax_kernel(T *input, T* output, int batch,
+
+#define REDUCE_OP_KENEL(T, TO, FN_NAME, FUNC) \
+__device__ __forceinline__ void FN_NAME( \
+    T *in, \
+    TO *out, \
+    TO *out_share, \
+    char* raw_cache, \
+    const size_t element_num, const size_t reduce_dim_size, const bool use_shared_output) \
+{ \
+    int thread_id = GetThreadIdx();\
+    int MAX_THREADS = GetThreadNum();\
+    const int N1 = element_num / reduce_dim_size;\
+    const int TILESIZE = reduce_dim_size < TILE_SIZE ? reduce_dim_size : TILE_SIZE;\
+    const int N2 = reduce_dim_size % TILESIZE ==0 ? reduce_dim_size / TILESIZE : reduce_dim_size / TILESIZE + 1;\
+    const int N = N1 * N2; \
+    __local__ __valigned__ T in_buffer[TILE_SIZE];\
+    __local__ __valigned__ TO out_buffer[TILE_SIZE];\
+    __shared__ __valigned__ TO share_output[TILE_SIZE];\
+    tops_dte_ctx_t ctxs_in;\
+    tops_dte_ctx_t ctxs_out;\
+    ctxs_in.init();\
+    ctxs_out.init();\
+    tops::dte_scope s_in0(ctxs_in);\
+    tops::dte_scope s_out0(ctxs_out);\
+    bool cachable = element_num * sizeof(T) < SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE;\
+    T* sharedBuffer = reinterpret_cast<T*>(raw_cache);\
+    if (GetThreadIdxInBlock() == 0 && cachable) {\
+      tops::memcpy(ctxs_in, tops::mdspan(tops::Shared, sharedBuffer, element_num), tops::mdspan(tops::Global, in, element_num));\
+    }\
+    __syncthreads();\
+    tops::mdspan hbm_in(tops::Global, in, N1, N2, TILESIZE);\
+    tops::mdspan shared_in(tops::Shared, sharedBuffer, N1, N2, TILESIZE);\
+    tops::mdspan thread_in0(tops::Private, in_buffer, 1, 1, TILESIZE);\
+    tops::mdspan hbm_out(tops::Global, out, N1, 1);\
+    tops::mdspan l2_out(tops::Shared, out_share, N1, 1);\
+    tops::mdspan thread_out0(tops::Private, out_buffer, 1, 1);\
+    tops::mdspan share_out(tops::Global, share_output, N1, N2, 1);\
+    int THREAD_STEP = 1;\
+    int thread_step = 1;\
+    if (N > MAX_THREADS) {\
+      THREAD_STEP = N / MAX_THREADS;\
+      thread_step = THREAD_STEP;\
+      if (N % MAX_THREADS != 0) {\
+        if (thread_id == MAX_THREADS - 1) {\
+          thread_step += N % MAX_THREADS; \
+        }\
+      }\
+    }\
+    for (int i = 0; i < thread_step; i++) {\
+      int idx = thread_id * THREAD_STEP + i;\
+      if (idx >= N) break;\
+      int batch_idx = idx / N2;\
+      int section_idx = idx % N2;\
+      if (batch_idx < N1) {\
+          int bufsize = (section_idx * TILESIZE + TILESIZE < reduce_dim_size) ? TILESIZE : reduce_dim_size - section_idx * TILESIZE;\
+          ctxs_in.config_slice(thread_in0, cachable ? shared_in : hbm_in, {batch_idx, section_idx, 0});\
+          ctxs_in.trigger_and_wait();\
+          FUNC<T>(out_buffer, in_buffer, bufsize);\
+          ctxs_out.config_deslice(share_out, thread_out0, {batch_idx, section_idx, 0});\
+          ctxs_out.trigger_and_wait();\
+      }\
+    }\
+    __syncthreads();\
+    if (thread_id == 0) {\
+      for (int batch_idx=0; batch_idx<N1; batch_idx++) {\
+          ctxs_in.config_slice(thread_in0, share_out, {batch_idx, 0, 0});\
+          ctxs_in.trigger_and_wait();\
+          FUNC<T>(out_buffer, in_buffer, N2);\
+          ctxs_out.config_deslice(use_shared_output ? l2_out : hbm_out, thread_out0, {batch_idx, 0});\
+          ctxs_out.trigger_and_wait();\
+      }\
+    }\
+}\
+
+
+REDUCE_OP_KENEL(float, float, fast_sum_f32_kernel, atomic_reduce_sum)
+REDUCE_OP_KENEL(tops::half, tops::half, fast_sum_f16_kernel, atomic_reduce_sum)
+REDUCE_OP_KENEL(int8_t, int8_t, fast_sum_i8_kernel, atomic_reduce_sum)
+REDUCE_OP_KENEL(tops::bfloat, tops::bfloat, fast_sum_bf16_kernel, atomic_reduce_sum)
+
+REDUCE_OP_KENEL(float, float, fast_min_f32_kernel, atomic_reduce_min)
+REDUCE_OP_KENEL(tops::half, tops::half, fast_min_f16_kernel, atomic_reduce_min)
+REDUCE_OP_KENEL(int8_t, int8_t, fast_min_i8_kernel, atomic_reduce_min)
+REDUCE_OP_KENEL(tops::bfloat, tops::bfloat, fast_min_bf16_kernel, atomic_reduce_min)
+
+
+REDUCE_OP_KENEL(float, float, fast_max_f32_kernel, atomic_reduce_max)
+REDUCE_OP_KENEL(tops::half, tops::half, fast_max_f16_kernel, atomic_reduce_max)
+REDUCE_OP_KENEL(int8_t, int8_t, fast_max_i8_kernel, atomic_reduce_max)
+REDUCE_OP_KENEL(tops::bfloat, tops::bfloat, fast_max_bf16_kernel, atomic_reduce_max)
+
+REDUCE_OP_KENEL(float, u_int32_t, fast_argmax_f32_kernel, atomic_reduce_argmax)
+REDUCE_OP_KENEL(tops::half, u_int32_t, fast_argmax_f16_kernel, atomic_reduce_argmax)
+REDUCE_OP_KENEL(int8_t, u_int32_t, fast_argmax_i8_kernel, atomic_reduce_argmax)
+REDUCE_OP_KENEL(tops::bfloat, u_int32_t, fast_argmax_bf16_kernel, atomic_reduce_argmax)
+
+REDUCE_OP_KENEL(float, u_int32_t, fast_argmin_f32_kernel, atomic_reduce_argmin)
+REDUCE_OP_KENEL(tops::half, u_int32_t, fast_argmin_f16_kernel, atomic_reduce_argmin)
+REDUCE_OP_KENEL(int8_t, u_int32_t, fast_argmin_i8_kernel, atomic_reduce_argmin)
+REDUCE_OP_KENEL(tops::bfloat, u_int32_t, fast_argmin_bf16_kernel, atomic_reduce_argmin)
+
+
+#define REDUCE_OP(T, TO, FN_NAME, FUNC) \
+extern "C" __global__ void FN_NAME( \
+    T *in, \
+    TO *out, \
+    const size_t element_num, const size_t reduce_dim_size) \
+{\
+    __shared__ char raw_cache[SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE];\
+    __shared__ TO out_share[TILE_SIZE];\
+    FN_NAME##_kernel(in, out, out_share, raw_cache, element_num, reduce_dim_size, false);\
+}\
+
+REDUCE_OP(float, float, fast_sum_f32, atomic_reduce_sum)
+REDUCE_OP(tops::half, tops::half, fast_sum_f16, atomic_reduce_sum)
+REDUCE_OP(int8_t, int8_t, fast_sum_i8, atomic_reduce_sum)
+REDUCE_OP(tops::bfloat, tops::bfloat, fast_sum_bf16, atomic_reduce_sum)
+
+REDUCE_OP(float, float, fast_min_f32, atomic_reduce_min)
+REDUCE_OP(tops::half, tops::half, fast_min_f16, atomic_reduce_min)
+REDUCE_OP(int8_t, int8_t, fast_min_i8, atomic_reduce_min)
+REDUCE_OP(tops::bfloat, tops::bfloat, fast_min_bf16, atomic_reduce_min)
+
+
+REDUCE_OP(float, float, fast_max_f32, atomic_reduce_max)
+REDUCE_OP(tops::half, tops::half, fast_max_f16, atomic_reduce_max)
+REDUCE_OP(int8_t, int8_t, fast_max_i8, atomic_reduce_max)
+REDUCE_OP(tops::bfloat, tops::bfloat, fast_max_bf16, atomic_reduce_max)
+
+REDUCE_OP(float, u_int32_t, fast_argmax_f32, atomic_reduce_argmax)
+REDUCE_OP(tops::half, u_int32_t, fast_argmax_f16, atomic_reduce_argmax)
+REDUCE_OP(int8_t, u_int32_t, fast_argmax_i8, atomic_reduce_argmax)
+REDUCE_OP(tops::bfloat, u_int32_t, fast_argmax_bf16, atomic_reduce_argmax)
+
+REDUCE_OP(float, u_int32_t, fast_argmin_f32, atomic_reduce_argmin)
+REDUCE_OP(tops::half, u_int32_t, fast_argmin_f16, atomic_reduce_argmin)
+REDUCE_OP(int8_t, u_int32_t, fast_argmin_i8, atomic_reduce_argmin)
+REDUCE_OP(tops::bfloat, u_int32_t, fast_argmin_bf16, atomic_reduce_argmin)
+
+
+#define SOFTMAX_OP(T, TT, FN_NAME, MAX_KERNEL) \
+extern "C" __global__ void FN_NAME(T *input, T* output, int batch,\
+    int chunks, int last_dim_size) {\
+    __local__ __valigned__ T bufferTmp[TILE_SIZE];\
+    __local__ __valigned__ T buffer1[TILE_SIZE];\
+    __local__ __valigned__ float buffer2[TILE_SIZE];\
+    __local__ __valigned__ float buffer3[TILE_SIZE];\
+    __shared__ T share_max_out[TILE_SIZE];\
+    __shared__ T share_exp_sum_out[TILE_SIZE];\
+    __shared__ char raw_cache[SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE];\
+    tops_dte_ctx_t ctx;\
+    tops::dte_scope s(ctx);\
+    int element_num = batch * chunks * last_dim_size;\
+    int stride = chunks * last_dim_size;\
+    int thread_id = GetThreadIdx();\
+    int MAX_THREADS = GetThreadNum();\
+    int N = batch * chunks;\
+    int THREAD_STEP = 1;\
+    int thread_step = 1;\
+    if (N > MAX_THREADS) {\
+      THREAD_STEP = N / MAX_THREADS;\
+      thread_step = THREAD_STEP;\
+      if (N % MAX_THREADS != 0) {\
+        if (thread_id == MAX_THREADS - 1) {\
+          thread_step += N % MAX_THREADS; \
+        }\
+      }\
+    }\
+    MAX_KERNEL(reinterpret_cast<TT*>(input), reinterpret_cast<TT*>(output), reinterpret_cast<TT*>(share_max_out), reinterpret_cast<char*>(raw_cache), element_num, last_dim_size, true);\
+    __syncthreads();\
+    for (int i = 0; i < thread_step; i++) {\
+      int idx = thread_id * THREAD_STEP + i;\
+      if (idx >= N) break;\
+      int batch_idx = idx / chunks;\
+      int offset = idx % chunks;\
+      T* input_cur = input + batch_idx * stride;\
+      T* output_cur = output + batch_idx * stride;\
+      float exp_sum = 0.0;\
+      for (int k = 0; k < last_dim_size; k+=TILE_SIZE) {\
+          int bufsize = (k + TILE_SIZE < last_dim_size) ? TILE_SIZE : last_dim_size - k;\
+          tops::mdspan l1_input(tops::Private, bufferTmp, bufsize);\
+          tops::mdspan hbm_input(tops::Global, input_cur + offset * last_dim_size + k, bufsize);\
+          tops::memcpy(ctx, l1_input, hbm_input);\
+          convert<float, T>(reinterpret_cast<float*>(buffer2), reinterpret_cast<T*>(bufferTmp), bufsize);\
+          sub(reinterpret_cast<float*>(buffer3), reinterpret_cast<float*>(buffer2), (float)share_max_out[idx], bufsize);\
+          exp(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer3), bufsize);\
+          atomic_reduce_sum(reinterpret_cast<float*>(buffer3), reinterpret_cast<float*>(buffer2), bufsize);\
+          tops::mdspan hbm_output(tops::Global, output_cur + offset * last_dim_size + k, bufsize);\
+          convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer2), bufsize);\
+          tops::mdspan l1_output(tops::Private, bufferTmp, bufsize);\
+          tops::memcpy(ctx, hbm_output, l1_output);\
+          exp_sum += buffer3[0];\
+      }\
+      for (int k = 0; k < last_dim_size; k+=TILE_SIZE) {\
+          int bufsize = (k + TILE_SIZE < last_dim_size) ? TILE_SIZE : last_dim_size - k;\
+          tops::mdspan l1_input_output(tops::Private, bufferTmp, bufsize);\
+          tops::mdspan hbm_input_output(tops::Global, output_cur + offset * last_dim_size + k, bufsize);\
+          tops::memcpy(ctx, l1_input_output, hbm_input_output);\
+          convert<float, T>(reinterpret_cast<float*>(buffer2), reinterpret_cast<T*>(bufferTmp), bufsize);\
+          div(reinterpret_cast<float*>(buffer3), reinterpret_cast<float*>(buffer2), exp_sum, bufsize);\
+          convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer3), bufsize);\
+          tops::memcpy(ctx, hbm_input_output, l1_input_output);\
+      }\
+    }\
+}\
+
+extern "C" __global__ void softmax_f32(float *input, float* output, int batch,
     int chunks, int last_dim_size) {
+    __local__ __valigned__ float bufferTmp[TILE_SIZE];
     __local__ __valigned__ float buffer1[TILE_SIZE];
     __local__ __valigned__ float buffer2[TILE_SIZE];
-    __local__ __valigned__ T bufferTmp[TILE_SIZE];
-    __shared__ char raw_cache[SHARE_BUFFER_SIZE];
-
+    __local__ __valigned__ float buffer3[TILE_SIZE];
+    __shared__ float share_max_out[TILE_SIZE];
+    __shared__ char raw_cache[SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE];
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx);
-
+    int element_num = batch * chunks * last_dim_size;
     int stride = chunks * last_dim_size;
     int thread_id = GetThreadIdx();
     int MAX_THREADS = GetThreadNum();
     int N = batch * chunks;
-
     int THREAD_STEP = 1;
     int thread_step = 1;
     if (N > MAX_THREADS) {
@@ -159,71 +265,58 @@ __device__ void softmax_kernel(T *input, T* output, int batch,
       thread_step = THREAD_STEP;
       if (N % MAX_THREADS != 0) {
         if (thread_id == MAX_THREADS - 1) {
-          thread_step += N % MAX_THREADS; //last thread also process remains
+          thread_step += N % MAX_THREADS; 
         }
       }
     }
-
-    bool cachable = batch * chunks * last_dim_size * sizeof(T) < SHARE_BUFFER_SIZE;
-    T* sharedBuffer = reinterpret_cast<T*>(raw_cache);
-
-    if (GetThreadIdxInBlock() == 0 && cachable) {
-      tops::memcpy(ctx, tops::mdspan(tops::Shared, sharedBuffer, batch * chunks * last_dim_size), tops::mdspan(tops::Global, input, batch * chunks * last_dim_size));
-    }
+    fast_max_f32_kernel(reinterpret_cast<float*>(input), reinterpret_cast<float*>(output), reinterpret_cast<float*>(share_max_out), reinterpret_cast<char*>(raw_cache), element_num, last_dim_size, true);
     __syncthreads();
-
-    // printf("N %d, MAX_THREADS %d, THREAD_STEP %d, thread_step %d, chunks %lu, last_dim_size %lu \n", 
-    //     N, MAX_THREADS, THREAD_STEP, thread_step, chunks, last_dim_size);
-    //yi = exp(xi - max)/(sum(exp(xi - max))
+    // if (thread_id==0)
+    //   printf("max value for softmax %.5f [%d, %d, %d]\n", (float)share_max_out[0], batch, chunks, last_dim_size);
     for (int i = 0; i < thread_step; i++) {
       int idx = thread_id * THREAD_STEP + i;
       if (idx >= N) break;
       int batch_idx = idx / chunks;
       int offset = idx % chunks;
-      T* input_cur = input + batch_idx * stride;
-      T* output_cur = output + batch_idx * stride;
-      // printf("offset %lu\n", offset * last_dim_size);
-      tops::mdspan l1_input(tops::Private, bufferTmp, last_dim_size);
-      tops::mdspan hbm_input(tops::Global, input_cur + offset * last_dim_size, last_dim_size);
-      if (cachable) {
-        T* shared_cur = sharedBuffer + batch_idx * stride;
-        tops::mdspan shared_input(tops::Shared, shared_cur + offset * last_dim_size, last_dim_size);
-        tops::memcpy(ctx, l1_input, shared_input);
-      } else {
-        tops::memcpy(ctx, l1_input, hbm_input);
+      float* input_cur = input + batch_idx * stride;
+      float* output_cur = output + batch_idx * stride;
+      float exp_sum = 0.0;
+      for (int k = 0; k < last_dim_size; k+=TILE_SIZE) {
+          int bufsize = (k + TILE_SIZE < last_dim_size) ? TILE_SIZE : last_dim_size - k;
+          tops::mdspan l1_input(tops::Private, bufferTmp, bufsize);
+          tops::mdspan hbm_input(tops::Global, input_cur + offset * last_dim_size + k, bufsize);
+          tops::memcpy(ctx, l1_input, hbm_input);
+          sub(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(bufferTmp), (float)share_max_out[idx], bufsize);
+          exp(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), bufsize);
+          atomic_reduce_sum(reinterpret_cast<float*>(buffer3), reinterpret_cast<float*>(buffer2), bufsize);
+          tops::mdspan hbm_output(tops::Global, output_cur + offset * last_dim_size + k, bufsize);
+          tops::mdspan l1_output(tops::Private, buffer2, bufsize);
+          tops::memcpy(ctx, hbm_output, l1_output);
+          exp_sum += buffer3[0];
       }
-
-      convert<float, T>(reinterpret_cast<float*>(buffer1), reinterpret_cast<T*>(bufferTmp), last_dim_size);
-      
-      atomic_reduce_max(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), last_dim_size);
-      
-      float max_value = buffer2[0];
-      sub(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), max_value, last_dim_size);
-      exp(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(buffer2), last_dim_size);
-      atomic_reduce_sum(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), last_dim_size);
-      float sum_exp = buffer2[0];
-      tops::mdspan hbm_output(tops::Global, output_cur + offset * last_dim_size, last_dim_size);
-      div(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), sum_exp, last_dim_size);
-      convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer2), last_dim_size);
-      tops::mdspan l1_output(tops::Private, bufferTmp, last_dim_size);
-      tops::memcpy(ctx, hbm_output, l1_output);
+      for (int k = 0; k < last_dim_size; k+=TILE_SIZE) {
+          int bufsize = (k + TILE_SIZE < last_dim_size) ? TILE_SIZE : last_dim_size - k;
+          int aligned_bufsize = AlignUp(bufsize, 512);
+          tops::mdspan l1_input(tops::Private, bufferTmp, bufsize);
+          tops::mdspan l1_output(tops::Private, buffer1, bufsize);
+          tops::mdspan hbm_input_output(tops::Global, output_cur + offset * last_dim_size + k, bufsize);
+          tops::memcpy(ctx, l1_input, hbm_input_output);
+          div(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(bufferTmp), exp_sum, aligned_bufsize);
+          tops::memcpy(ctx, hbm_input_output, l1_output);
+      }
     }
 }
 
-extern "C" __global__ void softmax_f16(__fp16 *input, __fp16 *output, int batch,
-    int chunks, int last_dim_size) {
-      softmax_kernel<__fp16>(input, output, batch, chunks, last_dim_size);
-}
+    // printf("N %d, MAX_THREADS %d, THREAD_STEP %d, thread_step %d, chunks %lu, last_dim_size %lu \n", 
+    //     N, MAX_THREADS, THREAD_STEP, thread_step, chunks, last_dim_size);
+    //yi = exp(xi - max)/(sum(exp(xi - max))
 
-extern "C" __global__ void softmax_bf16(__bf16 *input, __bf16 *output, int batch,
-    int chunks, int last_dim_size) {
-      softmax_kernel<__bf16>(input, output, batch, chunks, last_dim_size);
-}
+      // if (results_sum - 1.0 > 0.01 || 1.0 - results_sum > 0.01)
+      //   printf("Invalid softmax result %.5f in batch_idx %d for [%d, %d, %d]\n\n", results_sum, batch_idx, batch, chunks, last_dim_size);
 
-extern "C" __global__ void softmax_f32(float *input, float *output, int batch,
-    int chunks, int last_dim_size) {
-      softmax_kernel<float>(input, output, batch, chunks, last_dim_size);
-}
+// SOFTMAX_OP(float, float, softmax_f32, fast_max_f32_kernel)
+SOFTMAX_OP(__fp16, tops::half, softmax_f16, fast_max_f16_kernel)
+SOFTMAX_OP(__bf16, tops::bfloat, softmax_bf16, fast_max_bf16_kernel)
 
 // extern "C" __global__ void softmax_f64(double *input, double *output,
 //     size_t elements) {
@@ -237,19 +330,19 @@ extern "C" __global__ void softmax_f32(float *input, float *output, int batch,
 
 
 
-#define TILE_SIZE 1024 * 16
+#define TILE_SIZE_NORM 1024 * 32
 template <typename T>
 __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias, int batch,
     int chunks, int last_dims_size, float epsilon, int remove_mean, int affine) {
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx);
-    __local__ __valigned__ float buffer1[TILE_SIZE];
-    __local__ __valigned__ float buffer2[TILE_SIZE];
-    __local__ __valigned__ float buffer3[TILE_SIZE];
-    __local__ __valigned__ T bufferTmp[TILE_SIZE];
-    __local__ __valigned__ T bufferWeight[TILE_SIZE];
-    __local__ __valigned__ T bufferBias[TILE_SIZE];
-    __local__ __valigned__ T bufferOut[TILE_SIZE];
+    __local__ __valigned__ float buffer1[TILE_SIZE_NORM];
+    __local__ __valigned__ float buffer2[TILE_SIZE_NORM];
+    __local__ __valigned__ float buffer3[TILE_SIZE_NORM];
+    __local__ __valigned__ T bufferTmp[TILE_SIZE_NORM];
+    __local__ __valigned__ T bufferWeight[TILE_SIZE_NORM];
+    __local__ __valigned__ T bufferBias[TILE_SIZE_NORM];
+    __local__ __valigned__ T bufferOut[TILE_SIZE_NORM];
     __local__ __valigned__ float bufTmp[256];
     __local__ __valigned__ float bufTmp1[256];
     __shared__ char raw_cache[SHARE_BUFFER_SIZE];
