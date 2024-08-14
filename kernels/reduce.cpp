@@ -205,8 +205,7 @@ extern "C" __global__ void FN_NAME(T *input, T* output, int batch,\
         }\
       }\
     }\
-    if (thread_id == 0)\
-      MAX_KERNEL(reinterpret_cast<TT*>(input), reinterpret_cast<TT*>(output), reinterpret_cast<TT*>(share_max_out), reinterpret_cast<char*>(raw_cache), element_num, last_dim_size, true);\
+    MAX_KERNEL(reinterpret_cast<TT*>(input), reinterpret_cast<TT*>(output), reinterpret_cast<TT*>(share_max_out), reinterpret_cast<char*>(raw_cache), element_num, last_dim_size, true);\
     __syncthreads();\
     bool output_cachable = element_num * sizeof(T) < SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE;\
     T* outputShare = reinterpret_cast<T*>(raw_cache);\
@@ -275,8 +274,7 @@ extern "C" __global__ void softmax_f32(float *input, float* output, int batch,
         }
       }
     }
-    if (thread_id == 0)
-      fast_max_f32_kernel(reinterpret_cast<float*>(input), reinterpret_cast<float*>(output), reinterpret_cast<float*>(share_max_out), reinterpret_cast<char*>(raw_cache), element_num, last_dim_size, true);
+    fast_max_f32_kernel(reinterpret_cast<float*>(input), reinterpret_cast<float*>(output), reinterpret_cast<float*>(share_max_out), reinterpret_cast<char*>(raw_cache), element_num, last_dim_size, true);
     __syncthreads();
 
     bool output_cachable = element_num * sizeof(float) < SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE;
