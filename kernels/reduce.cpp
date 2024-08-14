@@ -205,8 +205,11 @@ extern "C" __global__ void FN_NAME(T *input, T* output, int batch,\
         }\
       }\
     }\
-    MAX_KERNEL(reinterpret_cast<TT*>(input), reinterpret_cast<TT*>(output), reinterpret_cast<TT*>(share_max_out), reinterpret_cast<char*>(raw_cache), element_num, last_dim_size, true);\
+    if (thread_id == 0)\
+      MAX_KERNEL(reinterpret_cast<TT*>(input), reinterpret_cast<TT*>(output), reinterpret_cast<TT*>(share_max_out), reinterpret_cast<char*>(raw_cache), element_num, last_dim_size, true);\
     __syncthreads();\
+    bool output_cachable = element_num * sizeof(T) < SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE;\
+    T* outputShare = reinterpret_cast<T*>(raw_cache);\
     for (int i = 0; i < thread_step; i++) {\
       int idx = thread_id * THREAD_STEP + i;\
       if (idx >= N) break;\
@@ -214,6 +217,7 @@ extern "C" __global__ void FN_NAME(T *input, T* output, int batch,\
       int offset = idx % chunks;\
       T* input_cur = input + batch_idx * stride;\
       T* output_cur = output + batch_idx * stride;\
+      T* output_cur_share = outputShare + batch_idx * stride;\
       float exp_sum = 0.0;\
       for (int k = 0; k < last_dim_size; k+=TILE_SIZE) {\
           int bufsize = (k + TILE_SIZE < last_dim_size) ? TILE_SIZE : last_dim_size - k;\
@@ -225,16 +229,18 @@ extern "C" __global__ void FN_NAME(T *input, T* output, int batch,\
           exp(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer3), bufsize);\
           atomic_reduce_sum(reinterpret_cast<float*>(buffer3), reinterpret_cast<float*>(buffer2), bufsize);\
           tops::mdspan hbm_output(tops::Global, output_cur + offset * last_dim_size + k, bufsize);\
+          tops::mdspan l2_output(tops::Shared, output_cur_share + offset * last_dim_size + k, bufsize);\
           convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer2), bufsize);\
           tops::mdspan l1_output(tops::Private, bufferTmp, bufsize);\
-          tops::memcpy(ctx, hbm_output, l1_output);\
+          tops::memcpy(ctx, output_cachable? l2_output : hbm_output, l1_output);\
           exp_sum += buffer3[0];\
       }\
       for (int k = 0; k < last_dim_size; k+=TILE_SIZE) {\
           int bufsize = (k + TILE_SIZE < last_dim_size) ? TILE_SIZE : last_dim_size - k;\
           tops::mdspan l1_input_output(tops::Private, bufferTmp, bufsize);\
           tops::mdspan hbm_input_output(tops::Global, output_cur + offset * last_dim_size + k, bufsize);\
-          tops::memcpy(ctx, l1_input_output, hbm_input_output);\
+          tops::mdspan l2_input_output(tops::Shared, output_cur_share + offset * last_dim_size + k, bufsize);\
+          tops::memcpy(ctx, l1_input_output, output_cachable? l2_input_output : hbm_input_output);\
           convert<float, T>(reinterpret_cast<float*>(buffer2), reinterpret_cast<T*>(bufferTmp), bufsize);\
           div(reinterpret_cast<float*>(buffer3), reinterpret_cast<float*>(buffer2), exp_sum, bufsize);\
           convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer3), bufsize);\
@@ -269,18 +275,24 @@ extern "C" __global__ void softmax_f32(float *input, float* output, int batch,
         }
       }
     }
-    fast_max_f32_kernel(reinterpret_cast<float*>(input), reinterpret_cast<float*>(output), reinterpret_cast<float*>(share_max_out), reinterpret_cast<char*>(raw_cache), element_num, last_dim_size, true);
+    if (thread_id == 0)
+      fast_max_f32_kernel(reinterpret_cast<float*>(input), reinterpret_cast<float*>(output), reinterpret_cast<float*>(share_max_out), reinterpret_cast<char*>(raw_cache), element_num, last_dim_size, true);
     __syncthreads();
+
+    bool output_cachable = element_num * sizeof(float) < SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE;
+    float* outputShare = reinterpret_cast<float*>(raw_cache);
+
     // if (thread_id==0)
     //   printf("max value for softmax %.5f [%d, %d, %d]\n", (float)share_max_out[0], batch, chunks, last_dim_size);
     for (int i = 0; i < thread_step; i++) {
       int idx = thread_id * THREAD_STEP + i;
-      if (idx >= N) break;
       int batch_idx = idx / chunks;
       int offset = idx % chunks;
       float* input_cur = input + batch_idx * stride;
       float* output_cur = output + batch_idx * stride;
+      float* output_cur_share = outputShare + batch_idx * stride;
       float exp_sum = 0.0;
+      if (idx >= N) break;
       for (int k = 0; k < last_dim_size; k+=TILE_SIZE) {
           int bufsize = (k + TILE_SIZE < last_dim_size) ? TILE_SIZE : last_dim_size - k;
           tops::mdspan l1_input(tops::Private, bufferTmp, bufsize);
@@ -290,18 +302,19 @@ extern "C" __global__ void softmax_f32(float *input, float* output, int batch,
           exp(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), bufsize);
           atomic_reduce_sum(reinterpret_cast<float*>(buffer3), reinterpret_cast<float*>(buffer2), bufsize);
           tops::mdspan hbm_output(tops::Global, output_cur + offset * last_dim_size + k, bufsize);
+          tops::mdspan l2_output(tops::Shared, output_cur_share + offset * last_dim_size + k, bufsize);
           tops::mdspan l1_output(tops::Private, buffer2, bufsize);
-          tops::memcpy(ctx, hbm_output, l1_output);
+          tops::memcpy(ctx, output_cachable? l2_output : hbm_output, l1_output);
           exp_sum += buffer3[0];
       }
       for (int k = 0; k < last_dim_size; k+=TILE_SIZE) {
           int bufsize = (k + TILE_SIZE < last_dim_size) ? TILE_SIZE : last_dim_size - k;
-          int aligned_bufsize = AlignUp(bufsize, 512);
           tops::mdspan l1_input(tops::Private, bufferTmp, bufsize);
           tops::mdspan l1_output(tops::Private, buffer1, bufsize);
           tops::mdspan hbm_input_output(tops::Global, output_cur + offset * last_dim_size + k, bufsize);
-          tops::memcpy(ctx, l1_input, hbm_input_output);
-          div(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(bufferTmp), exp_sum, aligned_bufsize);
+          tops::mdspan l2_input_output(tops::Shared, output_cur_share + offset * last_dim_size + k, bufsize);
+          tops::memcpy(ctx, l1_input, output_cachable? l2_input_output : hbm_input_output);
+          div(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(bufferTmp), exp_sum, bufsize);
           tops::memcpy(ctx, hbm_input_output, l1_output);
       }
     }
