@@ -64,7 +64,7 @@ __forceinline__ __device__ void  atomic_reduce_max(float* dst_ptr, float* src_pt
                                             unsigned int channel_align) {
   unsigned int num_remains =  channel_align % TOPS_VECTOR_LENGTH;
   unsigned int aligned_data_length =  channel_align - num_remains;                                 
-  float atomic_max_value = call_reduce_max<float>(src_ptr, aligned_data_length);
+  float atomic_max_value = channel_align < TOPS_VECTOR_LENGTH ? src_ptr[0] : call_reduce_max<float>(src_ptr, aligned_data_length);
   for (int i = 0; i< num_remains; i++) {//for unaligned remaining data
       if (src_ptr[aligned_data_length + i] > atomic_max_value) {
         atomic_max_value = src_ptr[aligned_data_length + i];
@@ -78,7 +78,7 @@ __forceinline__ __device__ void  atomic_reduce_max(__fp16* dst_ptr, __fp16* src_
                                             unsigned int channel_align) {
   unsigned int num_remains =  channel_align % TOPS_VECTOR_LENGTH;
   unsigned int aligned_data_length =  channel_align - num_remains;                                 
-  float atomic_max_value = call_reduce_max<__fp16>(src_ptr, aligned_data_length);
+  __fp16 atomic_max_value = channel_align < TOPS_VECTOR_LENGTH ? src_ptr[0] : call_reduce_max<__fp16>(src_ptr, aligned_data_length);
   for (int i = 0; i< num_remains; i++) {//for unaligned remaining data
       if (src_ptr[aligned_data_length + i] > atomic_max_value) {
         atomic_max_value = src_ptr[aligned_data_length + i];
@@ -92,7 +92,7 @@ __forceinline__ __device__ void  atomic_reduce_max(__bf16* dst_ptr, __bf16* src_
                                             unsigned int channel_align) {
   unsigned int num_remains =  channel_align % TOPS_VECTOR_LENGTH;
   unsigned int aligned_data_length =  channel_align - num_remains;                                 
-  float atomic_max_value = call_reduce_max<__bf16>(src_ptr, aligned_data_length);
+  __bf16 atomic_max_value = channel_align < TOPS_VECTOR_LENGTH ? src_ptr[0] : call_reduce_max<__bf16>(src_ptr, aligned_data_length);
   for (int i = 0; i< num_remains; i++) {//for unaligned remaining data
       if (src_ptr[aligned_data_length + i] > atomic_max_value) {
         atomic_max_value = src_ptr[aligned_data_length + i];
@@ -145,7 +145,7 @@ __forceinline__ __device__ void  atomic_reduce_min(float* dst_ptr, float* src_pt
                                             unsigned int channel_align) {
   unsigned int num_remains =  channel_align % TOPS_VECTOR_LENGTH;
   unsigned int aligned_data_length =  channel_align - num_remains;                                 
-  float atomic_min_value = call_reduce_min<float>(src_ptr, aligned_data_length);
+  float atomic_min_value = channel_align < TOPS_VECTOR_LENGTH ? src_ptr[0] : call_reduce_min<float>(src_ptr, aligned_data_length);
   for (int i = 0; i < num_remains; i++) {//for unaligned remaining data
       if (src_ptr[aligned_data_length + i] < atomic_min_value) {
         atomic_min_value = src_ptr[aligned_data_length + i];
@@ -159,7 +159,7 @@ __forceinline__ __device__ void  atomic_reduce_min(__fp16* dst_ptr, __fp16* src_
                                             unsigned int channel_align) {
   unsigned int num_remains =  channel_align % TOPS_VECTOR_LENGTH;
   unsigned int aligned_data_length =  channel_align - num_remains;                                 
-  __fp16 atomic_min_value = call_reduce_min<__fp16>(src_ptr, aligned_data_length);
+  __fp16 atomic_min_value = channel_align < TOPS_VECTOR_LENGTH ? src_ptr[0] : call_reduce_min<__fp16>(src_ptr, aligned_data_length);
   for (int i = 0; i < num_remains; i++) {//for unaligned remaining data
       if (src_ptr[aligned_data_length + i] < atomic_min_value) {
         atomic_min_value = src_ptr[aligned_data_length + i];
@@ -173,7 +173,7 @@ __forceinline__ __device__ void  atomic_reduce_min(__bf16* dst_ptr, __bf16* src_
                                             unsigned int channel_align) {
   unsigned int num_remains =  channel_align % TOPS_VECTOR_LENGTH;
   unsigned int aligned_data_length =  channel_align - num_remains;                                 
-  __bf16 atomic_min_value = call_reduce_min<__bf16>(src_ptr, aligned_data_length);
+  __bf16 atomic_min_value = channel_align < TOPS_VECTOR_LENGTH ? src_ptr[0] : call_reduce_min<__bf16>(src_ptr, aligned_data_length);
   for (int i = 0; i < num_remains; i++) {//for unaligned remaining data
       if (src_ptr[aligned_data_length + i] < atomic_min_value) {
         atomic_min_value = src_ptr[aligned_data_length + i];
@@ -223,7 +223,7 @@ __forceinline__ __device__ void  atomic_reduce_sum(float* dst_ptr, float* src_pt
                                             unsigned int channel_align) {
   unsigned int num_remains =  channel_align % TOPS_VECTOR_LENGTH;
   unsigned int aligned_data_length =  channel_align - num_remains;                                 
-  float atomic_sum_value = call_reduce_sum<float>(src_ptr, aligned_data_length);
+  float atomic_sum_value = channel_align < TOPS_VECTOR_LENGTH ? 0 : call_reduce_sum<float>(src_ptr, aligned_data_length);
   for (int i=0; i< num_remains; i++) {//for unaligned remaining data
       atomic_sum_value += src_ptr[aligned_data_length + i];
   }
@@ -235,7 +235,7 @@ __forceinline__ __device__ void  atomic_reduce_sum(__fp16* dst_ptr, __fp16* src_
                                             unsigned int channel_align) {
   unsigned int num_remains =  channel_align % TOPS_VECTOR_LENGTH;
   unsigned int aligned_data_length =  channel_align - num_remains;                                 
-  __fp16 atomic_sum_value = call_reduce_sum<__fp16>(src_ptr, aligned_data_length);
+  __fp16 atomic_sum_value = channel_align < TOPS_VECTOR_LENGTH ? 0 : call_reduce_sum<__fp16>(src_ptr, aligned_data_length);
   for (int i=0; i< num_remains; i++) {//for unaligned remaining data
       atomic_sum_value += src_ptr[aligned_data_length + i];
   }
@@ -247,7 +247,7 @@ __forceinline__ __device__ void  atomic_reduce_sum(__bf16* dst_ptr, __bf16* src_
                                             unsigned int channel_align) {
   unsigned int num_remains =  channel_align % TOPS_VECTOR_LENGTH;
   unsigned int aligned_data_length =  channel_align - num_remains;                                 
-  __bf16 atomic_sum_value = call_reduce_sum<__bf16>(src_ptr, aligned_data_length);
+  __bf16 atomic_sum_value = channel_align < TOPS_VECTOR_LENGTH ? 0 : call_reduce_sum<__bf16>(src_ptr, aligned_data_length);
   for (int i=0; i< num_remains; i++) {//for unaligned remaining data
       atomic_sum_value += src_ptr[aligned_data_length + i];
   }

@@ -29,7 +29,7 @@ fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
 }
 
 fn check_atomic_op(path: PathBuf) -> Result<()> {
-    let lib_file = format!("topsatomic_op_{:}-{:}.tar.gz",  std::env::var("ATOMIC_TAG")?, std::env::var("ATOMIC_VERSION")?);
+    let lib_file = format!("topsacore_{:}-{:}.tar.gz",  std::env::var("ATOMIC_TAG")?, std::env::var("ATOMIC_VERSION")?);
     let url = format!("{:}/{:}/{:}", std::env::var("ATOMIC_URL")?, std::env::var("ATOMIC_VERSION")?, lib_file);
     let filename = path.join("atomic/".to_string() + &lib_file);
     

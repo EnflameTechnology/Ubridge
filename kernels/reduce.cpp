@@ -69,11 +69,9 @@ __device__ __forceinline__ void FN_NAME( \
     __syncthreads();\
     tops::mdspan hbm_in(tops::Global, in, N1, N2, TILESIZE);\
     tops::mdspan shared_in(tops::Shared, sharedBuffer, N1, N2, TILESIZE);\
-    tops::mdspan thread_in0(tops::Private, in_buffer, 1, 1, TILESIZE);\
-    tops::mdspan hbm_out(tops::Global, out, N1, 1);\
-    tops::mdspan l2_out(tops::Shared, out_share, N1, 1);\
-    tops::mdspan thread_out0(tops::Private, out_buffer, 1, 1);\
-    tops::mdspan share_out(tops::Global, share_output, N1, N2, 1);\
+    tops::mdspan hbm_out(tops::Global, out, N1);\
+    tops::mdspan l2_out(tops::Shared, out_share, N1);\
+    tops::mdspan share_out(tops::Shared, share_output, N1, N2);\
     int THREAD_STEP = 1;\
     int thread_step = 1;\
     if (N > MAX_THREADS) {\
@@ -92,22 +90,25 @@ __device__ __forceinline__ void FN_NAME( \
       int section_idx = idx % N2;\
       if (batch_idx < N1) {\
           int bufsize = (section_idx * TILESIZE + TILESIZE < reduce_dim_size) ? TILESIZE : reduce_dim_size - section_idx * TILESIZE;\
+          tops::mdspan thread_in0(tops::Private, in_buffer, 1, 1, bufsize);\
           ctxs_in.config_slice(thread_in0, cachable ? shared_in : hbm_in, {batch_idx, section_idx, 0});\
           ctxs_in.trigger_and_wait();\
           FUNC<T>(out_buffer, in_buffer, bufsize);\
-          ctxs_out.config_deslice(share_out, thread_out0, {batch_idx, section_idx, 0});\
-          ctxs_out.trigger_and_wait();\
+          share_output[idx] = out_buffer[0];\
       }\
     }\
     __syncthreads();\
+    TO* pBuffer = out_buffer;\
     if (thread_id == 0) {\
       for (int batch_idx=0; batch_idx<N1; batch_idx++) {\
-          ctxs_in.config_slice(thread_in0, share_out, {batch_idx, 0, 0});\
+          tops::mdspan thread_in0(tops::Private, in_buffer, 1, N2);\
+          ctxs_in.config_slice(thread_in0, share_out, {batch_idx, 0});\
           ctxs_in.trigger_and_wait();\
-          FUNC<T>(out_buffer, in_buffer, N2);\
-          ctxs_out.config_deslice(use_shared_output ? l2_out : hbm_out, thread_out0, {batch_idx, 0});\
-          ctxs_out.trigger_and_wait();\
+          FUNC<T>(pBuffer, in_buffer, N2);\
+          pBuffer += 1;\
       }\
+      tops::mdspan thread_out0(tops::Private, out_buffer, N1);\
+      tops::memcpy(ctxs_out, use_shared_output ? l2_out : hbm_out, thread_out0);\
     }\
 }\
 
