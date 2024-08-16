@@ -37,6 +37,7 @@ using namespace std;
 #define RANK_MAX 3
 #define SHARE_REMAIN_BUFFER_SIZE 2 * 1024 * 1024
 #define TILE_SIZE 1024 * 16
+#define REDUCE_TILE_SIZE 1024 * 256
 
 #define REDUCE_OP_KENEL(T, TO, FN_NAME, FUNC) \
 __device__ __forceinline__ void FN_NAME( \
@@ -48,30 +49,19 @@ __device__ __forceinline__ void FN_NAME( \
 { \
     int thread_id = GetThreadIdx();\
     int MAX_THREADS = GetThreadNum();\
-    const int N1 = element_num / reduce_dim_size;\
-    const int TILESIZE = reduce_dim_size < TILE_SIZE ? reduce_dim_size : TILE_SIZE;\
-    const int N2 = reduce_dim_size % TILESIZE ==0 ? reduce_dim_size / TILESIZE : reduce_dim_size / TILESIZE + 1;\
-    const int N = N1 * N2; \
-    __local__ __valigned__ T in_buffer[TILE_SIZE];\
-    __local__ __valigned__ TO out_buffer[TILE_SIZE];\
-    __shared__ __valigned__ TO share_output[TILE_SIZE];\
+    const int N = element_num / reduce_dim_size;\
+    __local__ __valigned__ T in_buffer[REDUCE_TILE_SIZE];\
+    __local__ __valigned__ TO out_buffer[1024];\
     tops_dte_ctx_t ctxs_in;\
     tops_dte_ctx_t ctxs_out;\
     ctxs_in.init();\
     ctxs_out.init();\
     tops::dte_scope s_in0(ctxs_in);\
     tops::dte_scope s_out0(ctxs_out);\
-    bool cachable = element_num * sizeof(T) < SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE;\
+    bool use_l2 = reduce_dim_size > REDUCE_TILE_SIZE && element_num * sizeof(T) < SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE;\
     T* sharedBuffer = reinterpret_cast<T*>(raw_cache);\
-    if (GetThreadIdxInBlock() == 0 && cachable) {\
-      tops::memcpy(ctxs_in, tops::mdspan(tops::Shared, sharedBuffer, element_num), tops::mdspan(tops::Global, in, element_num));\
-    }\
-    __syncthreads();\
-    tops::mdspan hbm_in(tops::Global, in, N1, N2, TILESIZE);\
-    tops::mdspan shared_in(tops::Shared, sharedBuffer, N1, N2, TILESIZE);\
-    tops::mdspan hbm_out(tops::Global, out, N1);\
-    tops::mdspan l2_out(tops::Shared, out_share, N1);\
-    tops::mdspan share_out(tops::Shared, share_output, N1, N2);\
+    tops::mdspan hbm_in(tops::Global, in, N, reduce_dim_size);\
+    tops::mdspan hbm_out(tops::Global, out, N);\
     int THREAD_STEP = 1;\
     int thread_step = 1;\
     if (N > MAX_THREADS) {\
@@ -86,29 +76,17 @@ __device__ __forceinline__ void FN_NAME( \
     for (int i = 0; i < thread_step; i++) {\
       int idx = thread_id * THREAD_STEP + i;\
       if (idx >= N) break;\
-      int batch_idx = idx / N2;\
-      int section_idx = idx % N2;\
-      if (batch_idx < N1) {\
-          int bufsize = (section_idx * TILESIZE + TILESIZE < reduce_dim_size) ? TILESIZE : reduce_dim_size - section_idx * TILESIZE;\
-          tops::mdspan thread_in0(tops::Private, in_buffer, 1, 1, bufsize);\
-          ctxs_in.config_slice(thread_in0, cachable ? shared_in : hbm_in, {batch_idx, section_idx, 0});\
-          ctxs_in.trigger_and_wait();\
-          FUNC<T>(out_buffer, in_buffer, bufsize);\
-          share_output[idx] = out_buffer[0];\
-      }\
+      tops::mdspan thread_in0(tops::Private, in_buffer, reduce_dim_size);\
+      tops::mdspan share_in(tops::Shared, sharedBuffer + idx * reduce_dim_size, reduce_dim_size);\
+      ctxs_in.config_slice(use_l2? share_in : thread_in0, hbm_in, {idx, 0});\
+      ctxs_in.trigger_and_wait();\
+      FUNC<T>(out_buffer, use_l2? sharedBuffer : in_buffer, reduce_dim_size);\
+      out_share[idx] = out_buffer[0];\
     }\
     __syncthreads();\
-    TO* pBuffer = out_buffer;\
-    if (thread_id == 0) {\
-      for (int batch_idx=0; batch_idx<N1; batch_idx++) {\
-          tops::mdspan thread_in0(tops::Private, in_buffer, 1, N2);\
-          ctxs_in.config_slice(thread_in0, share_out, {batch_idx, 0});\
-          ctxs_in.trigger_and_wait();\
-          FUNC<T>(pBuffer, in_buffer, N2);\
-          pBuffer += 1;\
-      }\
-      tops::mdspan thread_out0(tops::Private, out_buffer, N1);\
-      tops::memcpy(ctxs_out, use_shared_output ? l2_out : hbm_out, thread_out0);\
+    if (thread_id == 0 && !use_shared_output) {\
+      tops::mdspan thread_out0(tops::Shared, out_share, N);\
+      tops::memcpy(ctxs_out, hbm_out, thread_out0);\
     }\
 }\
 
