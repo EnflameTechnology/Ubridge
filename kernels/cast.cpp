@@ -35,7 +35,7 @@
 #include "utils/utils.h"
 using namespace std;
 using namespace tops;
-#define TILE_SIZE AlignDown(((VDMEM_SIZE) / 16), 256)
+#define TILE_SIZE AlignDown(((VDMEM_SIZE) / 8), 256)
 
 template <typename T, typename OUTT>
 __device__ void cast_kernel(T* in, OUTT* out, int len) {
@@ -76,7 +76,7 @@ __device__ void cast_kernel(T* in, OUTT* out, int len) {
       tops::mdspan shared_in(tops::Shared, sharedBuffer + offset, bufsize);
       tops::mdspan hbm_in(tops::Global, in + offset, bufsize);
       tops::memcpy(ctx, buffer_l1, cachable ? shared_in : hbm_in);
-      convert<OUTT, T>(reinterpret_cast<OUTT*>(buffer2), buffer1, bufsize);
+      convert<OUTT, T>(reinterpret_cast<OUTT*>(buffer2), reinterpret_cast<T*>(buffer1), bufsize);
       tops::memcpy(ctx, tops::mdspan(tops::Global, out + offset, bufsize), tops::mdspan(tops::Private, buffer2, bufsize));
     }
 }

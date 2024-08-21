@@ -36,7 +36,7 @@
 using namespace std;
 #define RANK_MAX 3
 #define SHARE_REMAIN_BUFFER_SIZE 2 * 1024 * 1024
-#define TILE_SIZE 1024 * 16
+#define TILE_SIZE 1024 * 32
 #define REDUCE_TILE_SIZE 1024 * 256
 
 #define REDUCE_OP_KENEL(T, TO, FN_NAME, FUNC) \
@@ -60,8 +60,6 @@ __device__ __forceinline__ void FN_NAME( \
     tops::dte_scope s_out0(ctxs_out);\
     bool use_l2 = reduce_dim_size > REDUCE_TILE_SIZE && element_num * sizeof(T) < SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE;\
     T* sharedBuffer = reinterpret_cast<T*>(raw_cache);\
-    tops::mdspan hbm_in(tops::Global, in, N, reduce_dim_size);\
-    tops::mdspan hbm_out(tops::Global, out, N);\
     int THREAD_STEP = 1;\
     int thread_step = 1;\
     if (N > MAX_THREADS) {\
@@ -77,17 +75,18 @@ __device__ __forceinline__ void FN_NAME( \
       int idx = thread_id * THREAD_STEP + i;\
       if (idx >= N) break;\
       tops::mdspan thread_in0(tops::Private, in_buffer, reduce_dim_size);\
+      tops::mdspan hbm_in(tops::Global, in + idx * reduce_dim_size, reduce_dim_size);\
       tops::mdspan share_in(tops::Shared, sharedBuffer + idx * reduce_dim_size, reduce_dim_size);\
-      ctxs_in.config_slice(use_l2? share_in : thread_in0, hbm_in, {idx, 0});\
-      ctxs_in.trigger_and_wait();\
-      FUNC<T>(out_buffer, use_l2? sharedBuffer : in_buffer, reduce_dim_size);\
+      tops::memcpy(ctxs_in, use_l2? share_in : thread_in0, hbm_in);\
+      FUNC<T>(out_buffer, use_l2? sharedBuffer + idx * reduce_dim_size : in_buffer, reduce_dim_size);\
       out_share[idx] = out_buffer[0];\
+      if (!use_shared_output) {\
+        tops::mdspan thread_out0(tops::Private, out_buffer, 1);\
+        tops::mdspan hbm_out(tops::Global, out + idx, 1);\
+        tops::memcpy(ctxs_out, hbm_out, thread_out0);\
+      }\
     }\
     __syncthreads();\
-    if (thread_id == 0 && !use_shared_output) {\
-      tops::mdspan thread_out0(tops::Shared, out_share, N);\
-      tops::memcpy(ctxs_out, hbm_out, thread_out0);\
-    }\
 }\
 
 
@@ -199,28 +198,29 @@ extern "C" __global__ void FN_NAME(T *input, T* output, int batch,\
       float exp_sum = 0.0;\
       for (int k = 0; k < last_dim_size; k+=TILE_SIZE) {\
           int bufsize = (k + TILE_SIZE < last_dim_size) ? TILE_SIZE : last_dim_size - k;\
+          int aligned_bufsize = ALIGN_UP(bufsize, SIP_VECTOR_LENGTH);\
           tops::mdspan l1_input(tops::Private, bufferTmp, bufsize);\
           tops::mdspan hbm_input(tops::Global, input_cur + offset * last_dim_size + k, bufsize);\
           tops::memcpy(ctx, l1_input, hbm_input);\
+          sub(reinterpret_cast<T*>(buffer1), reinterpret_cast<T*>(bufferTmp), (T)share_max_out[idx], aligned_bufsize);\
+          exp(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<T*>(buffer1), aligned_bufsize);\
           convert<float, T>(reinterpret_cast<float*>(buffer2), reinterpret_cast<T*>(bufferTmp), bufsize);\
-          sub(reinterpret_cast<float*>(buffer3), reinterpret_cast<float*>(buffer2), (float)share_max_out[idx], bufsize);\
-          exp(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer3), bufsize);\
           atomic_reduce_sum(reinterpret_cast<float*>(buffer3), reinterpret_cast<float*>(buffer2), bufsize);\
           tops::mdspan hbm_output(tops::Global, output_cur + offset * last_dim_size + k, bufsize);\
           tops::mdspan l2_output(tops::Shared, output_cur_share + offset * last_dim_size + k, bufsize);\
-          convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer2), bufsize);\
           tops::mdspan l1_output(tops::Private, bufferTmp, bufsize);\
           tops::memcpy(ctx, output_cachable? l2_output : hbm_output, l1_output);\
           exp_sum += buffer3[0];\
       }\
       for (int k = 0; k < last_dim_size; k+=TILE_SIZE) {\
           int bufsize = (k + TILE_SIZE < last_dim_size) ? TILE_SIZE : last_dim_size - k;\
+          int aligned_bufsize = ALIGN_UP(bufsize, SIP_VECTOR_LENGTH);\
           tops::mdspan l1_input_output(tops::Private, bufferTmp, bufsize);\
           tops::mdspan hbm_input_output(tops::Global, output_cur + offset * last_dim_size + k, bufsize);\
           tops::mdspan l2_input_output(tops::Shared, output_cur_share + offset * last_dim_size + k, bufsize);\
           tops::memcpy(ctx, l1_input_output, output_cachable? l2_input_output : hbm_input_output);\
           convert<float, T>(reinterpret_cast<float*>(buffer2), reinterpret_cast<T*>(bufferTmp), bufsize);\
-          div(reinterpret_cast<float*>(buffer3), reinterpret_cast<float*>(buffer2), exp_sum, bufsize);\
+          div(reinterpret_cast<float*>(buffer3), reinterpret_cast<float*>(buffer2), exp_sum, aligned_bufsize);\
           convert<T, float>(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<float*>(buffer3), bufsize);\
           tops::memcpy(ctx, hbm_input_output, l1_input_output);\
       }\
@@ -275,8 +275,9 @@ extern "C" __global__ void softmax_f32(float *input, float* output, int batch,
           tops::mdspan l1_input(tops::Private, bufferTmp, bufsize);
           tops::mdspan hbm_input(tops::Global, input_cur + offset * last_dim_size + k, bufsize);
           tops::memcpy(ctx, l1_input, hbm_input);
-          sub(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(bufferTmp), (float)share_max_out[idx], bufsize);
-          exp(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), bufsize);
+          int aligned_bufsize = ALIGN_UP(bufsize, SIP_VECTOR_LENGTH);
+          sub(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(bufferTmp), (float)share_max_out[idx], aligned_bufsize);
+          exp(reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer1), aligned_bufsize);
           atomic_reduce_sum(reinterpret_cast<float*>(buffer3), reinterpret_cast<float*>(buffer2), bufsize);
           tops::mdspan hbm_output(tops::Global, output_cur + offset * last_dim_size + k, bufsize);
           tops::mdspan l2_output(tops::Shared, output_cur_share + offset * last_dim_size + k, bufsize);
@@ -286,12 +287,13 @@ extern "C" __global__ void softmax_f32(float *input, float* output, int batch,
       }
       for (int k = 0; k < last_dim_size; k+=TILE_SIZE) {
           int bufsize = (k + TILE_SIZE < last_dim_size) ? TILE_SIZE : last_dim_size - k;
+          int aligned_bufsize = ALIGN_UP(bufsize, SIP_VECTOR_LENGTH);
           tops::mdspan l1_input(tops::Private, bufferTmp, bufsize);
           tops::mdspan l1_output(tops::Private, buffer1, bufsize);
           tops::mdspan hbm_input_output(tops::Global, output_cur + offset * last_dim_size + k, bufsize);
           tops::mdspan l2_input_output(tops::Shared, output_cur_share + offset * last_dim_size + k, bufsize);
           tops::memcpy(ctx, l1_input, output_cachable? l2_input_output : hbm_input_output);
-          div(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(bufferTmp), exp_sum, bufsize);
+          div(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(bufferTmp), exp_sum, aligned_bufsize);
           tops::memcpy(ctx, hbm_input_output, l1_output);
       }
     }

@@ -111,7 +111,7 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, con
         tops::mdspan(tops::Global, in, in_size));
       ctx.trigger_and_wait();
     } else if (cacheable_l2) {
-      if (thread_id == 0) {
+      if (GetThreadIdxInBlock() == 0) {
         cache_ctx.config_memcpy(
           tops::mdspan(tops::Shared, src_cached, in_size),
           tops::mdspan(tops::Global, in, in_size));
@@ -414,7 +414,7 @@ extern "C" __global__ void FN_NAME( \
       tops::memcpy(ctx, dstInfo, srcInfo); \
     } \
     if (op_type == 1 && in_size == out_size && num_dims < 5) { \
-      if (threadIdx.x == 0) { \
+      if (GetThreadIdx() == 0) { \
         if (num_dims == 2)\
           transpose_kernel<TYPE, 2>(in, out, in_size, out_size, info, raw_cache, l1_cache); \
         else if (num_dims == 3)\
@@ -423,7 +423,7 @@ extern "C" __global__ void FN_NAME( \
           transpose_kernel<TYPE, 4>(in, out, in_size, out_size, info, raw_cache, l1_cache); \
       }\
     } else if (op_type == 2 && in_size < out_size && origin_num_dims <= num_dims) { \
-      if (threadIdx.x == 0) { \
+      if (GetThreadIdx() == 0) { \
         if (num_dims == 2)\
             broadcast_kernel<TYPE, 2>(in, out, origin_num_dims, in_size, out_size, info, raw_cache, l1_cache); \
         else if (num_dims == 3)\
@@ -435,7 +435,7 @@ extern "C" __global__ void FN_NAME( \
       }\
     } \
     else if (op_type == 4 && in_size > out_size) { \
-      if (threadIdx.x == 0) { \
+      if (GetThreadIdx() == 0) { \
         if (num_dims == 2)\
             narrow_kernel<TYPE, 2>(in, out, origin_num_dims, in_size, out_size, info, raw_cache, l1_cache); \
         else if (num_dims == 3)\

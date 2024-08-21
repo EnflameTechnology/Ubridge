@@ -263,7 +263,7 @@ __forceinline__ __device__ void  atomic_reduce_sum(int8_t* dst_ptr, int8_t* src_
   }
 }
 
-
+#define MAX_REDUCE_ARG_BATCH 4096 //4096 * 128
 
 template <typename T>
 __device__ __forceinline__ int call_reduce_argmax(T *src_ptr,
@@ -271,19 +271,21 @@ __device__ __forceinline__ int call_reduce_argmax(T *src_ptr,
   generic_ptr src_addr = reinterpret_cast<generic_ptr>(src_ptr);
   constexpr int bpe = sizeof(T);
   constexpr int vec_elems = sizeof(typename tops::unified_scalar<T>::type) * TOPS_VECTOR_LENGTH / bpe;
+  int positions[MAX_REDUCE_ARG_BATCH];
   using vtype = typename tops::scalar_to_vector<T, vec_elems>::type;
-
   auto src_leaptr = tops::simple_leaptr<vtype>(src_addr);
   int group_num = (size + vec_elems - 1) / vec_elems;
   vtype vsrc;
-  int max_value_pos = 0;
   for (int i = 0; i < group_num; i++) {
     vsrc = src_leaptr.load();
     int max_pos = tops::vreduce_argmax<vtype>(vsrc);
-    int cur_max_pos = i * vec_elems + max_pos;
-    if (src_ptr[cur_max_pos] > src_ptr[max_value_pos]) {
-      max_value_pos = cur_max_pos;
-    }
+    positions[i] = max_pos;
+  }
+  int max_value_pos = positions[0];
+  for (int i = 1; i < group_num; i++) {
+    if (src_ptr[i * vec_elems + positions[i]] > src_ptr[max_value_pos]) {
+      max_value_pos = i * vec_elems + positions[i];
+    }  
   }
   return max_value_pos;
 }
@@ -303,7 +305,7 @@ __forceinline__ __device__ void  atomic_reduce_argmax(u_int32_t* dst_ptr, float*
         atomic_max_value_pos = aligned_data_length + i;
       }
   }
-  dst_ptr[0] = atomic_max_value_pos;
+  dst_ptr[0] = (u_int32_t)atomic_max_value_pos;
 }
 
 template <>
@@ -317,7 +319,7 @@ __forceinline__ __device__ void  atomic_reduce_argmax(u_int32_t* dst_ptr, __fp16
         atomic_max_value_pos = aligned_data_length + i;
       }
   }
-  dst_ptr[0] = atomic_max_value_pos;
+  dst_ptr[0] = (u_int32_t)atomic_max_value_pos;
 }
 
 template <>
@@ -331,7 +333,7 @@ __forceinline__ __device__ void  atomic_reduce_argmax(u_int32_t* dst_ptr, __bf16
         atomic_max_value_pos = aligned_data_length + i;
       }
   }
-  dst_ptr[0] = atomic_max_value_pos;
+  dst_ptr[0] = (u_int32_t)atomic_max_value_pos;
 }
 
 template <>
@@ -345,7 +347,7 @@ __forceinline__ __device__ void  atomic_reduce_argmax(u_int32_t* dst_ptr, int8_t
         atomic_max_value_pos = aligned_data_length + i;
       }
   }
-  dst_ptr[0] = atomic_max_value_pos;
+  dst_ptr[0] = (u_int32_t)atomic_max_value_pos;
 }
 
 
@@ -356,19 +358,23 @@ __device__ __forceinline__ int call_reduce_argmin(T *src_ptr,
   generic_ptr src_addr = reinterpret_cast<generic_ptr>(src_ptr);
   constexpr int bpe = sizeof(T);
   constexpr int vec_elems = sizeof(typename tops::unified_scalar<T>::type) * TOPS_VECTOR_LENGTH / bpe;
+  int positions[MAX_REDUCE_ARG_BATCH];
   using vtype = typename tops::scalar_to_vector<T, vec_elems>::type;
 
   auto src_leaptr = tops::simple_leaptr<vtype>(src_addr);
   int group_num = (size + vec_elems - 1) / vec_elems;
   vtype vsrc;
-  int min_value_pos = 0;
   for (int i = 0; i < group_num; i++) {
     vsrc = src_leaptr.load();
     int min_pos = tops::vreduce_argmin<vtype>(vsrc);
-    int cur_min_pos = i * vec_elems + min_pos;
-    if (src_ptr[cur_min_pos] < src_ptr[min_value_pos]) {
-      min_value_pos = cur_min_pos;
-    }
+    positions[i] = min_pos;
+  }
+
+  int min_value_pos = positions[0];
+  for (int i = 1; i < group_num; i++) {
+    if (src_ptr[i * vec_elems + positions[i]] < src_ptr[min_value_pos]) {
+      min_value_pos = i * vec_elems + positions[i];
+    }  
   }
   return min_value_pos;
 }
@@ -383,7 +389,7 @@ __forceinline__ __device__ void  atomic_reduce_argmin(u_int32_t* dst_ptr, float*
   unsigned int num_remains =  channel_align % TOPS_VECTOR_LENGTH;
   unsigned int aligned_data_length =  channel_align - num_remains;                                 
   int atomic_min_value_pos = call_reduce_argmin<float>(src_ptr, aligned_data_length);
-  for (int i = 0; i< num_remains; i++) {//for unaligned remaining data
+  for (int i = 0; i < num_remains; i++) {//for unaligned remaining data
       if (src_ptr[aligned_data_length + i] < src_ptr[atomic_min_value_pos]) {
         atomic_min_value_pos = aligned_data_length + i;
       }
