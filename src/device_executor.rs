@@ -383,6 +383,15 @@ impl DeviceExecutor {
             "conv2d_bf16",
         ];
 
+        let quant_functions = vec![
+            "quantize_block_q8_0_f16",
+            "quantize_block_q8_0_bf16",
+            "quantize_block_q8_0_f32",
+            "dequantize_block_q8_0_f16",
+            "dequantize_block_q8_0_bf16",
+            "dequantize_block_q8_0_f32",
+        ];
+
         let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
         match get_kernels(device_id, kernel_platform) {
             (Some(_module_map), Some(_device), Some(_stream)) => {
@@ -470,6 +479,12 @@ impl DeviceExecutor {
                         }
                     } else if module == "copy" {
                         for func in &copy_functions {
+                            println!("Load function {}", func);
+                            let function = _module_map[module].get_function(func).unwrap();
+                            function_map.insert(func.to_string(), Arc::new(function));
+                        }
+                    } else if module == "quant" {
+                        for func in &quant_functions {
                             println!("Load function {}", func);
                             let function = _module_map[module].get_function(func).unwrap();
                             function_map.insert(func.to_string(), Arc::new(function));

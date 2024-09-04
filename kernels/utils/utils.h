@@ -55,6 +55,15 @@ using IndexType = size_t;
 using IndexType = size_t;
 #endif
 
+#if __cplusplus >= 201703L
+#define KERNEL_CONSTEXPR17 constexpr
+#define KERNEL_CONSTEXPR_IF if constexpr
+#else
+#define KERNEL_CONSTEXPR17
+#define KERNEL_CONSTEXPR_IF if
+#endif
+
+
 template <int BPE> struct UnsignedByBPE;
 template <> struct UnsignedByBPE<8> { using type = uint64_t; };
 template <> struct UnsignedByBPE<4> { using type = uint32_t; };

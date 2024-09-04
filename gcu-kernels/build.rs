@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use reqwest::blocking::Client;
 
-const KERNELS: [&str; 13] =  ["unary", "fill", "binary", "affine", "cast", 
-            "reduce", "ternary", "indexing", "matmul", "embedding", "kvconcat", "conv", "copy"];
+const KERNELS: [&str; 14] =  ["unary", "fill", "binary", "affine", "cast", 
+            "reduce", "ternary", "indexing", "matmul", "embedding", "kvconcat", "conv", "copy", "quant"];
 
 fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
     let mut command_tar = std::process::Command::new("tar");
@@ -109,7 +109,6 @@ fn main() -> Result<()> {
                     .arg(kernel_file)
                     .arg(format!("-arch=gcu{compute_cap}"))
                     .arg("-O3")
-                    .arg("-std=c++17")
                     .arg("-fPIC")
                     .arg("-ltops")
                     .arg("-Xclang")
@@ -119,6 +118,9 @@ fn main() -> Result<()> {
                     .arg(format!("-D__KRT_ARCH__={compute_cap}"))
                     .arg("-D__ATOMIC_OP")
                     .arg("-D__ACORE_OP__")
+                    .arg("--target=x86_64-unknown-linux-gnu")
+                    .arg("-fno-omit-frame-pointer")
+                    .arg("-DNDEBUG")
                     .arg(format!("-I{:}", absolute_kernel_dir.join("atomic/include").to_str().unwrap()))
                     .arg(format!("-I{:}", absolute_kernel_dir.join("atomic/include/common").to_str().unwrap()))
                     .arg(format!("--tops-device-lib-path={:}", absolute_kernel_dir.join("atomic/lib").to_str().unwrap()))
