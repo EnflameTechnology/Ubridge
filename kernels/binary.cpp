@@ -35,7 +35,7 @@
 
 using namespace std;
 
-#define TILE_SIZE AlignDown(((VDMEM_SIZE) / 6), 256)
+#define TILE_SIZE AlignDown(((VDMEM_VALID_SIZE) / 6), 256)
 #define TILE_LEN_BPE4 (TILE_SIZE >> 2)
 #define TILE_LEN_BPE2 (TILE_SIZE >> 1)
 #define TILE_LEN_BPE1 (TILE_SIZE)
@@ -230,72 +230,4 @@ BINARY_OP(float, uint8_t, gt_f32, gt)
 BINARY_OP(float, uint8_t, lt_f32, lt)
 BINARY_OP(float, uint8_t, le_f32, le)
 
-#ifdef KERNEL_TEST
-template<typename T, typename OUTT>
-int test() {
-  T *lhs_d; T *rhs_d; OUTT *out_d;
-  int *shape_lhs_d;
-  T *lhs_h; T *rhs_h; OUTT *out_h;
-  size_t* dim_strides_d;
-  size_t size_lhs = 2 * 4;
-  size_t size_rhs = 2;
-  size_t dim_strides[6] = {2, 4, 4, 1, 1, 0};
-  size_t size_out = size_lhs;
-  size_t dim = 1;
-  topsHostMalloc((T**)&lhs_h, size_lhs * sizeof(T));
-  topsHostMalloc((T**)&rhs_h, size_rhs * sizeof(T));
-
-  topsHostMalloc((T**)&out_h, size_out * sizeof(OUTT));
-  // topsHostMalloc((T**)&dim_strides_h, sizeof(dim_strides));
-
-    // T a = 0.5;
-    OUTT zero = 0.0;
-    for (size_t i = 0; i < size_lhs; i++) {
-        lhs_h[i] = static_cast<T>(1.5);
-    }
-    for (size_t i = 0; i < size_rhs; i++) {
-        rhs_h[i] = static_cast<T>(0.7);
-    }
-    for (size_t i = 0; i < size_out; i++) {
-        out_h[i] = static_cast<OUTT>(zero);
-    }
-  topsMalloc(&lhs_d, size_lhs * sizeof(T));
-  topsMalloc(&rhs_d, size_rhs * sizeof(T));
-  topsMalloc(&out_d, size_out * sizeof(OUTT));
-  topsMalloc(&dim_strides_d, sizeof(dim_strides));
-
-
-  printf("info: copy Host2Device\n");
-  topsMemcpy(lhs_d, lhs_h, size_lhs * sizeof(T),
-                  topsMemcpyHostToDevice);
-  topsMemcpy(rhs_d, rhs_h, size_rhs * sizeof(T),
-                  topsMemcpyHostToDevice);
-  topsMemcpy(out_d, out_h, size_out * sizeof(OUTT),
-                  topsMemcpyHostToDevice);
-  topsMemcpy(dim_strides_d, dim_strides, sizeof(dim_strides),
-                  topsMemcpyHostToDevice);
-
-  bdiv_f32<<<dim3(1, 1, 1), dim3(12, 1, 1)>>>(size_out, 2, dim_strides_d, lhs_d, rhs_d, out_d);
-
-  printf("info: copy Device2Host\n");
-  topsMemcpy(out_h, out_d, size_out * sizeof(OUTT), topsMemcpyDeviceToHost);
-
-  for (size_t j = 0; j < size_out; j++) {
-      // OUTT dif = static_cast<OUTT>(0.8) - static_cast<OUTT>(out_h[j]);
-      // if (dif > static_cast<OUTT>(0.0000001f))
-        printf("%.5f, ", static_cast<OUTT>(out_h[j]));
-  }
-  topsHostFree(lhs_h);
-  topsHostFree(rhs_h);
-  topsHostFree(out_h);
-  topsFree(lhs_d);
-  topsFree(out_d);
-  return 0;
-}
-#endif
-
-int main() {
-#ifdef KERNEL_TEST
-    return test<float, float>();
-#endif
-}
+int main () {}

@@ -390,6 +390,13 @@ impl DeviceExecutor {
             "dequantize_block_q8_0_f16",
             "dequantize_block_q8_0_bf16",
             "dequantize_block_q8_0_f32",
+
+            "quantize_block_q4_k_f16",
+            "quantize_block_q4_k_bf16",
+            "quantize_block_q4_k_f32",
+            "dequantize_block_q4_k_f16",
+            "dequantize_block_q4_k_bf16",
+            "dequantize_block_q4_k_f32",
         ];
 
         let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
@@ -422,7 +429,7 @@ impl DeviceExecutor {
                             function_map.insert(name, Arc::new(function));
                         }
                     } else if module == "matmul" {
-                        for dt in ["i8", "bf16", "f16", "f32"] {
+                        for dt in ["bf16", "f16", "f32", "f16_4bit", "f16_8bit", "bf16_4bit", "bf16_8bit"] {
                             let name = format!("{}_{}", module, dt);
                             println!("Load function {}", name);
                             let function = _module_map[module].get_function(&name).unwrap();

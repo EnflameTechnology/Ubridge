@@ -39,10 +39,10 @@
 using namespace std;
 using namespace tops;
 #define PING_PONG_SIZE 2
-#define TILE_SIZE AlignDown(((VDMEM_SIZE) / 32), 256)
+#define TILE_SIZE AlignDown(((VDMEM_VALID_SIZE) / 32), 256)
 // #define GATHER_COPY
-const int COPY_TILESIZE = 128 * 1024;
-const int COPY_L1SIZE = 896 * 1024;
+const int COPY_TILESIZE = 256 * 1024;
+const int COPY_L1SIZE = VDMEM_VALID_SIZE - COPY_TILESIZE;
 
 
 // #define PRINTHELPER(ARRAY, SZ, MSG) \

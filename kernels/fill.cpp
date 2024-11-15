@@ -24,7 +24,7 @@
 #include "tops/tops_runtime.h"
 #include "utils/utils.h"
 
-#define tile_size 1024
+#define tile_size 16 * 1024
 using namespace std;
 
 __device__ __forceinline__ void init_tid_off_arr(int dim_size, int *tid_off_arr,
@@ -135,6 +135,4 @@ extern "C"  __global__ void fill_i8(int8_t *output, int total_size,
 //     return fill__Kernel<uint16_t>(output, total_size, value, bpe);
 // }
 
-int main() {
-    return 0;
-}
+int main() {}

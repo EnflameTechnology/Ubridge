@@ -34,7 +34,7 @@
 #include "tcle.h"
 using namespace tcle;
 using namespace std;
-#define TILE_SIZE AlignDown(((VDMEM_SIZE) / 32), 256)
+#define TILE_SIZE AlignDown(((VDMEM_VALID_SIZE) / 32), 256)
 
 template <typename ID_TYPENAME, typename T>
 __device__ __forceinline__ void atomic_where(ID_TYPENAME* ids_ptr, T* src_ptr1, T* src_ptr2, 
@@ -151,87 +151,5 @@ WHERE_OP(int64_t, uint8_t, where_u8_i64)
 WHERE_OP(__fp16, uint8_t, where_u8_f16)
 WHERE_OP(__bf16, uint8_t, where_u8_bf16)
 
-int main(void) {
-#ifdef KERNEL_TEST
-  topsError_t err = topsSuccess;
-  int N = 64 * 4096 + 5;
-  int in_size = N * sizeof(float);
 
-  uint8_t *host_ids = reinterpret_cast<uint8_t*>(aligned_alloc(128, N * sizeof(uint8_t)));
-  float *host_in1 = reinterpret_cast<float*>(aligned_alloc(128, in_size));
-  float *host_in2 = reinterpret_cast<float*>(aligned_alloc(128, in_size));
-  float *host_out = reinterpret_cast<float*>(aligned_alloc(128, in_size));
-
-  for (int j =0; j< N; j ++) {
-    host_ids[j] = (j % 2 == 1) ? 1:0;
-    host_in1[j] = 5.0;
-    host_in2[j] = 1.0;
-  }
-
-  float *dev_in1 = NULL;
-  CHECK(topsMalloc(reinterpret_cast<void **>(&dev_in1), in_size));
-
-  float *dev_in2 = NULL;
-  CHECK(topsMalloc(reinterpret_cast<void **>(&dev_in2), in_size));
-  
-  float *dev_out = NULL;
-  CHECK(topsMalloc(reinterpret_cast<void **>(&dev_out), in_size));
-
-  uint8_t *dev_ids = NULL;
-  CHECK(topsMalloc(reinterpret_cast<void **>(&dev_ids), N * sizeof(uint8_t)));
-
-  CHECK(topsMemcpy(dev_in1, host_in1, in_size, topsMemcpyHostToDevice));
-  CHECK(topsMemcpy(dev_in2, host_in2, in_size, topsMemcpyHostToDevice));
-  CHECK(topsMemcpy(dev_ids, host_ids, N * sizeof(uint8_t), topsMemcpyHostToDevice));
-  CHECK(topsMemset(dev_out, 0, in_size));
-
-  printf("call where kernel!!!!!!!!!!!!!\n");
-
-  float time = 0.0;
-  float total_time = 0.0;
-  topsEvent_t start, stop;
-  int ITERATION = 20;
-  for (int i=0; i< ITERATION; i++) {
-    CHECK(topsEventCreate(&start));
-    CHECK(topsEventCreate(&stop));
-
-    CHECK(topsEventRecord(start));
-
-    where_u8_f32<<<1, 12>>>(dev_ids, dev_in1, dev_in2, dev_out, N);
-
-    CHECK(topsGetLastError());
-
-    CHECK(topsEventRecord(stop));
-    CHECK(topsEventSynchronize(stop));
-    CHECK(topsEventElapsedTime(&time, start, stop));
-    total_time += time;
-  }
-  
-  printf("Avg Time taken: %g ms --------\n", total_time/ITERATION);
-
-
-  if (topsGetLastError() != topsSuccess) {
-    fprintf(stderr, "Failed to launch kernel (error code %s)!\n",
-            topsGetErrorString(err));
-    exit(EXIT_FAILURE);
-  }
-
-  CHECK(topsMemcpy(host_out, dev_out, in_size, topsMemcpyDeviceToHost));
-
-  // for (int i = 0; i < N; i++) {
-  //   fprintf(stderr, "Result  element %d, %f!\n", i, host_out[i]);
-  // }
-
-  printf("Test PASSED\n");
-  
-  CHECK(topsFree(dev_in1));
-  CHECK(topsFree(dev_in2));
-  CHECK(topsFree(dev_ids));
-  CHECK(topsFree(dev_out));
-  free(host_in1);
-  free(host_in2);
-  free(host_ids);
-  free(host_out);
-#endif
-  return 0;
-}
+int main() {}

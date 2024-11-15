@@ -206,11 +206,15 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
         auto cos_sin_cache = cos_sin_cur + i * split_dim;
         tops::mdspan hbm_cos_sin(tops::Global, cos_sin_cache, split_dim);
         tops::memcpy(ctx, cos_sin_l1, hbm_cos_sin);
-        convert<float, T>(reinterpret_cast<float*>(bufCosSinf32), reinterpret_cast<T*>(bufCosSin), split_dim);
-        convert<float, T>(reinterpret_cast<float*>(bufQueryf32), reinterpret_cast<T*>(bufQuery), q_stride);
-        convert<float, T>(reinterpret_cast<float*>(bufKeyf32), reinterpret_cast<T*>(bufKey), k_stride);
-        auto cos_ptr = bufCosSinf32;
-        auto sin_ptr = bufCosSinf32 + embed_dim;
+        if (sizeof(T) < 4) {
+          convert<float, T>(reinterpret_cast<float*>(bufCosSinf32), reinterpret_cast<T*>(bufCosSin), split_dim);
+          convert<float, T>(reinterpret_cast<float*>(bufQueryf32), reinterpret_cast<T*>(bufQuery), q_stride);
+          convert<float, T>(reinterpret_cast<float*>(bufKeyf32), reinterpret_cast<T*>(bufKey), k_stride);
+        }
+        auto cos_ptr = sizeof(T) < 4 ? bufCosSinf32 : reinterpret_cast<float*>(bufCosSin);
+        auto sin_ptr = cos_ptr + embed_dim;
+        auto query_ptr = sizeof(T) < 4 ? bufQueryf32 : reinterpret_cast<float*>(bufQuery);
+        auto key_ptr = sizeof(T) < 4 ? bufKeyf32 : reinterpret_cast<float*>(bufKey);
         for (int j = 0; j < max_qk; j+=TILESIZE) { //This is safe even though nk != nq (redundant compute)
           int bufsize = (j + TILESIZE < max_qk) ? TILESIZE : max_qk - j;
           if (bufsize == TILESIZE) {
@@ -218,23 +222,25 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
             auto rot_offsets = vrem(indexes, embed_dims);
             auto head_idxes = vdiv(indexes, embed_dims);
             auto offsets = vmul(head_idxes, hidden_sizes);
-            apply_rotary_qkv_batch<float>(bufQueryf32, bufKeyf32, cos_ptr, sin_ptr, 
+            apply_rotary_qkv_batch<float>(query_ptr, key_ptr, cos_ptr, sin_ptr, 
                                         offsets, rot_offsets, embed_dims, VEC1, VEC2, vec_bpe, gpt_geox, j, nq, nk);
           } else {
             for (int k = j; k < max_qk; k++) {
               int head_idx = k / embed_dim;
               int offset = head_idx * hidden_size;
               int rot_offset = k % embed_dim;
-              auto q_arr = bufQueryf32 + offset;
-              auto k_arr = bufKeyf32 + offset;
+              auto q_arr = query_ptr + offset;
+              auto k_arr = key_ptr + offset;
               apply_rotary_qkv(q_arr, k_arr, cos_ptr, sin_ptr, rot_offset, embed_dim, gpt_geox, k, nq, nk);
             }
             break;
           }
 
         }
-        convert<T, float>(reinterpret_cast<T*>(bufQuery), reinterpret_cast<float*>(bufQueryf32), q_stride);
-        convert<T, float>(reinterpret_cast<T*>(bufKey), reinterpret_cast<float*>(bufKeyf32), k_stride);
+        if (sizeof(T) < 4) {
+          convert<T, float>(reinterpret_cast<T*>(bufQuery), reinterpret_cast<float*>(bufQueryf32), q_stride);
+          convert<T, float>(reinterpret_cast<T*>(bufKey), reinterpret_cast<float*>(bufKeyf32), k_stride);
+        }
         tops::memcpy(ctx, hbm_query, query_l1);
         tops::memcpy(ctx, hbm_key, key_l1);
       }
@@ -262,177 +268,4 @@ extern "C" __global__ void  rope_bf16(__bf16 *query, __bf16 *key, __bf16 *cos_si
       num_tokens, q_heads, k_heads, hidden_size, split_dim, gpt_geox);
 }
 
-#ifdef KERNEL_TEST
-template <typename T>
-__forceinline__ void apply_rotary_embedding(T *arr, T *cos_ptr, T *sin_ptr,
-                                int rot_offset, int embed_dim, int gpt_geox) {}
-
-
-template <>
-__forceinline__  void apply_rotary_embedding(float *arr, float *cos_ptr, float *sin_ptr,
-                                int rot_offset, int embed_dim, int gpt_geox) {
-
-  int x_index, y_index;
-  float cos, sin;
-  if (gpt_geox) {
-    x_index = rot_offset;
-    y_index = embed_dim + rot_offset;
-    cos = cos_ptr[x_index];
-    sin = sin_ptr[x_index];
-  } else {
-    // GPT-J style rotary embedding.
-    x_index = 2 * rot_offset;
-    y_index = 2 * rot_offset + 1;
-    cos = cos_ptr[x_index / 2];
-    sin = sin_ptr[x_index / 2];
-  }
-
-  float x = arr[x_index];
-  float y = arr[y_index];
-  arr[x_index] = x * cos - y * sin;
-  arr[y_index] = y * cos + x * sin;
-}
-
-template <>
-__forceinline__  void apply_rotary_embedding(tops::half *arr,
-                                tops::half *cos_ptr,
-                                tops::half *sin_ptr, int rot_offset,
-                                int embed_dim, int gpt_geox) {
-  int x_index, y_index;
-  tops::half cos, sin;
-  if (gpt_geox) {
-    x_index = rot_offset;
-    y_index = embed_dim + rot_offset;
-    cos = cos_ptr[x_index];
-    sin = sin_ptr[x_index];
-  } else {
-    // GPT-J style rotary embedding.
-    x_index = 2 * rot_offset;
-    y_index = 2 * rot_offset + 1;
-    cos = cos_ptr[x_index / 2];
-    sin = sin_ptr[x_index / 2];
-  }
-
-
-  tops::half x = arr[x_index];
-  tops::half y = arr[y_index];
-  float x_fp32 = float(x);
-  float y_fp32 = float(y);
-
-  float sin_fp32 = float(sin);
-  float cos_fp32 = float(cos);
-  float tmp_x = x_fp32 * cos_fp32 - y_fp32 * sin_fp32;
-  float tmp_y = y_fp32 * cos_fp32 + x_fp32 * sin_fp32;
-  arr[x_index] = tops::half(tmp_x);
-  arr[y_index] = tops::half(tmp_y);
-}
-
-template <typename T>
-void rope_cpu(T *query, T *key, T *cos_sin,
-                      int num_tokens, int q_heads, int hidden_size, int gpt_geox) {
-    int stride = q_heads * hidden_size;
-    for (int i = 0; i < num_tokens; i++) {
-      // int32_t pos = positions[i];
-
-      auto query_sub0 = query + i * stride;
-      auto key_sub0 = key + i * stride;
-      auto cos_sin_cache_sub0 = cos_sin + i * hidden_size;
-
-      int32_t embed_dim = hidden_size / 2;
-      auto cos_cache_sub0 = cos_sin_cache_sub0;
-      auto sin_cache_sub0 = cos_sin_cache_sub0 + embed_dim;
-
-      int nq = q_heads * embed_dim;
-
-      for (int j = 0; j < nq; j++) {
-        int head_idx = j / embed_dim;
-        int offset = head_idx * hidden_size;
-        int rot_offset = j % embed_dim;
-        auto query_sub1 = query_sub0 + offset;
-        apply_rotary_embedding(reinterpret_cast<T*>(query_sub1), reinterpret_cast<T*>(cos_cache_sub0), 
-                      reinterpret_cast<T*>(sin_cache_sub0),
-                                    rot_offset, embed_dim, gpt_geox);
-      }
-
-      int nk = q_heads * embed_dim;
-      for (int j = 0; j < nk; j++) {
-        int head_idx = j / embed_dim;
-        int offset = head_idx * hidden_size;
-        int rot_offset = j % embed_dim;
-        auto key_sub1 = key_sub0 + offset;
-        apply_rotary_embedding(reinterpret_cast<T*>(key_sub1), reinterpret_cast<T*>(cos_cache_sub0), 
-              reinterpret_cast<T*>(sin_cache_sub0),
-                                    rot_offset, embed_dim, gpt_geox);
-      }
-    }  // loop in num_tokens
-
-}
-
-template <typename T>
-void test() {
-  int num_tokens = 13;
-  int q_heads = 32;
-  int hidden_size = 128;
-  int qsize = num_tokens * q_heads * hidden_size;
-  printf("start the test...\n");
-  int gpt_neox = 1;
-  int in_size = qsize * sizeof(T);
-  T *query = reinterpret_cast<T*>(aligned_alloc(256, in_size));
-  T *key = reinterpret_cast<T*>(aligned_alloc(256, in_size));
-
-  for (int j =0; j< qsize; j ++) {
-    query[j] = T(0.50); 
-  }
-
-  for (int j =0; j< qsize; j ++) {
-    key[j] = T(0.25);
-  }
-
-  int cos_sin_size = num_tokens * hidden_size;
-  float *cos_sin = reinterpret_cast<float*>(aligned_alloc(128, cos_sin_size * sizeof(float)));
-  for (int j =0; j< cos_sin_size; j ++) {
-    cos_sin[j] = 0.9;
-  }
-  printf("Calculating gcu results...\n");
-
-  T *query_d = NULL;
-  T *key_d = NULL;
-  float *cos_sin_d = NULL;
-
-  CHECK(topsMalloc(reinterpret_cast<void **>(&query_d), in_size));
-  CHECK(topsMalloc(reinterpret_cast<void **>(&key_d), in_size));
-  CHECK(topsMalloc(reinterpret_cast<void **>(&cos_sin_d), cos_sin_size * sizeof(T)));
-
-  CHECK(topsMemcpy(query_d, query, in_size, topsMemcpyHostToDevice));
-  CHECK(topsMemcpy(key_d, key, in_size, topsMemcpyHostToDevice));
-  CHECK(topsMemcpy(cos_sin_d, cos_sin, cos_sin_size * sizeof(float), topsMemcpyHostToDevice));
-  printf("Launching kernel...\n");
-
-  rope_f16<<<1, 12>>>(query_d, key_d, cos_sin_d, num_tokens, q_heads, q_heads, hidden_size, 0, gpt_neox);
-
-  T *query_o = reinterpret_cast<T*>(aligned_alloc(128, in_size));
-  T *key_o = reinterpret_cast<T*>(aligned_alloc(128, in_size));
-
-  CHECK(topsMemcpy(query_o, query_d, in_size, topsMemcpyDeviceToHost));
-  CHECK(topsMemcpy(key_o, key_d, in_size, topsMemcpyDeviceToHost));
-  printf("Calculating cpu results...\n");
-  // rope_cpu<T>(query, key, cos_sin, num_tokens, q_heads, hidden_size, gpt_neox);
-
-  for (int i = 0; i < qsize; i++) {
-    // if (abs(float(query[i]) - float(query_o[i])) >0.00001 || abs(float(key[i]) - float(key_o[i])) > 0.00001)
-    //   fprintf(stderr, "Result dif %d, [%.5f, %.5f]!\n", i, 
-    //         abs(float(query[i]) - float(query_o[i])), abs(float(key[i]) - float(key_o[i])));
-    // else
-    printf("%.5f ", float(query_o[i]));
-      // printf("\n query %d [%.5f, %.5f], key [%.5f, %.5f]", i, 
-      //       float(query[i]), float(query_o[i]), float(key[i]), float(key_o[i]));
-  }
-
-}
-#endif
-
-int main() {
-#ifdef KERNEL_TEST
-  test<__fp16>();
-#endif
-}
+int main() {}

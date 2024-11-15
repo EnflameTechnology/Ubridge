@@ -32,7 +32,7 @@
 #include "tops/tops_runtime.h"
 #include "utils/utils.h"
 using namespace std;
-#define TILE_SIZE AlignDown(((VDMEM_SIZE) / 16), 256)
+#define TILE_SIZE AlignDown(((VDMEM_VALID_SIZE) / 16), 256)
 
 template <typename T>
 __device__ __forceinline__ void kvconcat_dim0_kernel(T *ltensor, T* rtensor, T *out,

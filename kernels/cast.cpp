@@ -35,7 +35,7 @@
 #include "utils/utils.h"
 using namespace std;
 using namespace tops;
-#define TILE_SIZE AlignDown(((VDMEM_SIZE) / 8), 256)
+#define TILE_SIZE AlignDown(((VDMEM_VALID_SIZE) / 8), 256)
 
 template <typename T, typename OUTT>
 __device__ void cast_kernel(T* in, OUTT* out, int len) {
@@ -198,55 +198,4 @@ CAST_OP(u_int32_t, u_int16_t, cast_u32_u16)
 CAST_OP(u_int32_t, float, cast_u32_f32)
 CAST_OP(u_int32_t, __fp16, cast_u32_f16)
 CAST_OP(u_int32_t, __bf16, cast_u32_bf16)
-
-#ifdef KERNEL_TEST
-template<typename T, typename OUTT>
-int test() {
-  T *lhs_d; OUTT *out_d;
-  int *shape_lhs_d;
-  T *lhs_h; OUTT *out_h;
-  size_t size_lhs = 64*4096;
-  size_t size_out = size_lhs;
-  size_t dim = 1;
-  topsHostMalloc((T**)&lhs_h, size_lhs * sizeof(T));
-  topsHostMalloc((T**)&out_h, size_out * sizeof(OUTT));
-    // T a = 0.5;
-    OUTT zero = 0.0;
-    for (size_t i = 0; i < size_lhs; i++) {
-        lhs_h[i] = static_cast<T>(0.5);
-    }
-    for (size_t i = 0; i < size_out; i++) {
-        out_h[i] = static_cast<OUTT>(zero);
-    }
-  topsMalloc(&lhs_d, size_lhs * sizeof(T));
-  topsMalloc(&out_d, size_out * sizeof(OUTT));
-
-  printf("info: copy Host2Device\n");
-  topsMemcpy(lhs_d, lhs_h, size_lhs * sizeof(T),
-                  topsMemcpyHostToDevice);
-  topsMemcpy(out_d, out_h, size_out * sizeof(OUTT),
-                  topsMemcpyHostToDevice);
-
-  cast_f16_f32<<<dim3(1, 1, 1), dim3(12, 1, 1)>>>(size_out, lhs_d, out_d);
-
-  printf("info: copy Device2Host\n");
-  topsMemcpy(out_h, out_d, size_out * sizeof(OUTT), topsMemcpyDeviceToHost);
-
-  for (size_t j = 0; j < size_out; j++) {
-      OUTT dif = static_cast<OUTT>(0.5) - static_cast<OUTT>(out_h[j]);
-      if (dif > static_cast<OUTT>(0.0000001f))
-        printf("%.5f, ", dif);
-  }
-  topsHostFree(lhs_h);
-  topsHostFree(out_h);
-  topsFree(lhs_d);
-  topsFree(out_d);
-  return 0;
-}
-#endif
-
-int main() {
-#ifdef KERNEL_TEST
-    return test<__fp16, float>();
-#endif
-}
+int main() {}

@@ -299,30 +299,10 @@ extern "C" __global__ void softmax_f32(float *input, float* output, int batch,
     }
 }
 
-    // printf("N %d, MAX_THREADS %d, THREAD_STEP %d, thread_step %d, chunks %lu, last_dim_size %lu \n", 
-    //     N, MAX_THREADS, THREAD_STEP, thread_step, chunks, last_dim_size);
-    //yi = exp(xi - max)/(sum(exp(xi - max))
-
-      // if (results_sum - 1.0 > 0.01 || 1.0 - results_sum > 0.01)
-      //   printf("Invalid softmax result %.5f in batch_idx %d for [%d, %d, %d]\n\n", results_sum, batch_idx, batch, chunks, last_dim_size);
-
-// SOFTMAX_OP(float, float, softmax_f32, fast_max_f32_kernel)
 SOFTMAX_OP(__fp16, tops::half, softmax_f16, fast_max_f16_kernel)
 SOFTMAX_OP(__bf16, tops::bfloat, softmax_bf16, fast_max_bf16_kernel)
 
-// extern "C" __global__ void softmax_f64(double *input, double *output,
-//     size_t elements) {
-//       softmax_kernel<double>(input, output, elements);
-// }
-
-// extern "C" __global__ void softmax_u8(uint8_t *input, uint8_t* output, 
-//     size_t elements) {
-//       softmax_kernel<uint8_t>(input, output, elements);
-// }
-
-
-
-#define TILE_SIZE_NORM 1024 * 32
+#define TILE_SIZE_NORM 1024 * 48
 template <typename T>
 __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias, int batch,
     int chunks, int last_dims_size, float epsilon, int remove_mean, int affine) {
@@ -330,14 +310,11 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias, int ba
     tops::dte_scope s(ctx);
     __local__ __valigned__ float buffer1[TILE_SIZE_NORM];
     __local__ __valigned__ float buffer2[TILE_SIZE_NORM];
-    __local__ __valigned__ float buffer3[TILE_SIZE_NORM];
+    __local__ __valigned__ float buffer3[128];
     __local__ __valigned__ T bufferTmp[TILE_SIZE_NORM];
     __local__ __valigned__ T bufferWeight[TILE_SIZE_NORM];
     __local__ __valigned__ T bufferBias[TILE_SIZE_NORM];
     __local__ __valigned__ T bufferOut[TILE_SIZE_NORM];
-    __local__ __valigned__ float bufTmp[256];
-    __local__ __valigned__ float bufTmp1[256];
-    __shared__ char raw_cache[SHARE_BUFFER_SIZE];
     tops::mdspan l1_weight(tops::Private, bufferWeight, last_dims_size);
     tops::mdspan l1_bias(tops::Private, bufferBias, last_dims_size);
     tops::mdspan hbm_weight(tops::Global, weight, last_dims_size);
@@ -392,10 +369,8 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias, int ba
       mul(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(buffer2), reinterpret_cast<float*>(buffer2), last_dims_size);
       atomic_reduce_sum(reinterpret_cast<float*>(buffer3), reinterpret_cast<float*>(buffer1), last_dims_size);
       float var_value = buffer3[0] / last_dims_size; //varience
-      bufTmp[0] = var_value + epsilon;
-      sqrt(reinterpret_cast<float*>(bufTmp1), reinterpret_cast<float*>(bufTmp), 32); //sqrt(varience + epsilon)
       // buffer1 -> (xi - mean) / sqrt(varience + epsilon)
-      div(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(buffer2), bufTmp1[0], last_dims_size);
+      div(reinterpret_cast<float*>(buffer1), reinterpret_cast<float*>(buffer2), sqrtf(var_value + epsilon), last_dims_size);
       convert<T, float>(reinterpret_cast<T*>(bufferOut), reinterpret_cast<float*>(buffer1), last_dims_size);
       tops::mdspan hbm_output(tops::Global, output_cur + offset * last_dims_size, last_dims_size);
       mul(reinterpret_cast<T*>(bufferTmp), reinterpret_cast<T*>(bufferOut), reinterpret_cast<T*>(bufferWeight), last_dims_size); 
@@ -425,69 +400,4 @@ extern "C" __global__ void layernorm_f32(float *input, float *output, float* wei
       layernorm_kernel<float>(input, output, weight, bias, batch, chunks, last_dim_size, epsilon, remove_mean, affine);
 }
 
-int main(void) {
-#ifdef KERNEL_TEST
-  topsError_t err = topsSuccess;
-  int nums = 2;
-  int N = 2;
-  int in_euem = N * nums;
-  int out_euem = N;
-  int in_size = in_euem * sizeof(float);
-  int out_size = out_euem * sizeof(float);
-  float *host_in = reinterpret_cast<float*>(aligned_alloc(128, in_size));
-  float *host_out = reinterpret_cast<float*>(aligned_alloc(128, out_size));
-
-  for (int j =0; j< N; j ++) {
-    for (int i = 0; i < in_euem/N; ++i) {
-      host_in[j * in_euem/N + i] = i;
-    }
-    // host_in[j * in_euem/N + 100] = -100.0;
-  }
-  
-  host_in[0] = -2.00000f;
-  host_in[1] = 2.00000f;
-  host_in[2] = 3.00000f;
-  host_in[3] = -3.00000f;
-
-  for (int i = 0; i < out_euem; ++i) {
-    host_out[i] = 0;
-  }
-
-  float *dev_in = NULL;
-  CHECK(topsMalloc(reinterpret_cast<void **>(&dev_in), in_size));
-
-  float *dev_out = NULL;
-  CHECK(topsMalloc(reinterpret_cast<void **>(&dev_out), out_size));
-
-  CHECK(topsMemcpy(dev_in, host_in, in_size, topsMemcpyHostToDevice));
-  CHECK(topsMemset(dev_out, 0, out_size));
-
-  printf("call reduce kernel!!!!!!!!!!!!!\n");
-  fast_max_f32<<<1, 12>>>(dev_in, dev_out, in_euem, nums);
-
-  if (topsGetLastError() != topsSuccess) {
-    fprintf(stderr, "Failed to launch vectorAdd kernel (error code %s)!\n",
-            topsGetErrorString(err));
-    exit(EXIT_FAILURE);
-  }
-
-  CHECK(topsMemcpy(host_out, dev_out, out_size, topsMemcpyDeviceToHost));
-  // int total = 0;
-  // for (int i=0; i< nums; i++) {
-  //   total += i;
-  // }
-  // printf("Actual results %d\n", total);
-
-  for (int i = 0; i < out_euem; i++) {
-    fprintf(stderr, "Result  element %d, %f!\n", i, host_out[i]);
-  }
-
-  printf("Test PASSED\n");
-
-  CHECK(topsFree(dev_in));
-  CHECK(topsFree(dev_out));
-  free(host_in);
-  free(host_out);
-#endif
-  return 0;
-}
+int main() {}

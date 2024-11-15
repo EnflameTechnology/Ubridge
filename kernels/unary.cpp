@@ -108,7 +108,7 @@ extern "C" __global__ void FN_NAME( \
 
 
 #define PING_PONG_SIZE 2
-#define TILE_SIZE AlignDown(((VDMEM_SIZE) / 32), 256)
+#define TILE_SIZE AlignDown(((VDMEM_VALID_SIZE) / 32), 256)
 
 #define UNARY_OP(T, FN_NAME, ATOMIC_FUNC) \
 extern "C" __global__ void FN_NAME( \

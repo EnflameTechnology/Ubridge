@@ -20,8 +20,9 @@ constexpr int MAX_DRD_SIP_NUM = 12;
 constexpr int MAX_SCP_CLUSTER_NUM = 1;
 constexpr int MAX_SCP_SIP_NUM = 12;
 constexpr int SIP_VECTOR_LENGTH = 128;
-#define SHARE_BUFFER_SIZE 1024 * 1024 * 24 //64MB
+#define SHARE_BUFFER_SIZE 1024 * 1024 * 64 //64MB
 // #define KERNEL_TEST
+constexpr int VDMEM_VALID_SIZE = 0x180000 - 0x8000 - 0x800;
 
 #if defined(__GCU_ARCH__) && (__GCU_ARCH__ == 200)
   constexpr static int VDMEM_SIZE = 0x80000;
@@ -63,6 +64,33 @@ using IndexType = size_t;
 #define KERNEL_CONSTEXPR_IF if
 #endif
 
+#define SET_SRC_CUR_CFG(dte_ctx, src_addr0, src_addr1, ppflag) \
+  if (ppflag) {                                                \
+    dte_ctx.set_src_addr(src_addr0);                           \
+  } else {                                                     \
+    dte_ctx.set_src_addr(src_addr1);                           \
+  }
+
+#define SET_DST_CUR_CFG(dte_ctx, dst_addr0, dst_addr1, ppflag) \
+  if (ppflag) {                                                \
+    dte_ctx.set_dst_addr(dst_addr0);                           \
+  } else {                                                     \
+    dte_ctx.set_dst_addr(dst_addr1);                           \
+  }
+
+#define SET_SRC_NEXT_CFG(dte_ctx, src_addr0, src_addr1, ppflag) \
+  if (ppflag) {                                                 \
+    dte_ctx.set_src_addr(src_addr1);                            \
+  } else {                                                      \
+    dte_ctx.set_src_addr(src_addr0);                            \
+  }
+
+#define SET_DST_NEXT_CFG(dte_ctx, dst_addr0, dst_addr1, ppflag) \
+  if (ppflag) {                                                 \
+    dte_ctx.set_dst_addr(dst_addr1);                            \
+  } else {                                                      \
+    dte_ctx.set_dst_addr(dst_addr0);                            \
+  }
 
 template <int BPE> struct UnsignedByBPE;
 template <> struct UnsignedByBPE<8> { using type = uint64_t; };

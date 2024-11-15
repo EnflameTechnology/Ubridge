@@ -24,6 +24,7 @@
 #include "tops/tops_runtime.h"
 #include "utils/utils.h"
 #include "utils/matmul_general.h"
+#include "utils/matmul_decoding.h"
 #include <acore_op.h>
 
 using namespace std;
@@ -548,14 +549,30 @@ __device__ __forceinline__ void matmul_kernel(lhs_t *lhs, rhs_t *rhs, rhs_t *out
   dte_b.destroy();
 }  // func
 
-template <typename lhs_t, typename rhs_t, int SUBM>
-__device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rhs_t *out,
+template <typename lhs_t, typename rhs_t, typename out_t, typename bias_t, typename scale_t, int SUBM>
+__device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, out_t *out, 
+      bias_t* bias, scale_t* scale, lhs_t* zeros,
       int input_dtype, int input_batch,
       int input_m, int input_k, int input_n,
       int lhs_multicore, int rhs_multicore, int batch_multicore,
       int lhs_transpose, int rhs_transpose,
       float alpha, float beta, float addmm_beta, 
-      int sip_m, int sip_k, int sip_n, int broadcasted_weight, char* buffer_sip) {
+      int sip_m, int sip_k, int sip_n, int broadcasted_weight, int group_size, char* buffer_sip) {
+  int quant_type = 0;
+  int enable_quant = 0;
+  int enable_bias = 0;
+
+  if (std::is_same<lhs_t, __fp16>::value ||
+      std::is_same<lhs_t, __bf16>::value ) {
+      if (std::is_same<rhs_t, uint8_t>::value) {
+        quant_type = 1; //QuantType::W4A16;
+        enable_quant = 1;
+      } else if (std::is_same<rhs_t, int8_t>::value) {
+        quant_type = 2; //QuantType::W8A16;
+        enable_quant = 1;
+      }
+  }
+
   int thread_num = GetThreadNum();
   int thread_id = GetThreadIdx();
   int sip_cnt_raw = thread_num;
@@ -565,9 +582,10 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
   tops_dte_ctx_t dte_lhs_trans[2];
   tops_dte_ctx_t dte_rhs_trans[2];
   tops_dte_ctx_t dte_out;
-  tops_dte_ctx_t dte_cache;
-  // tops_dte_ctx_t dte_scale;
-  // tops_dte_ctx_t dte_b;
+  tops_dte_ctx_t dte_bias;
+  tops_dte_ctx_t dte_scale;
+  tops_dte_ctx_t dte_zeros;
+
 
   dte_lhs[0].init();
   dte_lhs[1].init();
@@ -578,9 +596,10 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
   dte_rhs_trans[0].init();
   dte_rhs_trans[1].init();
   dte_out.init();
-  dte_cache.init();
-  // dte_bias.init();
-  // dte_scale.init();
+  dte_bias.init();
+  dte_scale.init();
+  dte_zeros.init();
+
 
   tops::event event_lhs0;
   tops::event event_lhs1;
@@ -594,8 +613,9 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
   tops::event event_bias1;
   tops::event event_scale0;
   tops::event event_scale1;
+  tops::event event_zeros0;
+  tops::event event_zeros1;
   tops::event e_out;
-  tops::event e_beta_output;
 
   auto data_type = input_dtype;
   auto weight_data_type = input_dtype;
@@ -609,20 +629,39 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
   auto transa = lhs_transpose;
   auto transb = rhs_transpose;
 
-  int enable_bias = 0;
   int enable_act = 0;
   auto subm_size = sip_m;
   auto subn_size = sip_n;
   auto subk_size = sip_k;
-  int enable_quant = 0;
+
+  group_size = group_size == -1 ? K : group_size;
+  int group_num = K / group_size;
+  int k_group_num = CeilDiv(subk_size, group_size);
+  if (group_size == -1) {
+    if (K < subk_size) {
+      k_group_num = 1;
+    }
+  }
+
 
   auto need_trans_lhs = transa;
   auto need_trans_rhs = transb;
+  int32_t rhs_k = K;
+  int32_t rhs_subk_size = subk_size;
+  if (quant_type == 1) {
+    rhs_subk_size = subk_size / 2;
+    if ((K % 128) == 0) {
+      rhs_k = K / 2;
+    } else {
+      rhs_k = K / 2 + 32;
+    }
+  }
+
+
   int32_t hbm_lhs_shape[4] = {1, B, M, K};
-  int32_t hbm_rhs_shape[4] = {1, broadcasted_weight > 0 ? 1 : B, K, N};
+  int32_t hbm_rhs_shape[4] = {1, broadcasted_weight > 0 ? 1 : B, rhs_k, N};
   int32_t hbm_out_shape[4] = {1, B, M, N};
   int32_t unit_n = 128;
-
   if (data_type == TOPSOP_DATA_FP32) {
     unit_n = 64;
   }
@@ -633,42 +672,51 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
 
   if (need_trans_rhs) {
     hbm_rhs_shape[2] = N;
-    hbm_rhs_shape[3] = K;
+    hbm_rhs_shape[3] = rhs_k;
   }
   int32_t sip_lhs_shape[4] = {1, 1, subm_size, subk_size};
-  int32_t sip_rhs_shape[4] = {1, 1, subk_size, subn_size};
+  int32_t sip_rhs_shape[4] = {1, 1, rhs_subk_size, subn_size};
   int32_t sip_out_shape[4] = {1, 1, subm_size, subn_size};
   int32_t sip_lhs_trans_shape[4] = {1, 1, subk_size, subm_size};
-  int32_t sip_rhs_trans_shape[4] = {1, 1, subn_size, subk_size};
+  int32_t sip_rhs_trans_shape[4] = {1, 1, subn_size, rhs_subk_size};
 
   int32_t sip_bias_shape[1] = {subn_size};
-  int32_t sip_scale_shape[1] = {subn_size};
+  int32_t sip_scale_shape[2] = {k_group_num, subn_size};
+  int32_t sip_zeros_shape[2] = {k_group_num, subn_size};
   int32_t sip_lhs_size = sip_lhs_shape[0] * sip_lhs_shape[1] *
                          sip_lhs_shape[2] * sip_lhs_shape[3] * sizeof(lhs_t);
   int32_t sip_rhs_size = sip_rhs_shape[0] * sip_rhs_shape[1] *
-                         sip_rhs_shape[2] * sip_rhs_shape[3] * sizeof(lhs_t);
+                         sip_rhs_shape[2] * sip_rhs_shape[3] * sizeof(rhs_t);
   int32_t sip_out_size = sip_out_shape[0] * sip_out_shape[1] *
                          sip_out_shape[2] * sip_out_shape[3] *
-                         sizeof(lhs_t);  // use fp32
+                         sizeof(out_t);  // use fp32
+  if (quant_type == 1) {
+    sip_rhs_size = sip_rhs_size * 2;
+  }
   int32_t sip_lhs_trans_size = sip_lhs_size;
   int32_t sip_rhs_trans_size = sip_rhs_size;
   int32_t sip_bias_size = 0;
   int32_t sip_scale_size = 0;
+  int32_t sip_zeros_size = 0;
   if (enable_bias) {
-    sip_bias_size = subn_size * sizeof(lhs_t);
+    sip_bias_size = subn_size * sizeof(bias_t);
   }
   if (enable_quant) {
-    sip_scale_size = subn_size * sizeof(lhs_t);
+    sip_scale_size = k_group_num * subn_size * sizeof(scale_t);
+  }
+  if (quant_type == 1) {
+    sip_scale_size = k_group_num * subn_size * sizeof(scale_t);
+    sip_zeros_size = k_group_num * subn_size * sizeof(scale_t);
   }
   tops::mdspan hbm_lhs(tops::Global, lhs, hbm_lhs_shape);
   tops::mdspan hbm_rhs(tops::Global, rhs, hbm_rhs_shape);
   tops::mdspan hbm_out(tops::Global, out, hbm_out_shape);
   // tops::mdspan hbm_pre_gelu(tops::Global, pre_gelu, hbm_out_shape);
-  // tops::mdspan hbm_bias(tops::Global, bias, N);
-  // tops::mdspan hbm_scale(tops::Global, scale, N);
+  tops::mdspan hbm_bias(tops::Global, bias, N);
+  tops::mdspan hbm_scale(tops::Global, scale, group_num, N);
+  tops::mdspan hbm_zeros(tops::Global, zeros, group_num, N);
   // __local__ __valigned__ char buffer_sip[VDMEM_SIZE];
   // workspace is 2KB
-
   int* local_workspace =
       reinterpret_cast<int*>(reinterpret_cast<char*>(buffer_sip));
   lhs_t* buffer_sip_lhs0_trans =
@@ -688,56 +736,68 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
   lhs_t* buffer_sip_lhs1 =
       reinterpret_cast<lhs_t*>((reinterpret_cast<char*>(buffer_sip_lhs0)) +
                                TEMPLATE_ALIGN_UP(sip_lhs_size, L1_ALIGN_SIZE));
-  rhs_t* buffer_sip_rhs0 =
-      reinterpret_cast<rhs_t*>((reinterpret_cast<char*>(buffer_sip_lhs1)) +
+  out_t* buffer_private_out0 =
+      reinterpret_cast<out_t*>((reinterpret_cast<char*>(buffer_sip_lhs1)) +
                                TEMPLATE_ALIGN_UP(sip_lhs_size, L1_ALIGN_SIZE));
+  out_t* buffer_private_out1 =
+      reinterpret_cast<out_t*>((reinterpret_cast<char*>(buffer_private_out0)) +
+                               TEMPLATE_ALIGN_UP(sip_out_size, L1_ALIGN_SIZE));
+  bias_t* buffer_sip_bias0 =
+      reinterpret_cast<bias_t*>((reinterpret_cast<char*>(buffer_private_out1)) +
+                               TEMPLATE_ALIGN_UP(sip_out_size, L1_ALIGN_SIZE));
+  bias_t* buffer_sip_bias1 =
+      reinterpret_cast<bias_t*>((reinterpret_cast<char*>(buffer_sip_bias0)) +
+                               TEMPLATE_ALIGN_UP(sip_bias_size, L1_ALIGN_SIZE));
+  scale_t* buffer_sip_scale0 =
+      reinterpret_cast<scale_t*>((reinterpret_cast<char*>(buffer_sip_bias1)) +
+                               TEMPLATE_ALIGN_UP(sip_bias_size, L1_ALIGN_SIZE));
+  scale_t* buffer_sip_scale1 = reinterpret_cast<bias_t*>(
+      (reinterpret_cast<char*>(buffer_sip_scale0)) +
+      TEMPLATE_ALIGN_UP(sip_scale_size, L1_ALIGN_SIZE));
+  scale_t* buffer_sip_zeros0 = reinterpret_cast<scale_t*>(
+      (reinterpret_cast<char*>(buffer_sip_scale1)) +
+      TEMPLATE_ALIGN_UP(sip_scale_size, L1_ALIGN_SIZE));
+  scale_t* buffer_sip_zeros1 = reinterpret_cast<scale_t*>(
+      (reinterpret_cast<char*>(buffer_sip_zeros0)) +
+      TEMPLATE_ALIGN_UP(sip_zeros_size, L1_ALIGN_SIZE));
+  rhs_t* buffer_sip_rhs0 = reinterpret_cast<rhs_t*>(
+      (reinterpret_cast<char*>(buffer_sip_zeros1)) +
+      TEMPLATE_ALIGN_UP(sip_zeros_size, L1_ALIGN_SIZE));
   rhs_t* buffer_sip_rhs1 =
       reinterpret_cast<rhs_t*>((reinterpret_cast<char*>(buffer_sip_rhs0)) +
                                TEMPLATE_ALIGN_UP(sip_rhs_size, L1_ALIGN_SIZE));
-  lhs_t* buffer_private_out0 =
-      reinterpret_cast<lhs_t*>((reinterpret_cast<char*>(buffer_sip_rhs1)) +
+  rhs_t* private_rhs_requant_buff =
+      reinterpret_cast<rhs_t*>((reinterpret_cast<char*>(buffer_sip_rhs1)) +
                                TEMPLATE_ALIGN_UP(sip_rhs_size, L1_ALIGN_SIZE));
-  lhs_t* buffer_private_out1 =
-      reinterpret_cast<lhs_t*>((reinterpret_cast<char*>(buffer_private_out0)) +
-                               TEMPLATE_ALIGN_UP(sip_out_size, L1_ALIGN_SIZE));
-  // lhs_t* buffer_sip_bias0 =
-  //     reinterpret_cast<lhs_t*>((reinterpret_cast<char*>(buffer_private_out1)) +
-  //                              TEMPLATE_ALIGN_UP(sip_out_size, L1_ALIGN_SIZE));
-  // lhs_t* buffer_sip_bias1 =
-  //     reinterpret_cast<lhs_t*>((reinterpret_cast<char*>(buffer_sip_bias0)) +
-  //                              TEMPLATE_ALIGN_UP(sip_bias_size, L1_ALIGN_SIZE));
-  // lhs_t* buffer_sip_scale0 =
-  //     reinterpret_cast<lhs_t*>((reinterpret_cast<char*>(buffer_sip_bias1)) +
-  //                              TEMPLATE_ALIGN_UP(sip_bias_size, L1_ALIGN_SIZE));
-  // lhs_t* buffer_sip_scale1 = reinterpret_cast<lhs_t*>(
-  //     (reinterpret_cast<char*>(buffer_sip_scale0)) +
-  //     TEMPLATE_ALIGN_UP(sip_scale_size, L1_ALIGN_SIZE));
-  int weight_offset = 0;
-  if ((data_type == TOPSOP_DATA_FP16) && (weight_data_type == TOPSOP_DATA_I8)) {
-    weight_offset = subk_size * subn_size;
-  }
+
   tops::mdspan private_lhs0(tops::Private, buffer_sip_lhs0, sip_lhs_shape);
   tops::mdspan private_lhs1(tops::Private, buffer_sip_lhs1, sip_lhs_shape);
-  tops::mdspan private_rhs0(tops::Private, buffer_sip_rhs0 + weight_offset,
+  tops::mdspan private_rhs0(tops::Private, buffer_sip_rhs0,
                             sip_rhs_shape);
-  tops::mdspan private_rhs1(tops::Private, buffer_sip_rhs1 + weight_offset,
+  tops::mdspan private_rhs1(tops::Private, buffer_sip_rhs1,
                             sip_rhs_shape);
   tops::mdspan private_lhs0_trans(tops::Private, buffer_sip_lhs0_trans,
                                   sip_lhs_trans_shape);
   tops::mdspan private_lhs1_trans(tops::Private, buffer_sip_lhs1_trans,
                                   sip_lhs_trans_shape);
   tops::mdspan private_rhs0_trans(tops::Private,
-                                  buffer_sip_rhs0_trans + weight_offset,
+                                  buffer_sip_rhs0_trans,
                                   sip_rhs_trans_shape);
   tops::mdspan private_rhs1_trans(tops::Private,
-                                  buffer_sip_rhs1_trans + weight_offset,
+                                  buffer_sip_rhs1_trans,
                                   sip_rhs_trans_shape);
   tops::mdspan private_out0(tops::Private, buffer_private_out0, sip_out_shape);
   tops::mdspan private_out1(tops::Private, buffer_private_out1, sip_out_shape);
-  // tops::mdspan private_bias0(tops::Private, buffer_sip_bias0, subn_size);
-  // tops::mdspan private_bias1(tops::Private, buffer_sip_bias1, subn_size);
-  // tops::mdspan private_scale0(tops::Private, buffer_sip_scale0, subn_size);
-  // tops::mdspan private_scale1(tops::Private, buffer_sip_scale1, subn_size);
+  tops::mdspan private_bias0(tops::Private, buffer_sip_bias0, subn_size);
+  tops::mdspan private_bias1(tops::Private, buffer_sip_bias1, subn_size);
+  tops::mdspan private_scale0(tops::Private, buffer_sip_scale0, k_group_num,
+                              subn_size);
+  tops::mdspan private_scale1(tops::Private, buffer_sip_scale1, k_group_num,
+                              subn_size);
+  tops::mdspan private_zeros0(tops::Private, buffer_sip_zeros0, k_group_num,
+                              subn_size);
+  tops::mdspan private_zeros1(tops::Private, buffer_sip_zeros1, k_group_num,
+                              subn_size);
   auto M_SIP_LOOP_CNT_TASKS = M / subm_size + (M % subm_size > 0 ? 1 : 0);
   auto N_SIP_LOOP_CNT_TASKS = N / subn_size + (N % subn_size > 0 ? 1 : 0);
   auto subk_count_each_thread = K / subk_size + (K % subk_size > 0 ? 1 : 0);
@@ -772,7 +832,7 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
   auto subn_count_each_thread =
       is_rhs_split == 1 ? loop_len_this_sip : N_SIP_LOOP_CNT_TASKS;
   auto Batch_SIP_LOOP_CNT = (is_batch_split == 1) ? loop_len_this_sip : B;
-  int vab_offset = (enable_quant == 1) ? 256 : 0;
+  int vab_offset = (enable_quant == 1) ? 512 : 0;
   if (thread_idx < sip_num_used) {
     if (need_trans_lhs) {
       dte_lhs_trans[0].connect(dte_lhs[0]);
@@ -810,14 +870,18 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
                                        {0, r_batch_offset, 0, n_hbm_offset});
       }
       // load bias, scale
-      // if (enable_bias) {
-      //   event_bias0 = tops::slice_async(dte_bias, private_bias0, hbm_bias,
-      //                                   {n_hbm_offset});
-      // }
-      // if (enable_quant) {
-      //   event_scale0 = tops::slice_async(dte_scale, private_scale0, hbm_scale,
-      //                                    {n_hbm_offset});
-      // }
+      if (enable_bias) {
+        event_bias0 = tops::slice_async(dte_bias, private_bias0, hbm_bias,
+                                        {n_hbm_offset});
+      }
+      if (enable_quant) {
+        event_scale0 = tops::slice_async(dte_scale, private_scale0, hbm_scale,
+                                         {0, n_hbm_offset});
+        if (quant_type == 1) {
+          event_zeros0 = tops::slice_async(dte_zeros, private_zeros0, hbm_zeros,
+                                           {0, n_hbm_offset});
+        }
+      }
       int next_n_sip_idx_temp, next_subm_index_each_thread, next_m_sip_idx_temp;
       for (auto subm_index_each_thread = 0;
            subm_index_each_thread < subm_count_each_thread;
@@ -860,7 +924,6 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
                     subk_count_each_thread +
                 subn_index_each_thread * subk_count_each_thread +
                 subk_index_each_thread;
-
             auto next_private_lhs =
                 (global_loop_index % 2) ? &private_lhs0 : &private_lhs1;
             auto next_private_rhs =
@@ -874,10 +937,12 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
             auto next_private_rhs_trans = (global_loop_index % 2) == 1
                                               ? &private_rhs0_trans
                                               : &private_rhs1_trans;
-            // auto next_private_bias =
-            //     (global_loop_index % 2) ? &private_bias0 : &private_bias1;
-            // auto next_private_scale =
-            //     (global_loop_index % 2) ? &private_scale0 : &private_scale1;
+            auto next_private_bias =
+                (global_loop_index % 2) ? &private_bias0 : &private_bias1;
+            auto next_private_scale =
+                (global_loop_index % 2) ? &private_scale0 : &private_scale1;
+            auto next_private_zeros =
+                (global_loop_index % 2) ? &private_zeros0 : &private_zeros1;
 
             int next_subk_index_each_thread, next_subn_index_each_thread,
                 next_subm_index_each_thread;
@@ -896,10 +961,10 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
                 next_subm_index_each_thread = subm_index_each_thread + 1;
               }
             }
-
             auto next_subk_offset_global =
                 next_subk_index_each_thread * subk_size;
-
+            auto next_rhs_subk_offset_global =
+                next_subk_index_each_thread * rhs_subk_size;
             auto next_subn_offset_global =
                 is_rhs_split ? ((next_subn_index_each_thread *
                                      rhs_loop_step_each_thread +
@@ -926,10 +991,14 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
             }
             auto cur_event_scale =
                 (global_loop_index % 2) == 0 ? event_scale0 : event_scale1;
+            auto cur_event_zeros =
+                (global_loop_index % 2) == 0 ? event_zeros0 : event_zeros1;
             if (enable_quant) {
               tops::wait(cur_event_scale);
+              if (quant_type == 1) {
+                tops::wait(cur_event_zeros);
+              }
             }
-
             auto next_event_lhs =
                 (global_loop_index % 2) == 1 ? event_lhs0 : event_lhs1;
             auto next_event_rhs =
@@ -938,7 +1007,8 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
                 (global_loop_index % 2) == 1 ? event_bias0 : event_bias1;
             auto next_event_scale =
                 (global_loop_index % 2) == 1 ? event_scale0 : event_scale1;
-
+            auto next_event_zeros =
+                (global_loop_index % 2) == 1 ? event_zeros0 : event_zeros1;
             if ((next_subk_offset_global < K) &&
                 (next_subn_offset_global < N) &&
                 (next_subm_offset_global < M)) {
@@ -961,26 +1031,33 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
                 e_rhs_trans_0 = tops::slice_async(
                     dte_rhs_trans[0], *next_private_rhs_trans, hbm_rhs,
                     {0, r_batch_offset, next_subn_offset_global,
-                     next_subk_offset_global});
+                     next_rhs_subk_offset_global});
                 next_event_rhs = tops::transpose_async(
                     dte_rhs[0], *next_private_rhs, *next_private_rhs_trans,
                     {0, 1, 3, 2});
               } else {
-                next_event_rhs =
-                    tops::slice_async(dte_rhs[0], *next_private_rhs, hbm_rhs,
-                                      {0, r_batch_offset, next_subk_offset_global,
-                                       next_subn_offset_global});
+                next_event_rhs = tops::slice_async(
+                    dte_rhs[0], *next_private_rhs, hbm_rhs,
+                    {0, r_batch_offset, next_rhs_subk_offset_global,
+                     next_subn_offset_global});
               }
-              // if (enable_bias) {
-              //   next_event_bias =
-              //       tops::slice_async(dte_bias, *next_private_bias, hbm_bias,
-              //                         {next_subn_offset_global});
-              // }
-              // if (enable_quant) {
-              //   next_event_scale =
-              //       tops::slice_async(dte_scale, *next_private_scale, hbm_scale,
-              //                         {next_subn_offset_global});
-              // }
+              if (enable_bias) {
+                next_event_bias =
+                    tops::slice_async(dte_bias, *next_private_bias, hbm_bias,
+                                      {next_subn_offset_global});
+              }
+              if (enable_quant) {
+                next_event_scale =
+                    tops::slice_async(dte_scale, *next_private_scale, hbm_scale,
+                                      {next_subk_offset_global / group_size,
+                                       next_subn_offset_global});
+                if (quant_type == 1) {
+                next_event_zeros =
+                    tops::slice_async(dte_zeros, *next_private_zeros, hbm_zeros,
+                                      {next_subk_offset_global / group_size,
+                                       next_subn_offset_global});
+                }
+              }
             }
             auto cur_private_lhs_ptr =
                 ((global_loop_index % 2) == 0 ? buffer_sip_lhs0
@@ -988,32 +1065,66 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
             auto cur_private_rhs_ptr = (global_loop_index % 2) == 0
                                            ? buffer_sip_rhs0
                                            : buffer_sip_rhs1;
-            // auto cur_private_bias_ptr = (global_loop_index % 2) == 0
-            //                                 ? buffer_sip_bias0
-            //                                 : buffer_sip_bias1;
-            // auto cur_private_scale_ptr = (global_loop_index % 2) == 0
-            //                                  ? buffer_sip_scale0
-            //                                  : buffer_sip_scale1;
-            // if (weight_data_type == TOPSOP_DATA_I8) {
-            //   mul<1>(reinterpret_cast<__fp16*>(cur_private_rhs_ptr),
-            //          reinterpret_cast<char*>(cur_private_rhs_ptr +
-            //                                  subk_size * subn_size),
-            //          reinterpret_cast<__fp16*>(cur_private_scale_ptr),
-            //          subk_size, subn_size);
-            // }
+            auto cur_private_bias_ptr = (global_loop_index % 2) == 0
+                                            ? buffer_sip_bias0
+                                            : buffer_sip_bias1;
+            auto cur_private_scale_ptr = (global_loop_index % 2) == 0
+                                             ? buffer_sip_scale0
+                                             : buffer_sip_scale1;
+            auto cur_private_zeros_ptr = (global_loop_index % 2) == 0
+                                             ? buffer_sip_zeros0
+                                             : buffer_sip_zeros1;
+            if (quant_type == 1 || quant_type == 2) {
+              if (quant_type == 1) {
+                dequant(reinterpret_cast<lhs_t*>(private_rhs_requant_buff),
+                        reinterpret_cast<unsigned char*>(cur_private_rhs_ptr),
+                        reinterpret_cast<lhs_t*>(cur_private_scale_ptr),
+                        reinterpret_cast<lhs_t*>(cur_private_zeros_ptr),
+                        rhs_subk_size, subn_size, group_size);
+              } else {
+                for (int group_idx = 0; group_idx < k_group_num; group_idx++) {
+                  int group_k = std::min(group_size, subk_size);
+                  if (group_size == -1) {
+                    if (K < subk_size) {
+                      group_k = subk_size;
+                    }
+                  }
+                lhs_t* group_dequant_rhs_ptr =
+                    reinterpret_cast<lhs_t*>(private_rhs_requant_buff) +
+                    group_idx * group_k * subn_size;
+                char* group_rhs_ptr =
+                    reinterpret_cast<char*>(cur_private_rhs_ptr) +
+                    group_idx * group_k * subn_size;
+                scale_t* group_scale_ptr =
+                    cur_private_scale_ptr + group_idx * subn_size;
+                mul_not_inplace<1, lhs_t, char, lhs_t>(
+                  reinterpret_cast<lhs_t*>(group_dequant_rhs_ptr),
+                  reinterpret_cast<char*>(group_rhs_ptr),
+                  reinterpret_cast<lhs_t*>(group_scale_ptr), group_k,
+                  subn_size);
+                }
+              }
+            }
+
             auto store_flag =
                 subk_index_each_thread + 1 == subk_count_each_thread ? 1 : 0;
             int acc_flag = (subk_index_each_thread == 0) ? 0 : 1;
-            // using u_t = typename UnderlyingType<lhs_t>::type;
-            lhs_t* dst_ptr = reinterpret_cast<lhs_t*>(cur_private_out_ptr);
+
+            out_t* dst_ptr = reinterpret_cast<out_t*>(cur_private_out_ptr);
             lhs_t* lhs_ptr = reinterpret_cast<lhs_t*>(cur_private_lhs_ptr);
-            rhs_t* rhs_ptr = reinterpret_cast<rhs_t*>(cur_private_rhs_ptr);
-            // u_t* bias_ptr = reinterpret_cast<u_t*>(cur_private_bias_ptr);
-            matmul<SUBM>(dst_ptr, lhs_ptr, rhs_ptr, rhs_ptr, local_workspace,
-                         subk_size, subn_size, acc_flag, store_flag,
-                         enable_bias, vab_offset, launch_times);
+            lhs_t* rhs_ptr =
+                reinterpret_cast<lhs_t*>(((quant_type == 1) ||
+                                            (quant_type == 2))
+                                               ? private_rhs_requant_buff
+                                               : cur_private_rhs_ptr);
+            bias_t* bias_ptr =
+                reinterpret_cast<bias_t*>(cur_private_bias_ptr);
+            matmul<SUBM>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
+                          subk_size, subn_size, acc_flag, store_flag, enable_bias,
+                          vab_offset, launch_times);
             launch_times += 1;
           }  // K loop
+          __dtu_movs_barrier_all();
           e_out = tops::deslice_async(
               dte_out, hbm_out, *cur_private_out,
               {0, batch_offset, subm_offset_global, subn_offset_global});
@@ -1032,36 +1143,34 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, rh
   dte_rhs_trans[0].destroy();
   dte_rhs_trans[1].destroy();
   dte_out.destroy();
-  dte_cache.destroy();
-  // dte_bias.destroy();
-  // dte_scale.destroy();
+  dte_bias.destroy();
+  dte_scale.destroy();
+  dte_zeros.destroy();
 }  // func
 
+
 #define MATMUL_OP(TYPE, FN_NAME) \
-extern "C" __global__ void FN_NAME(TYPE *in_a, TYPE *in_b, TYPE *out, \
+extern "C" __global__ void FN_NAME(TYPE *in_a, TYPE *in_b, TYPE *out,\
                                             int input_dtype, int input_batch,\
                                             int input_m, int input_k, int input_n,\
                                             int lhs_multicore, int rhs_multicore, int batch_multicore,\
                                             int lhs_transpose, int rhs_transpose,\
                                             float alpha, float beta, float addmm_beta, \
                                             int sip_m, int sip_k, int sip_n, int broadcasted_weight) {\
-    __local__ __valigned__ char buffer_sip[VDMEM_SIZE];\
-    if (sip_m % 128 == 0 || input_m % 128 == 0)\
-      matmul_kernel_aligned<TYPE, TYPE, 128>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);\
-    else if (sip_m % 64 == 0 || input_m % 64 == 0)\
-      matmul_kernel_aligned<TYPE, TYPE, 64>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);\
-    else if (sip_m % 32 == 0 || input_m % 32 == 0)\
-      matmul_kernel_aligned<TYPE, TYPE, 32>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);\
-    else\
+    __local__ __valigned__ char buffer_sip[VDMEM_VALID_SIZE];\
+    if (sip_m % 128 == 0)\
+      matmul_kernel_aligned<TYPE, TYPE, TYPE, TYPE, TYPE, 128>(in_a, in_b, out, out, out, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, -1, buffer_sip);\
+    else if (sip_m % 64 == 0)\
+      matmul_kernel_aligned<TYPE, TYPE, TYPE, TYPE, TYPE, 64>(in_a, in_b, out, out, out, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, -1, buffer_sip);\
+    else if (sip_m % 32 == 0) \
+      matmul_kernel_aligned<TYPE, TYPE, TYPE, TYPE, TYPE, 32>(in_a, in_b, out, out, out, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, -1, buffer_sip);\
+    else \
       matmul_kernel<TYPE, TYPE>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
         lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);\
 }\
-
-MATMUL_OP(__fp16, matmul_f16)
-MATMUL_OP(__bf16, matmul_bf16)
 
 
 extern "C" __global__ void matmul_f32(float *in_a, float *in_b, float *out, 
@@ -1071,23 +1180,42 @@ extern "C" __global__ void matmul_f32(float *in_a, float *in_b, float *out,
                                             int lhs_transpose, int rhs_transpose,
                                             float alpha, float beta, float addmm_beta, 
                                             int sip_m, int sip_k, int sip_n, int broadcasted_weight) {
-    __local__ __valigned__ char buffer_sip[VDMEM_SIZE];
+    __local__ __valigned__ char buffer_sip[VDMEM_VALID_SIZE];
     matmul_kernel<float, float>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
         lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);
 }
 
-extern "C" __global__ void matmul_i8(int8_t *in_a, int8_t *in_b, int8_t *out, 
-                                            int input_dtype, int input_batch,
-                                            int input_m, int input_k, int input_n,
-                                            int lhs_multicore, int rhs_multicore, int batch_multicore,
-                                            int lhs_transpose, int rhs_transpose,
-                                            float alpha, float beta, float addmm_beta, 
-                                            int sip_m, int sip_k, int sip_n, int broadcasted_weight) {
-    __local__ __valigned__ char buffer_sip[VDMEM_SIZE];
-    matmul_kernel<int8_t, int8_t>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, 
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);
-}
+MATMUL_OP(__fp16, matmul_f16)
+MATMUL_OP(__bf16, matmul_bf16)
 
-int main() {
+#define MATMUL_OP_QUANT(TYPE, TYPE_WEIGHT, TYPE_SCALE, FN_NAME) \
+extern "C" __global__ void FN_NAME(TYPE *in_a, TYPE_WEIGHT *in_b, TYPE *out, \
+                                            TYPE *scales, TYPE *zeros, \
+                                            int input_dtype, int input_batch,\
+                                            int input_m, int input_k, int input_n,\
+                                            int lhs_multicore, int rhs_multicore, int batch_multicore,\
+                                            int lhs_transpose, int rhs_transpose,\
+                                            float alpha, float beta, float addmm_beta, \
+                                            int sip_m, int sip_k, int sip_n, int broadcasted_weight, int group_size) {\
+    __local__ __valigned__ char buffer_sip[VDMEM_VALID_SIZE];\
+    if (sip_m % 128 == 0)\
+      matmul_kernel_aligned<TYPE, TYPE_WEIGHT, TYPE, TYPE, TYPE, 128>(in_a, in_b, out, out, scales, zeros, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, group_size, buffer_sip);\
+    else if (sip_m % 64 == 0)\
+      matmul_kernel_aligned<TYPE, TYPE_WEIGHT, TYPE, TYPE, TYPE, 64>(in_a, in_b, out, out, scales, zeros, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, group_size, buffer_sip);\
+    else if (sip_m % 32 == 0) \
+      matmul_kernel_aligned<TYPE, TYPE_WEIGHT, TYPE, TYPE, TYPE, 32>(in_a, in_b, out, out, scales, zeros, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, group_size, buffer_sip);\
+    else \
+      matmul_kernel_lhs_l1<TYPE, TYPE_WEIGHT, TYPE, TYPE, TYPE>(in_a, in_b, out, out, scales, zeros, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, group_size, buffer_sip);\
+}\
 
-}
+MATMUL_OP_QUANT(__fp16, uint8_t, __fp16, matmul_f16_4bit)
+MATMUL_OP_QUANT(__bf16, uint8_t, __bf16, matmul_bf16_4bit)
+
+MATMUL_OP_QUANT(__fp16, int8_t, __fp16, matmul_f16_8bit)
+MATMUL_OP_QUANT(__bf16, int8_t, __bf16, matmul_bf16_8bit)
+
+int main() {}
