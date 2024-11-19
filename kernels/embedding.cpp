@@ -144,13 +144,12 @@ __device__ __forceinline__  void apply_rotary_qkv_batch(T *q_arr, T *k_arr, T *c
 }
 
 template <typename T>
-__device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index_pos, int batch,
+__device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int* index_positions, int batch,
     int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
     int q_stride = q_heads * hidden_size;
     int k_stride = k_heads * hidden_size;
     int q_stride_whole = q_stride * num_tokens;
     int k_stride_whole = k_stride * num_tokens;
-    T* cos_sin_cur = cos_sin + index_pos * cos_sin_stride;
     if (split_dim == hidden_size || split_dim <= 0 || split_dim > hidden_size) {
       split_dim = hidden_size;
     }
@@ -176,7 +175,10 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
     __local__ __valigned__ float bufCosSinf32[1024 * 48];
     __local__ __valigned__ float bufQueryf32[1024 * 48];
     __local__ __valigned__ float bufKeyf32[1024 * 48];
+    __local__ int positions[256];
 
+    tops::memcpy(ctx, tops::mdspan(tops::Private, positions, batch), 
+            tops::mdspan(tops::Global, index_positions, batch));
 
     tops::mdspan cos_sin_l1(tops::Private, bufCosSin, hidden_size);
     tops::mdspan query_l1(tops::Private, bufQuery, q_stride);
@@ -195,6 +197,7 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
       int idx = thread_id * THREAD_STEP + p;
       if (idx >= N) break;
       int batch_idx = idx / num_tokens;
+      T* cos_sin_cur = cos_sin + positions[batch_idx] * cos_sin_stride;
       int i = idx % num_tokens;
       if (i < num_tokens) {
         auto query_sub0 = query + batch_idx * q_stride_whole + i * q_stride;
@@ -247,24 +250,24 @@ __device__ void rope(T* query, T* key, T* cos_sin, int cos_sin_stride, int index
     }  // loop in num_tokens
 }
 
-extern "C" __global__ void  rope_f32(float *query, float *key, float *cos_sin, int cos_sin_stride, int index_pos,
+extern "C" __global__ void  rope_f32(float *query, float *key, float *cos_sin, int cos_sin_stride, int* index_positions,
                       int batch, int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
       rope<float>(
-        query, key, cos_sin, cos_sin_stride, index_pos, batch,
+        query, key, cos_sin, cos_sin_stride, index_positions, batch,
         num_tokens, q_heads, k_heads, hidden_size, split_dim, gpt_geox);
 }
 
-extern "C" __global__ void  rope_f16(__fp16*query, __fp16 *key, __fp16 *cos_sin, int cos_sin_stride, int index_pos,
+extern "C" __global__ void  rope_f16(__fp16*query, __fp16 *key, __fp16 *cos_sin, int cos_sin_stride, int* index_positions,
                       int batch, int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
     rope<__fp16>(
-      query, key, cos_sin, cos_sin_stride, index_pos, batch,
+      query, key, cos_sin, cos_sin_stride, index_positions, batch,
       num_tokens, q_heads, k_heads, hidden_size, split_dim, gpt_geox);
 }
 
-extern "C" __global__ void  rope_bf16(__bf16 *query, __bf16 *key, __bf16 *cos_sin, int cos_sin_stride, int index_pos,
+extern "C" __global__ void  rope_bf16(__bf16 *query, __bf16 *key, __bf16 *cos_sin, int cos_sin_stride, int* index_positions,
                        int batch, int num_tokens, int q_heads, int k_heads, int hidden_size, int split_dim, int gpt_geox) {
     rope<__bf16>(
-      query, key, cos_sin, cos_sin_stride, index_pos, batch,
+      query, key, cos_sin, cos_sin_stride, index_positions, batch,
       num_tokens, q_heads, k_heads, hidden_size, split_dim, gpt_geox);
 }
 
