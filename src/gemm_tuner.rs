@@ -531,9 +531,9 @@ impl AtenGemmTuner {
 
         let sum_va_mem = |m: i64, n: i64, bpe: i64| -> i64 { (m * n * 2) * bpe };
 
-        const UNIT_SIP_M: i64 = 64;
+        let UNIT_SIP_M = if info.M > 32 { 64 } else { 32 };
         const UNIT_SIP_N: i64 = 128;
-        const UNIT_SIP_K: i64 = 64;
+        let UNIT_SIP_K = if info.M > 32 { 64 } else { 128 };
         const BPE: i64 = 2;
         let sip_cnt = 12; //todo!()
         let l1_mem = 1536 * 1024 - 1024;

@@ -277,7 +277,6 @@ __device__ void transpose_kernel(T* in, T* out, const size_t in_size, const size
     }
     
     bool cacheable_l1 = in_size * sizeof(T) * 2 < COPY_L1SIZE;
-    bool cacheable_l2 = in_size * sizeof(T) * 2 < SHARE_BUFFER_SIZE;
 
     T* src_cached = reinterpret_cast<T*>(raw_cache);
     if (cacheable_l1){
@@ -288,13 +287,6 @@ __device__ void transpose_kernel(T* in, T* out, const size_t in_size, const size
       tops::transpose(ctx, tops::mdspan(tops::Private, dst_cached, dst_shape), tops::mdspan(tops::Private, buffer, src_shape), dst_layout);
       tops::deslice(ctx, tops::mdspan(tops::Global, out, out_size), tops::mdspan(tops::Private, dst_cached, out_size), 0);
 
-    } else if (cacheable_l2) {
-      T* dst_cached = reinterpret_cast<T*>(src_cached + in_size);
-      tops::memcpy(ctx, 
-        tops::mdspan(tops::Shared, src_cached, in_size),
-        tops::mdspan(tops::Global, in, in_size));
-      tops::transpose(ctx, tops::mdspan(tops::Shared, dst_cached, dst_shape), tops::mdspan(tops::Shared, src_cached, src_shape), dst_layout);
-      tops::deslice(ctx, tops::mdspan(tops::Global, out, out_size), tops::mdspan(tops::Shared, dst_cached, out_size), 0);
     } else {
       tops::mdspan src_mem(tops::Global, in, src_shape);
       tops::mdspan dst_mem(tops::Global, out, dst_shape);
@@ -464,7 +456,8 @@ extern "C" __global__ void FN_NAME( \
 UNARY_COPY_OP(ucopy_multithread_cache, __bf16, vbfloat, ucopy_bf16, 2) 
 UNARY_COPY_OP(ucopy_multithread_cache, __fp16, vhalf, ucopy_f16, 2)
 UNARY_COPY_OP(ucopy_multithread_cache, float, vfloat, ucopy_f32, 4)
-UNARY_COPY_OP(ucopy_multithread_cache, u_int8_t, vuchar, ucopy_u8, 2)
+UNARY_COPY_OP(ucopy_multithread_cache, u_int8_t, vuchar, ucopy_u8, 1)
+UNARY_COPY_OP(ucopy_multithread_cache, char, vchar, ucopy_i8, 1)
 UNARY_COPY_OP(ucopy_multithread_cache, u_int32_t, vuint, ucopy_u32, 4)
 UNARY_COPY_OP(ucopy_multithread_cache, double, vfloatx2, ucopy_f64, 8) //remove this for gather copy
 

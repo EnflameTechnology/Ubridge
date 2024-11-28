@@ -626,8 +626,6 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, ou
   auto is_lhs_split = lhs_multicore;
   auto is_rhs_split = rhs_multicore;
   auto is_batch_split = batch_multicore;
-  auto transa = lhs_transpose;
-  auto transb = rhs_transpose;
 
   int enable_act = 0;
   auto subm_size = sip_m;
@@ -644,8 +642,8 @@ __device__ __forceinline__ void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, ou
   }
 
 
-  auto need_trans_lhs = transa;
-  auto need_trans_rhs = transb;
+  auto need_trans_lhs = lhs_transpose;
+  auto need_trans_rhs = rhs_transpose;
   int32_t rhs_k = K;
   int32_t rhs_subk_size = subk_size;
   if (quant_type == 1) {
@@ -1198,6 +1196,7 @@ extern "C" __global__ void FN_NAME(TYPE *in_a, TYPE_WEIGHT *in_b, TYPE *out, \
                                             float alpha, float beta, float addmm_beta, \
                                             int sip_m, int sip_k, int sip_n, int broadcasted_weight, int group_size) {\
     __local__ __valigned__ char buffer_sip[VDMEM_VALID_SIZE];\
+    __shared__ char l2_buffer[SHARE_BUFFER_SIZE];\
     if (sip_m % 128 == 0)\
       matmul_kernel_aligned<TYPE, TYPE_WEIGHT, TYPE, TYPE, TYPE, 128>(in_a, in_b, out, out, scales, zeros, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
         lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, group_size, buffer_sip);\
@@ -1209,7 +1208,7 @@ extern "C" __global__ void FN_NAME(TYPE *in_a, TYPE_WEIGHT *in_b, TYPE *out, \
         lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, group_size, buffer_sip);\
     else \
       matmul_kernel_lhs_l1<TYPE, TYPE_WEIGHT, TYPE, TYPE, TYPE>(in_a, in_b, out, out, scales, zeros, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, group_size, buffer_sip);\
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, group_size, buffer_sip, l2_buffer);\
 }\
 
 MATMUL_OP_QUANT(__fp16, uint8_t, __fp16, matmul_f16_4bit)

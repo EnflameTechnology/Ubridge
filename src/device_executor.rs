@@ -355,6 +355,7 @@ impl DeviceExecutor {
         let copy_functions = vec![
             "ucopy_bf16",
             "ucopy_u8",
+            "ucopy_i8",
             "ucopy_u32",
             "ucopy_f64",
             "ucopy_f16",

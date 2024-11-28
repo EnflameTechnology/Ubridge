@@ -17,7 +17,7 @@ __device__ __forceinline__ void matmul_kernel_lhs_l1(
     int input_n, int lhs_multicore, int rhs_multicore, int batch_multicore,
     int lhs_transpose, int rhs_transpose, float alpha, float beta,
     float addmm_beta, int sip_m, int sip_k, int sip_n, int broadcasted_weight,
-    int group_size, char *l1_buffer) {
+    int group_size, char *l1_buffer, char* l2_buffer) {
 
   const int thread_id = GetThreadIdxInBlock();
   const int thread_num = GetThreadNum();
@@ -96,7 +96,7 @@ __device__ __forceinline__ void matmul_kernel_lhs_l1(
     l2_lhs_shape0[2] = M_align;
   }
 
-  __shared__ char l2_buffer[SHARE_BUFFER_SIZE];
+  // __shared__ char l2_buffer[SHARE_BUFFER_SIZE];
 
   // lhs -> L2 -> L1
   char *l2_lhs_ptr = reinterpret_cast<char *>(l2_buffer);
@@ -459,19 +459,11 @@ __device__ __forceinline__ void matmul_kernel_lhs_l1(
                     reinterpret_cast<char *>(rhs_ptr) + k_group_idx * subn_size;
                 char *scale_buff = reinterpret_cast<char *>(scale_ptr) +
                                    k_gnum_idx * subn_size * sizeof(scale_t);
-                if (is_same<lhs_t, tops::half>()) {
-                  mul_not_inplace<1, __fp16, char, __fp16>(
-                      reinterpret_cast<__fp16 *>(requant_buff),
-                      reinterpret_cast<char *>(rhs_buff),
-                      reinterpret_cast<__fp16 *>(scale_buff), k_loop,
-                      subn_size);
-                } else if (is_same<lhs_t, tops::bfloat>()) {
-                  mul_not_inplace<1, __bf16, char, __bf16>(
-                      reinterpret_cast<__bf16 *>(requant_buff),
-                      reinterpret_cast<char *>(rhs_buff),
-                      reinterpret_cast<__bf16 *>(scale_buff), k_loop,
-                      subn_size);
-                }
+                mul_not_inplace<1, lhs_t, char, lhs_t>(
+                    reinterpret_cast<lhs_t *>(requant_buff),
+                    reinterpret_cast<char *>(rhs_buff),
+                    reinterpret_cast<lhs_t *>(scale_buff), k_loop,
+                    subn_size);
               }
             }
           } else if (quant_type == 1) {
