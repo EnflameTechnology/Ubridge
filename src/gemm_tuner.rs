@@ -105,6 +105,7 @@ macro_rules! set_split_option {
 #[allow(non_snake_case)]
 pub struct AtenGemmInfo {
     pub data_type: DATATYPE,
+    pub weight_type: DATATYPE,
     pub out_data_type: DATATYPE,
     pub is_batch: bool,
     pub batch: i64,
@@ -116,9 +117,10 @@ pub struct AtenGemmInfo {
 }
 
 impl AtenGemmInfo {
-    pub fn new(datatype: DATATYPE, batch: usize, M: usize, K: usize, N: usize) -> AtenGemmInfo {
+    pub fn new(datatype: DATATYPE, weight_type: DATATYPE, batch: usize, M: usize, K: usize, N: usize, rhs_trans: i32) -> AtenGemmInfo {
         AtenGemmInfo {
             data_type: datatype,
+            weight_type,
             out_data_type: datatype,
             is_batch: batch > 1,
             batch: batch as i64,
@@ -126,7 +128,7 @@ impl AtenGemmInfo {
             K: K as i64,
             N: N as i64,
             transa: false,
-            transb: true,
+            transb: rhs_trans > 0,
         }
     }
 }
@@ -135,6 +137,7 @@ impl Default for AtenGemmInfo {
     fn default() -> AtenGemmInfo {
         AtenGemmInfo {
             data_type: DATATYPE::DataFp32,
+            weight_type: DATATYPE::DataFp32,
             out_data_type: DATATYPE::DataFp32,
             is_batch: false,
             batch: 1,
@@ -531,7 +534,11 @@ impl AtenGemmTuner {
 
         let sum_va_mem = |m: i64, n: i64, bpe: i64| -> i64 { (m * n * 2) * bpe };
 
-        let UNIT_SIP_M = if info.M > 32 { 64 } else { 32 };
+        let UNIT_SIP_M = if info.M > 32 { 64 } else { 
+            if (info.M * info.batch <= 8) && info.transb 
+              && (info.weight_type == DATATYPE::DataBf16 || info.weight_type == DATATYPE::DataFp16) 
+                    { 1 } else { 32 } 
+        };
         const UNIT_SIP_N: i64 = 128;
         let UNIT_SIP_K = if info.M > 32 { 64 } else { 128 };
         const BPE: i64 = 2;

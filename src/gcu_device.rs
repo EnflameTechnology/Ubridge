@@ -188,13 +188,15 @@ impl GcuDevice {
     pub fn get_gemm_launch_params(
         &self,
         datatype: crate::DATATYPE,
+        weight_type: crate::DATATYPE,
         b: usize,
         m: usize,
         k: usize,
         n: usize,
+        rhs_trans: i32,
     ) -> &GEMM_OP_PARAS {
         // let bias = self.alloc::<f16>(n).w()?;
-        let info = AtenGemmInfo::new(datatype, b, m, k, n);
+        let info = AtenGemmInfo::new(datatype, weight_type, b, m, k, n, rhs_trans);
         unsafe { self.tuner.tuner(&info) }
     }
     /// Allocates device memory and increments the reference counter of [GcuDevice].

@@ -1156,6 +1156,7 @@ extern "C" __global__ void FN_NAME(TYPE *in_a, TYPE *in_b, TYPE *out,\
                                             float alpha, float beta, float addmm_beta, \
                                             int sip_m, int sip_k, int sip_n, int broadcasted_weight) {\
     __local__ __valigned__ char buffer_sip[VDMEM_VALID_SIZE];\
+    __shared__ char l2_buffer[SHARE_BUFFER_SIZE];\
     if (sip_m % 128 == 0)\
       matmul_kernel_aligned<TYPE, TYPE, TYPE, TYPE, TYPE, 128>(in_a, in_b, out, out, out, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
         lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, -1, buffer_sip);\
@@ -1165,6 +1166,9 @@ extern "C" __global__ void FN_NAME(TYPE *in_a, TYPE *in_b, TYPE *out,\
     else if (sip_m % 32 == 0) \
       matmul_kernel_aligned<TYPE, TYPE, TYPE, TYPE, TYPE, 32>(in_a, in_b, out, out, out, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
         lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, -1, buffer_sip);\
+    else if (sip_m == 1 && rhs_transpose > 0) \
+      matmul_kernel_m1<TYPE, TYPE, TYPE, TYPE, TYPE>(in_a, in_b, out, out, out, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, -1, buffer_sip, l2_buffer);\
     else \
       matmul_kernel<TYPE, TYPE>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
         lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);\
