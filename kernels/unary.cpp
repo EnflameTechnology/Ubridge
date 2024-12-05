@@ -279,7 +279,7 @@ extern "C" __global__ void FN_NAME( \
     const int TILESIZE = 512 * 1024 / sizeof(T); \
     __local__ __valigned__ T buffer1[TILESIZE]; \
     __local__ __valigned__ T buffer2[TILESIZE]; \
-    __shared__ char raw_cache[SHARE_BUFFER_SIZE]; \
+    extern __shared__ char raw_cache[]; \
     bool cachable = numel * sizeof(T) < SHARE_BUFFER_SIZE; \
     T* sharedBuffer = reinterpret_cast<T*>(raw_cache); \
     tops::mdspan buffer_l1(tops::Private, buffer1, TILESIZE); \

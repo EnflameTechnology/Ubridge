@@ -11,7 +11,7 @@
 
 template <typename lhs_t, typename rhs_t, typename out_t, typename bias_t,
           typename scale_t>
-__device__ __forceinline__ void matmul_kernel_lhs_l1(
+__device__ __attribute__((noinline)) void matmul_kernel_lhs_l1(
     lhs_t *lhs, rhs_t *rhs, out_t *out, bias_t *bias, scale_t *scale,
     lhs_t *zeros, int input_dtype, int input_batch, int input_m, int input_k,
     int input_n, int lhs_multicore, int rhs_multicore, int batch_multicore,
@@ -864,18 +864,10 @@ __device__ __attribute__((noinline)) void matmul_kernel_m1(
             lhs_t* rhs_pt = reinterpret_cast<lhs_t*>(
                 quant_type == 2 ? l1_rhs_requant_ptr : rhs_ptr);
             bias_t* bias_pt = reinterpret_cast<bias_t*>(bias_ptr);
-            if (quant_type == 3) {
-              addmm<1, MK_NK>(dst_pt, lhs_pt, rhs_pt, bias_pt,
-                                 reinterpret_cast<int*>(local_workspace),
-                                 subk_size, subn_size, acc_flag, store_flag,
-                                 vab_offset, launch_times,
-                                 reinterpret_cast<float*>(scale_ptr), beta);
-            } else {
-              addmm<1, MK_NK>(dst_pt, lhs_pt, rhs_pt, bias_pt,
-                                 reinterpret_cast<int*>(local_workspace),
-                                 subk_size, subn_size, acc_flag, store_flag,
-                                 vab_offset, launch_times, alpha, beta);
-            }
+            addmm<1, MK_NK>(dst_pt, lhs_pt, rhs_pt, bias_pt,
+                                reinterpret_cast<int*>(local_workspace),
+                                subk_size, subn_size, acc_flag, store_flag,
+                                vab_offset, launch_times, alpha, beta);
             launch_times += 1;
           }
           k_flag = !k_flag;

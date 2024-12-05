@@ -394,7 +394,7 @@ extern "C" __global__ void FN_NAME( \
     TYPE *out, \
     const size_t op_type) \
 { \
-    __shared__ char raw_cache[SHARE_BUFFER_SIZE]; \
+    extern __shared__ char raw_cache[]; \
     __local__ __valigned__ TYPE l1_cache[COPY_TILESIZE/BPE + COPY_L1SIZE/BPE]; \
     bool cont = true; \
     __local__ __valigned__ size_t info[128]; \

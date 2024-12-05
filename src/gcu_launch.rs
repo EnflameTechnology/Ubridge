@@ -50,6 +50,11 @@ pub struct GcuLaunchConfig {
 }
 
 impl GcuLaunchConfig {
+    pub fn set_shared_memory(&mut self, size_in_bytes: u32) {
+        const VDMEM_VALID_SIZE : u32 = 0x180000 - 0x8000 - 0x800;
+        self.shared_mem_bytes = if size_in_bytes > VDMEM_VALID_SIZE { VDMEM_VALID_SIZE } else { size_in_bytes };
+    }
+    
     pub fn for_threds(n: u32) -> Self {
         Self {
             grid_dim: (1, 1, 1),
@@ -262,7 +267,6 @@ impl GcuFunction {
             } else {
                 null
             };
-            let shared_mem_bytes = 0;
             let ret = driv::topsModuleLaunchKernel(
                 func,
                 cfg.grid_dim.0,
@@ -271,18 +275,13 @@ impl GcuFunction {
                 cfg.block_dim.0,
                 cfg.block_dim.1,
                 cfg.block_dim.2,
-                shared_mem_bytes as u32,
+                cfg.shared_mem_bytes,
                 stream,
                 params.as_mut_ptr(),
                 null as *mut *mut c_void,
                 // config.as_mut_ptr() as *mut *mut c_void
             )
             .to_result();
-
-            // if ret.is_ok() && self.is_async {
-            //     println!("******************driv::topsStreamSynchronize! {}", self.is_async);
-            //     ret = driv::topsStreamSynchronize(stream).to_result();
-            // }
 
             if ret.is_err() {
                 println!("Launch Error for function {}", self.func_name);

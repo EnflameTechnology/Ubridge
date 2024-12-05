@@ -46,7 +46,7 @@ __device__ void cast_kernel(T* in, OUTT* out, int len) {
 
     __local__ __valigned__ T buffer1[TILE_SIZE];
     __local__ __valigned__ OUTT buffer2[TILE_SIZE];
-    __shared__ char raw_cache[SHARE_BUFFER_SIZE]; 
+    extern __shared__ char raw_cache[]; 
     bool cachable = len * sizeof(T) < SHARE_BUFFER_SIZE; 
     T* sharedBuffer = reinterpret_cast<T*>(raw_cache); 
     tops::mdspan buffer_l1(tops::Private, buffer1, TILE_SIZE);

@@ -123,7 +123,7 @@ extern "C" __global__ void FN_NAME( \
     TO *out, \
     const size_t element_num, const size_t reduce_dim_size) \
 {\
-    __shared__ char raw_cache[SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE];\
+    extern __shared__ char raw_cache[];\
     __shared__ TO out_share[TILE_SIZE];\
     FN_NAME##_kernel(in, out, out_share, raw_cache, element_num, reduce_dim_size, false);\
 }\
@@ -163,8 +163,7 @@ extern "C" __global__ void FN_NAME(T *input, T* output, int batch,\
     __local__ __valigned__ float buffer2[TILE_SIZE];\
     __local__ __valigned__ float buffer3[TILE_SIZE];\
     __shared__ T share_max_out[TILE_SIZE];\
-    __shared__ T share_exp_sum_out[TILE_SIZE];\
-    __shared__ char raw_cache[SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE];\
+    extern __shared__ char raw_cache[];\
     tops_dte_ctx_t ctx;\
     tops::dte_scope s(ctx);\
     int element_num = batch * chunks * last_dim_size;\
@@ -234,7 +233,7 @@ extern "C" __global__ void softmax_f32(float *input, float* output, int batch,
     __local__ __valigned__ float buffer2[TILE_SIZE];
     __local__ __valigned__ float buffer3[TILE_SIZE];
     __shared__ float share_max_out[TILE_SIZE];
-    __shared__ char raw_cache[SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE];
+    extern __shared__ char raw_cache[];
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx);
     int element_num = batch * chunks * last_dim_size;
