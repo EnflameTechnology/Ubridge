@@ -9,6 +9,7 @@
 #define BYTE_ALIGN 512
 #define ALIGN_UP_512(x) (((x + 511) >> 9) << 9)
 
+#if 0
 template <typename lhs_t, typename rhs_t, typename out_t, typename bias_t,
           typename scale_t>
 __device__ __attribute__((noinline)) void matmul_kernel_lhs_l1(
@@ -528,11 +529,11 @@ __device__ __attribute__((noinline)) void matmul_kernel_lhs_l1(
     }
   }
 } // func
-
+#endif
 
 template <typename lhs_t, typename rhs_t, typename out_t, typename bias_t,
           typename scale_t>
-__device__ __attribute__((noinline)) void matmul_kernel_m1(
+__device__ void matmul_kernel_trans_avoid(
     lhs_t *lhs, rhs_t *rhs, out_t *out, bias_t *bias, scale_t *scale,
     lhs_t *zeros, int input_dtype, int input_batch, int input_m, int input_k,
     int input_n, int lhs_multicore, int rhs_multicore, int batch_multicore,
@@ -573,6 +574,7 @@ __device__ __attribute__((noinline)) void matmul_kernel_m1(
     }
   }
   int quant_vab = (enable_quant == 1) ? 256 : 0;
+
   __shared_dte__ tops_dte_ctx_t dte_shared_lhs_ctx;
   tops::event event_shared_lhs;
 
@@ -589,11 +591,11 @@ __device__ __attribute__((noinline)) void matmul_kernel_m1(
   int32_t N_loop = CeilDiv(N, subn_size);
   int32_t N_align = AlignUp(N, subn_size);
   int32_t l2_lhs_shape0[3] = {1, M_align, K_align};
-
-  int k_group_flag = (group_size != -1);
-  group_size = k_group_flag ? group_size : K;
+  int k_group_flag = (group_size != -1 && subk_size != group_size);
+  group_size = (group_size != -1) ? group_size : K;
   int group_use_num = CeilDiv(K, group_size);
-  
+  int per_group_use_num = CeilDiv(subk_size, group_size);
+  int group_use_num_loop = CeilDiv(group_use_num, per_group_use_num);
   if (need_trans_lhs) {
     l2_lhs_shape0[1] = K_align;
     l2_lhs_shape0[2] = M_align;
@@ -616,11 +618,10 @@ __device__ __attribute__((noinline)) void matmul_kernel_m1(
   tops_dte_ctx_t dte_lhs_ctx;
   tops::event event_lhs;
 
-  // tops::private_cdte dte_private_rhs_ctx;
-  // dte_private_rhs_ctx.init();
+  __private_dte__ tops_dte_ctx_t dte_private_scale_ctx;
+  tops::event event_private_scale;
   tops_dte_ctx_t dte_rhs_ctx;
   tops::event event_rhs;
-  tops::event event_private_rhs;
 
   tops_dte_ctx_t dte_bias_ctx;
   tops::event event_bias;
@@ -630,41 +631,28 @@ __device__ __attribute__((noinline)) void matmul_kernel_m1(
 
   tops_dte_ctx_t dte_out_ctx;
   tops::event event_out;
-  int dequant_K;
-  if (quant_type == 1) {
-    if ((K % 128) == 0) {
-      dequant_K = K / 2;
-    } else {
-      dequant_K = K / 2 + 32;
-    }
-  }
-  int32_t hbm_rhs_shape[3] = {broadcasted_weight ? 1 : B, K, N};
-  if (need_trans_rhs) {
-    hbm_rhs_shape[1] = N;
-    hbm_rhs_shape[2] = K;
-  }
-  if (quant_type == 1) {
-    if (need_trans_rhs) {
-      hbm_rhs_shape[2] = dequant_K;
-    } else {
-      hbm_rhs_shape[1] = dequant_K;
-    }
-  }
 
+  int32_t hbm_rhs_shape[3] = {broadcasted_weight ? 1 : B, N, K};
   int32_t hbm_out_shape[3] = {B, M, N};
   int32_t l2_lhs_shape1[4] = {M_loop, subm_size, K_loop, subk_size};
-  int32_t l2_rhs_shape[3] = {1, subk_size, subn_size};
-  if (need_trans_rhs) {
-    l2_rhs_shape[1] = subn_size;
-    l2_rhs_shape[2] = subk_size;
+
+  int32_t hbm_scale_shape[2] = {group_use_num, N};
+  int32_t l2_scale_shape0[2] = {group_use_num_loop * per_group_use_num,
+                                subn_size};
+  int32_t l2_scale_shape1[3] = {group_use_num_loop, per_group_use_num,
+                                subn_size};
+
+  int32_t mul_m_size = subn_size;
+  int32_t mul_n_size = subk_size;
+  int32_t l1_scale_shape0[2] = {group_use_num, subn_size};
+  int32_t l1_scale_shape1[3] = {group_use_num_loop, subn_size,
+                                per_group_use_num};
+  if (k_group_flag) {
+    mul_m_size = subn_size * per_group_use_num;
+    mul_n_size = subk_size / per_group_use_num;
   }
-  if (quant_type == 1) {
-    if (need_trans_rhs) {
-      l2_rhs_shape[2] = subk_size / 2;
-    } else {
-      l2_rhs_shape[1] = subk_size / 2;
-    }
-  }
+
+  int32_t l2_scale_size = 0;
   if (need_trans_lhs) {
     l2_lhs_shape1[0] = K_loop;
     l2_lhs_shape1[1] = subk_size;
@@ -673,37 +661,25 @@ __device__ __attribute__((noinline)) void matmul_kernel_m1(
   }
   int32_t l1_lhs_shape[4] = {K_loop, M_loop, subm_size, subk_size};
   int32_t l1_rhs_shape[3] = {1, subn_size, subk_size};
-  // int32_t l1_rhs_shape[3] = {1, subk_size, subn_size};
-  if (quant_type == 1) {
-    l1_rhs_shape[1] = subk_size / 2;
-  }
   int32_t l1_out_shape[3] = {1, M_align, subn_size};
   int32_t l1_lhs_size = M_align * K_align * sizeof(lhs_t);
   int32_t l1_rhs_size = subk_size * subn_size * sizeof(rhs_t);
   int32_t l1_out_size = M_align * subn_size * sizeof(out_t);
   int32_t l2_lhs_size = l1_lhs_size;
-  int32_t l2_rhs_size = subk_size * subn_size * sizeof(rhs_t); // use rhs type
   int32_t l1_bias_size = 0;
   int32_t l1_scale_size = 0;
   int32_t l1_rhs_requant_size = 0;
   if (enable_bias) {
     l1_bias_size = subn_size * sizeof(bias_t);
   }
-
-  int32_t hbm_scale_shape[2] = {N, group_use_num};
-  int32_t l1_scale_shape[2] = {1, group_use_num};
-
   if (enable_quant) {
     // l1_scale_size = subn_size * sizeof(scale_t);
-    l1_scale_size = group_use_num * subn_size * sizeof(scale_t);
     l1_rhs_requant_size = subk_size * subn_size * sizeof(lhs_t);
+    l2_scale_size =
+        group_use_num_loop * per_group_use_num * subn_size * sizeof(lhs_t);
+    l1_scale_size = l2_scale_size;
   }
 
-  // prelu activation
-  tops::private_dte dte_act_weight_ctx;
-  tops::event event_act_weight;
-  int32_t l1_act_weight_size = 0;
-  int32_t l1_act_weight_len = 0;
   __local__ __attribute__((aligned(512))) int local_workspace[512];
   // lhs -> L2 -> L1
   char* l1_out_ptr0 = reinterpret_cast<char*>(l1_buffer);
@@ -716,24 +692,22 @@ __device__ __attribute__((noinline)) void matmul_kernel_m1(
   char* l1_rhs_ptr1 = reinterpret_cast<char*>(l1_rhs_ptr0 + l1_rhs_size);
   char* l1_rhs_requant_ptr = reinterpret_cast<char*>(l1_rhs_ptr1 + l1_rhs_size);
   // prelu l1 mem, // no l1 mem assigned defaultly
-  char* l1_act_weight_ptr0 = l1_rhs_requant_ptr +
+  char* l1_lhs_ptr = l1_rhs_requant_ptr +
       ALIGN_UP_512(l1_rhs_requant_size);
-  char* l1_act_weight_ptr1 = l1_act_weight_ptr0;
 
-  char* l1_lhs_ptr =
-      reinterpret_cast<char*>(l1_act_weight_ptr1 +
-          ALIGN_UP_512(l1_act_weight_size));
   auto sip_num_used_0 = sip_num_used / block_num + sip_num_used % block_num;
   auto sip_num_used_1 = sip_num_used / block_num;
 
-  char *l2_rhs_ptr0 = reinterpret_cast<char *>(l2_buffer + l2_lhs_size +
-                                               thread_id * (l2_rhs_size * 2));
-  char *l2_rhs_ptr1 = reinterpret_cast<char *>(l2_rhs_ptr0 + l2_rhs_size);
+  char* l2_scale_ptr0 = reinterpret_cast<char*>(
+      l2_lhs_ptr + l2_lhs_size + thread_id * (l2_scale_size * 2));
+  char* l2_scale_ptr1 = reinterpret_cast<char*>(l2_scale_ptr0 + l2_scale_size);
 
   if ((global_thread_id < sip_num_used_0) ||
       ((global_thread_id < sip_num_used_1 + each_thread_num) &&
        (global_thread_id >= each_thread_num))) {
-
+    if (enable_quant && k_group_flag) {
+      dte_private_scale_ctx.connect(dte_scale_ctx);
+    }
     if (need_trans_lhs) {
       dte_lhs_ctx.config_transpose(
           tops::mdspan(tops::Private, reinterpret_cast<lhs_t*>(l1_lhs_ptr),
@@ -751,18 +725,31 @@ __device__ __attribute__((noinline)) void matmul_kernel_m1(
     }
 
     if (enable_quant) {
-      dte_scale_ctx.config_slice(
-          tops::mdspan(tops::Private,
-                       reinterpret_cast<scale_t *>(l1_scale_ptr0),
-                       l1_scale_shape),
-          tops::mdspan(tops::Global, scale, hbm_scale_shape), {0, 0});
+      if (k_group_flag) {
+        dte_private_scale_ctx.config_slice(
+            tops::mdspan(tops::Shared, reinterpret_cast<lhs_t*>(l2_scale_ptr0),
+                         l2_scale_shape0),
+            tops::mdspan(tops::Global, scale, hbm_scale_shape), {0, 0});
+
+        dte_scale_ctx.config_transpose(
+            tops::mdspan(tops::Private, reinterpret_cast<lhs_t*>(l1_scale_ptr0),
+                         l1_scale_shape1),
+            tops::mdspan(tops::Shared, reinterpret_cast<lhs_t*>(l2_scale_ptr0),
+                         l2_scale_shape1),
+            {0, 2, 1});
+      } else {
+        dte_scale_ctx.config_slice(
+            tops::mdspan(tops::Private, reinterpret_cast<lhs_t*>(l1_scale_ptr0),
+                         l1_scale_shape0),
+            tops::mdspan(tops::Global, scale, hbm_scale_shape), {0, 0});
+      }
+
     }
 
     dte_rhs_ctx.config_slice(
-        tops::mdspan(tops::Private, reinterpret_cast<rhs_t *>(l1_rhs_ptr0),
-                      l1_rhs_shape),
+        tops::mdspan(tops::Private, reinterpret_cast<rhs_t*>(l1_rhs_ptr0),
+                     l1_rhs_shape),
         tops::mdspan(tops::Global, rhs, hbm_rhs_shape), {0, 0, 0});
-
     dte_out_ctx.config_deslice(
         tops::mdspan(tops::Global, out, hbm_out_shape),
         tops::mdspan(tops::Private, reinterpret_cast<out_t*>(l1_out_ptr0),
@@ -788,11 +775,22 @@ __device__ __attribute__((noinline)) void matmul_kernel_m1(
 
       event_lhs = dte_lhs_ctx.trigger();
       auto n_idx = subn_size * (block_num * thread_id + block_id);
+
       if (enable_quant) {
-        SET_DST_CUR_CFG(dte_scale_ctx, l1_scale_ptr0, l1_scale_ptr1, n_flag);
-        dte_scale_ctx.set_src_offset(1, 0);
-        dte_scale_ctx.set_src_offset(0, n_idx);
-        event_scale = dte_scale_ctx.trigger();
+        if (k_group_flag) {
+          dte_private_scale_ctx.set_src_offset(0, 0);
+          dte_private_scale_ctx.set_src_offset(1, n_idx);
+          dte_private_scale_ctx.set_dst_addr(l2_scale_ptr0);
+          dte_scale_ctx.set_src_addr(l2_scale_ptr0);
+          dte_scale_ctx.set_dst_addr(l1_scale_ptr0);
+          event_private_scale = dte_private_scale_ctx.trigger();
+          event_scale = dte_scale_ctx.trigger();
+        } else {
+          dte_scale_ctx.set_src_offset(0, 0);
+          dte_scale_ctx.set_src_offset(1, n_idx);
+          dte_scale_ctx.set_dst_addr(l1_scale_ptr0);
+          event_scale = dte_scale_ctx.trigger();
+        }
       }
 
       SET_DST_CUR_CFG(dte_rhs_ctx, l1_rhs_ptr0, l1_rhs_ptr1, k_flag);
@@ -807,19 +805,31 @@ __device__ __attribute__((noinline)) void matmul_kernel_m1(
         long out_addr = n_flag ? (long)(l1_out_ptr0) : (long)(l1_out_ptr1);
         auto bias_ptr = n_flag ? l1_bias_ptr0 : l1_bias_ptr1;
         auto scale_ptr = n_flag ? l1_scale_ptr0 : l1_scale_ptr1;
-        // load act weight if needed
-        auto act_weight_ptr = n_flag ?
-              l1_act_weight_ptr0 : l1_act_weight_ptr1;
-
         // load scale
         if (enable_quant) {
           event_scale.wait();
           if (n_idx + subn_size * thread_num < N_align) {
-            SET_DST_NEXT_CFG(dte_scale_ctx, l1_scale_ptr0, l1_scale_ptr1,
-                             n_flag);
-            dte_scale_ctx.set_src_offset(1, 0);
-            dte_scale_ctx.set_src_offset(0, n_idx + subn_size * thread_num);
-            event_scale = dte_scale_ctx.trigger();
+            if (enable_quant) {
+              if (k_group_flag) {
+                SET_DST_NEXT_CFG(dte_private_scale_ctx, l2_scale_ptr0,
+                                 l2_scale_ptr1, n_flag);
+                SET_SRC_NEXT_CFG(dte_scale_ctx, l2_scale_ptr0, l2_scale_ptr1,
+                                 n_flag);
+                SET_DST_NEXT_CFG(dte_scale_ctx, l1_scale_ptr0, l1_scale_ptr1,
+                                 n_flag);
+                dte_private_scale_ctx.set_src_offset(0, 0);
+                dte_private_scale_ctx.set_src_offset(
+                    1, n_idx + subn_size * thread_num);
+                event_private_scale = dte_private_scale_ctx.trigger();
+                event_scale = dte_scale_ctx.trigger();
+              } else {
+                SET_DST_NEXT_CFG(dte_scale_ctx, l1_scale_ptr0, l1_scale_ptr1,
+                                 n_flag);
+                dte_scale_ctx.set_src_offset(0, 0);
+                dte_scale_ctx.set_src_offset(1, n_idx + subn_size * thread_num);
+                event_scale = dte_scale_ctx.trigger();
+              }
+            }
           }
         }
         for (auto k_idx = 0; k_idx < K; k_idx += subk_size) {
@@ -842,9 +852,19 @@ __device__ __attribute__((noinline)) void matmul_kernel_m1(
           }
 
           if (quant_type == 2) {
-            mul<0>(reinterpret_cast<lhs_t*>(l1_rhs_requant_ptr),
-                   reinterpret_cast<char*>(rhs_ptr),
-                   reinterpret_cast<lhs_t*>(scale_ptr), group_use_num, subk_size);
+             char* scale_buff;
+              if (k_group_flag) {
+                scale_buff = reinterpret_cast<char*>(scale_ptr) +
+                             (k_idx / subk_size) * per_group_use_num *
+                                 subn_size * sizeof(lhs_t);
+              } else {
+                scale_buff = reinterpret_cast<char*>(scale_ptr);
+              }
+
+              mul<0>(reinterpret_cast<lhs_t*>(l1_rhs_requant_ptr),
+                     reinterpret_cast<char*>(rhs_ptr),
+                     reinterpret_cast<lhs_t*>(scale_buff), mul_m_size,
+                     mul_n_size);
           }
 
           for (auto m_idx = 0; m_idx < M; m_idx += subm_size) {
@@ -864,15 +884,27 @@ __device__ __attribute__((noinline)) void matmul_kernel_m1(
             lhs_t* rhs_pt = reinterpret_cast<lhs_t*>(
                 quant_type == 2 ? l1_rhs_requant_ptr : rhs_ptr);
             bias_t* bias_pt = reinterpret_cast<bias_t*>(bias_ptr);
-            addmm<1, MK_NK>(dst_pt, lhs_pt, rhs_pt, bias_pt,
-                                reinterpret_cast<int*>(local_workspace),
-                                subk_size, subn_size, acc_flag, store_flag,
-                                vab_offset, launch_times, alpha, beta);
+            if (sip_m % 32 == 0) {
+                addmm<32, MK_NK>(dst_pt, lhs_pt, rhs_pt, bias_pt,
+                                  reinterpret_cast<int*>(local_workspace),
+                                  subk_size, subn_size, acc_flag, store_flag,
+                                  vab_offset, launch_times, alpha, beta);
+            } else {
+                addmm<1, MK_NK>(dst_pt, lhs_pt, rhs_pt, bias_pt,
+                    reinterpret_cast<int*>(local_workspace),
+                    subk_size, subn_size, acc_flag, store_flag,
+                    vab_offset, launch_times, alpha, beta);
+            }
             launch_times += 1;
           }
           k_flag = !k_flag;
         }  // K loop
 
+        #if __GCU_ARCH__ == 400
+                tcle::fence<0xd2>();
+        #elif __GCU_ARCH__ == 300
+                tcle::fence<0x3>();
+        #endif
         if (!first_output) {
           event_out.wait();
         }

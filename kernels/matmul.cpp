@@ -142,10 +142,10 @@ __device__ __attribute__((noinline)) void matmul_kernel(lhs_t *lhs, rhs_t *rhs, 
   int32_t sip_out_size = sip_out_shape[0] * sip_out_shape[1] *
                          sip_out_shape[2] * sip_out_shape[3] *
                          sizeof(float);  // use fp32
-  int32_t sip_lhs_trans_size = sip_lhs_trans_shape[0] * sip_lhs_trans_shape[1] *
+  int32_t sip_lhs_trans_size = transa == 0 ? 0 : sip_lhs_trans_shape[0] * sip_lhs_trans_shape[1] *
                                sip_lhs_trans_shape[2] * sip_lhs_trans_shape[3] *
                                sizeof(lhs_t);
-  int32_t sip_rhs_trans_size = sip_rhs_trans_shape[0] * sip_rhs_trans_shape[1] *
+  int32_t sip_rhs_trans_size = transb == 0 ? 0 : sip_rhs_trans_shape[0] * sip_rhs_trans_shape[1] *
                                sip_rhs_trans_shape[2] * sip_rhs_trans_shape[3] *
                                sizeof(lhs_t);
 
@@ -532,8 +532,8 @@ __device__ __attribute__((noinline)) void matmul_kernel(lhs_t *lhs, rhs_t *rhs, 
   dte_b.destroy();
 }  // func
 
-template <typename lhs_t, typename rhs_t, typename out_t, typename bias_t, typename scale_t, int SUBM>
-__device__ __attribute__((noinline)) void matmul_kernel_aligned(lhs_t *lhs, rhs_t *rhs, out_t *out, 
+template <typename lhs_t, typename rhs_t, typename out_t, typename bias_t, typename scale_t>
+__device__ __attribute__((noinline)) void matmul_kernel_batch(lhs_t *lhs, rhs_t *rhs, out_t *out, 
       bias_t* bias, scale_t* scale, lhs_t* zeros,
       int input_dtype, int input_batch,
       int input_m, int input_k, int input_n,
@@ -674,8 +674,8 @@ __device__ __attribute__((noinline)) void matmul_kernel_aligned(lhs_t *lhs, rhs_
   if (quant_type == 1) {
     sip_rhs_size = sip_rhs_size * 2;
   }
-  int32_t sip_lhs_trans_size = sip_lhs_size;
-  int32_t sip_rhs_trans_size = sip_rhs_size;
+  int32_t sip_lhs_trans_size = need_trans_lhs > 0 ? sip_lhs_size : 0;
+  int32_t sip_rhs_trans_size = need_trans_rhs > 0 ? sip_rhs_size : 0;
   int32_t sip_bias_size = 0;
   int32_t sip_scale_size = 0;
   int32_t sip_zeros_size = 0;
@@ -1100,9 +1100,21 @@ __device__ __attribute__((noinline)) void matmul_kernel_aligned(lhs_t *lhs, rhs_
                                                : cur_private_rhs_ptr);
             bias_t* bias_ptr =
                 reinterpret_cast<bias_t*>(cur_private_bias_ptr);
-            matmul<SUBM>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
-                          subk_size, subn_size, acc_flag, store_flag, enable_bias,
-                          vab_offset, launch_times);
+
+            if (sip_m % 128 == 0) {
+              matmul<128>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
+                            subk_size, subn_size, acc_flag, store_flag, enable_bias,
+                            vab_offset, launch_times);
+            } else if (sip_m % 64 == 0) {
+              matmul<64>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
+                            subk_size, subn_size, acc_flag, store_flag, enable_bias,
+                            vab_offset, launch_times);
+            } else {
+              matmul<32>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
+              subk_size, subn_size, acc_flag, store_flag, enable_bias,
+              vab_offset, launch_times);
+            }
+
             launch_times += 1;
           }  // K loop
           __dtu_movs_barrier_all();
@@ -1140,21 +1152,16 @@ extern "C" __global__ void FN_NAME(TYPE *in_a, TYPE *in_b, TYPE *out,\
                                             int sip_m, int sip_k, int sip_n, int broadcasted_weight) {\
     __local__ __valigned__ char buffer_sip[VDMEM_VALID_SIZE];\
     extern __shared__ char l2_buffer[];\
-    if (sip_m % 128 == 0)\
-      matmul_kernel_aligned<TYPE, TYPE, TYPE, TYPE, TYPE, 128>(in_a, in_b, out, out, out, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, -1, buffer_sip);\
-    else if (sip_m % 64 == 0)\
-      matmul_kernel_aligned<TYPE, TYPE, TYPE, TYPE, TYPE, 64>(in_a, in_b, out, out, out, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, -1, buffer_sip);\
-    else if (sip_m % 32 == 0) \
-      matmul_kernel_aligned<TYPE, TYPE, TYPE, TYPE, TYPE, 32>(in_a, in_b, out, out, out, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, -1, buffer_sip);\
-    else if (sip_m == 1 && rhs_transpose > 0) \
-      matmul_kernel_m1<TYPE, TYPE, TYPE, TYPE, TYPE>(in_a, in_b, out, out, out, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
+    int32_t M_align = CeilDiv(input_m, sip_m) * sip_m;\
+    int32_t K_align = CeilDiv(input_k, sip_k) * sip_k; \
+    int LSIZE = M_align * K_align * sizeof(TYPE); \
+    int R_SIP_SIZE = (sip_k * sip_n * 2 + M_align * sip_n * 2) * sizeof(TYPE);\
+    if (rhs_transpose > 0 && (LSIZE + R_SIP_SIZE < VDMEM_VALID_SIZE)) { \
+      matmul_kernel_trans_avoid<TYPE, TYPE, TYPE, TYPE, TYPE>(in_a, in_b, out, out, out, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
         lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, -1, buffer_sip, l2_buffer);\
-    else \
-      matmul_kernel<TYPE, TYPE>(in_a, in_b, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, buffer_sip);\
+    } else \
+      matmul_kernel_batch<TYPE, TYPE, TYPE, TYPE, TYPE>(in_a, in_b, out, out, out, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, -1, buffer_sip);\
 }\
 
 
@@ -1183,19 +1190,8 @@ extern "C" __global__ void FN_NAME(TYPE *in_a, TYPE_WEIGHT *in_b, TYPE *out, \
                                             float alpha, float beta, float addmm_beta, \
                                             int sip_m, int sip_k, int sip_n, int broadcasted_weight, int group_size) {\
     __local__ __valigned__ char buffer_sip[VDMEM_VALID_SIZE];\
-    extern __shared__ char l2_buffer[];\
-    if (sip_m % 128 == 0)\
-      matmul_kernel_aligned<TYPE, TYPE_WEIGHT, TYPE, TYPE, TYPE, 128>(in_a, in_b, out, out, scales, zeros, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
+      matmul_kernel_batch<TYPE, TYPE_WEIGHT, TYPE, TYPE, TYPE>(in_a, in_b, out, out, scales, zeros, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
         lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, group_size, buffer_sip);\
-    else if (sip_m % 64 == 0)\
-      matmul_kernel_aligned<TYPE, TYPE_WEIGHT, TYPE, TYPE, TYPE, 64>(in_a, in_b, out, out, scales, zeros, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, group_size, buffer_sip);\
-    else if (sip_m % 32 == 0) \
-      matmul_kernel_aligned<TYPE, TYPE_WEIGHT, TYPE, TYPE, TYPE, 32>(in_a, in_b, out, out, scales, zeros, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, group_size, buffer_sip);\
-    else \
-      matmul_kernel_lhs_l1<TYPE, TYPE_WEIGHT, TYPE, TYPE, TYPE>(in_a, in_b, out, out, scales, zeros, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
-        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, group_size, buffer_sip, l2_buffer);\
 }\
 
 MATMUL_OP_QUANT(__fp16, uint8_t, __fp16, matmul_f16_4bit)

@@ -118,6 +118,7 @@ fn main() -> Result<()> {
                     .arg(format!("-D__KRT_ARCH__={compute_cap}"))
                     .arg("-D__ATOMIC_OP")
                     .arg("-D__ACORE_OP__")
+                    .arg("-DTOPS_DISABLE_FORCE_INLINE")
                     .arg("--target=x86_64-unknown-linux-gnu")
                     .arg("-fno-omit-frame-pointer")
                     .arg("-DNDEBUG")

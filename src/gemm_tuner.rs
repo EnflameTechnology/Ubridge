@@ -89,7 +89,7 @@ macro_rules! init_split {
 }
 
 macro_rules! set_split_option {
-    ($tune: ident, $pattern_type:expr, $batch_multicore:expr, $lhs_multicore:expr, $rhs_multicore:expr, $cdma_lhs_pingpong:expr, $cdma_rhs_pingpong:expr, $sdma_lhs_pingpong:expr, $sdma_rhs_pingpong:expr, $rhs_repeatcopy:expr) => {{
+    ($tune: ident, $batch_multicore:expr, $lhs_multicore:expr, $rhs_multicore:expr, $cdma_lhs_pingpong:expr, $cdma_rhs_pingpong:expr, $sdma_lhs_pingpong:expr, $sdma_rhs_pingpong:expr, $rhs_repeatcopy:expr) => {{
         $tune.batch_multicore = $batch_multicore;
         $tune.lhs_multicore = $lhs_multicore;
         $tune.rhs_multicore = $rhs_multicore;
@@ -98,7 +98,6 @@ macro_rules! set_split_option {
         $tune.sdma_lhs_pingpong = $sdma_lhs_pingpong;
         $tune.sdma_rhs_pingpong = $sdma_rhs_pingpong;
         $tune.rhs_repeatcopy = $rhs_repeatcopy;
-        $tune.pattern_type = $pattern_type.to_string();
     }};
 }
 
@@ -177,7 +176,7 @@ pub struct AtenGemmTune {
     rhs_tranpose: bool,
     out_tranpose: bool,
 
-    pattern_type: String,
+    pattern_type: i32, // 1: lcache, 2: batch, 3: general
 }
 
 impl Default for AtenGemmTune {
@@ -207,7 +206,7 @@ impl Default for AtenGemmTune {
             rhs_tranpose: false,
             out_tranpose: false,
 
-            pattern_type: "general".to_string(),
+            pattern_type: 3,
         }
     }
 }
@@ -338,16 +337,9 @@ impl AtenGemmTuner {
                     DATATYPE::DataFp32 => {
                         self.tuner_sgemm_f32(info, &mut tune);
                     }
-                    DATATYPE::DataFp16 => {
-                        self.tuner_hgemm_f16(info, &mut tune);
+                    _ => {
+                        self.tuner_hgemm_half(info, &mut tune);
                     }
-                    DATATYPE::DataBf16 => {
-                        self.tuner_hgemm_f16(info, &mut tune);
-                    }
-                    DATATYPE::DataI8 => {
-                        self.tuner_int8_gemm_i8(info, &mut tune);
-                    }
-                    _ => {}
                 }
             } else {
                 // handle the case when data_type is not equal to out_data_type
@@ -426,18 +418,8 @@ impl AtenGemmTuner {
                 }
 
                 if lhs_multicore {
-                    let pattern_type: &str;
-                    if 2 * tune.sip_n >= info.N {
-                        pattern_type = "cachediff";
-                    } else if l31_m_num <= sip_cnt * 2 {
-                        pattern_type = "cachesame";
-                    } else {
-                        pattern_type = "general";
-                    }
-
                     set_split_option!(
                         tune,
-                        pattern_type,
                         false,
                         true,
                         false,
@@ -449,7 +431,7 @@ impl AtenGemmTuner {
                     );
                 } else if batch_multicore {
                     set_split_option!(
-                        tune, "general", true, false, false, false, false, false, false, false
+                        tune, true, false, false, false, false, false, false, false
                     );
                 }
             } else if rhs_multicore {
@@ -468,18 +450,8 @@ impl AtenGemmTuner {
                         tune.sip_m = va_mem_sip_m;
                     }
                 }
-                let pattern_type: &str;
-
-                if 2 * tune.sip_m >= info.M {
-                    pattern_type = "cachediff";
-                } else if l31_n_num <= sip_cnt * 2 {
-                    pattern_type = "cachesame";
-                } else {
-                    pattern_type = "general";
-                }
                 set_split_option!(
                     tune,
-                    pattern_type,
                     false,
                     false,
                     true,
@@ -510,7 +482,6 @@ impl AtenGemmTuner {
 
             set_split_option!(
                 tune,
-                "general",
                 batch_multicore,
                 lhs_multicore,
                 rhs_multicore,
@@ -521,12 +492,10 @@ impl AtenGemmTuner {
                 false
             );
         }
-
-        // println!("TunerSGemmF32");
         0
     }
 
-    fn tuner_hgemm_f16(&self, info: &AtenGemmInfo, tune: &mut AtenGemmTune) -> i32 {
+    fn tuner_hgemm_half(&self, info: &AtenGemmInfo, tune: &mut AtenGemmTune) -> i32 {
         init_split!(info, tune);
         let sum_mem = |m: i64, n: i64, k: i64, bpe: i64, bias: i64| -> i64 {
             (2 * m * k + m * n + 2 * n * k + bias) * bpe * 2
@@ -542,7 +511,9 @@ impl AtenGemmTuner {
         const UNIT_SIP_N: i64 = 128;
         let UNIT_SIP_K = if info.M > 32 { 64 } else { 128 };
         const BPE: i64 = 2;
+        // let RBPE = if (info.weight_type == DATATYPE::DataBf16 || info.weight_type == DATATYPE::DataFp16) { 2 } else { 1 };
         let sip_cnt = 12; //todo!()
+        // const VDMEM_VALID_SIZE: i64 = 0x180000 - 0x8000 - 0x800;
         let l1_mem = 1536 * 1024 - 1024;
         let va_mem = 4096 * 16 * 2 * 4;
 
@@ -581,19 +552,8 @@ impl AtenGemmTuner {
                 }
 
                 if lhs_multicore {
-                    let pattern_type: &str;
-
-                    if 2 * tune.sip_n >= info.N {
-                        pattern_type = "cachediff";
-                    } else if l31_m_num <= sip_cnt * 2 {
-                        pattern_type = "cachesame";
-                    } else {
-                        pattern_type = "general";
-                    }
-
                     set_split_option!(
                         tune,
-                        pattern_type,
                         false,
                         true,
                         false,
@@ -605,7 +565,7 @@ impl AtenGemmTuner {
                     );
                 } else {
                     set_split_option!(
-                        tune, "general", true, false, false, false, false, false, false, false
+                        tune, true, false, false, false, false, false, false, false
                     );
                 }
             } else if rhs_multicore {
@@ -624,19 +584,8 @@ impl AtenGemmTuner {
                         tune.sip_m = va_mem_sip_m;
                     }
                 }
-
-                let pattern_type: &str;
-
-                if 2 * tune.sip_m >= info.M {
-                    pattern_type = "cachediff";
-                } else if l31_n_num <= sip_cnt * 2 {
-                    pattern_type = "cachesame";
-                } else {
-                    pattern_type = "general";
-                }
                 set_split_option!(
                     tune,
-                    pattern_type,
                     false,
                     false,
                     true,
@@ -655,7 +604,7 @@ impl AtenGemmTuner {
                 / (2 * tune.sip_m + 2 * tune.sip_n);
             tune.sip_k = align_down(l1_mem_sip_k, UNIT_SIP_K);
             set_split_option!(
-                tune, "general", false, false, true, false, false, false, false, false
+                tune, false, false, true, false, false, false, false, false
             );
         }
 
@@ -663,168 +612,4 @@ impl AtenGemmTuner {
         0
     }
 
-    fn tuner_int8_gemm_i8(&self, info: &AtenGemmInfo, tune: &mut AtenGemmTune) -> i32 {
-        init_split!(info, tune);
-
-        const UNIT_SIP_M: i64 = 32;
-        const UNIT_SIP_N: i64 = 128;
-        const UNIT_SIP_K: i64 = 128;
-        const BPE: i64 = 1;
-        let sip_cnt: i64 = 12; //SIP COUNT todo!()
-        let l1_mem: i64 = 1536 * 1024 - 1024;
-        let va_mem: i64 = 4096 * 16 * 2 * 4;
-
-        // Initialize other constants and variables
-        let batch_multicore = false;
-        let lhs_multicore = false;
-        let rhs_multicore = false;
-
-        let sum_mem = |m: i64, n: i64, k: i64, bpe: i64, bias: i64| -> i64 {
-            (2 * m * k + m * n + 2 * n * k + bias) * bpe * 2
-        };
-
-        let sum_va_mem = |m: i64, n: i64, bpe: i64| -> i64 { (m * n * 2) * bpe };
-
-        let l31_m_num = align_up(info.M, UNIT_SIP_M) / UNIT_SIP_M;
-        let l31_n_num = align_up(info.N, UNIT_SIP_N) / UNIT_SIP_N;
-
-        let k_align = align_up(info.K, UNIT_SIP_K);
-        let n_align = align_up(info.N, UNIT_SIP_N);
-
-        let (batch_multicore, lhs_multicore, rhs_multicore) =
-            if info.batch >= l31_m_num && info.batch >= l31_n_num {
-                (true, false, false)
-            } else if l31_m_num >= l31_n_num {
-                (false, true, false)
-            } else {
-                (false, false, true)
-            };
-
-        let sum_mem_result = sum_mem(UNIT_SIP_M, UNIT_SIP_N, k_align, BPE, n_align);
-
-        let l1_mem_sip_k = (l1_mem / 2 / BPE - UNIT_SIP_M * UNIT_SIP_N - n_align)
-            / (2 * UNIT_SIP_M + 2 * UNIT_SIP_N);
-
-        if sum_mem_result <= l1_mem {
-            tune.sip_k = k_align;
-
-            if l1_mem_sip_k > 0 {
-                tune.sip_k = align_down(l1_mem_sip_k, UNIT_SIP_K);
-            }
-
-            if lhs_multicore || batch_multicore {
-                tune.sip_m = UNIT_SIP_M;
-                tune.sip_n = align_up(info.N, UNIT_SIP_N);
-
-                let sum_mem_sip_result = sum_mem(tune.sip_m, tune.sip_n, tune.sip_k, BPE, n_align);
-                let sum_va_mem_sip_result = sum_va_mem(tune.sip_m, tune.sip_n, 4);
-
-                if sum_mem_sip_result > l1_mem || sum_va_mem_sip_result > va_mem {
-                    let mut l1_mem_sip_n = (l1_mem / 2 / BPE - 2 * k_align * tune.sip_m - n_align)
-                        / (2 * k_align + tune.sip_m);
-
-                    l1_mem_sip_n = align_down(l1_mem_sip_n, UNIT_SIP_N);
-                    let mut va_mem_sip_n = va_mem / 16 / tune.sip_m;
-                    va_mem_sip_n = align_down(va_mem_sip_n, UNIT_SIP_N);
-                    tune.sip_n = l1_mem_sip_n;
-
-                    if l1_mem_sip_n > va_mem_sip_n {
-                        tune.sip_n = va_mem_sip_n;
-                    }
-                }
-
-                if lhs_multicore {
-                    let pattern_type: &str;
-
-                    if 2 * tune.sip_n >= info.N {
-                        pattern_type = "cachediff";
-                    } else if l31_m_num <= sip_cnt * 2 {
-                        pattern_type = "cachesame";
-                    } else {
-                        pattern_type = "general";
-                    }
-                    set_split_option!(
-                        tune,
-                        pattern_type,
-                        false,
-                        true,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false
-                    );
-                } else if batch_multicore {
-                    set_split_option!(
-                        tune, "general", true, false, false, false, false, false, false, false
-                    );
-                }
-            } else if rhs_multicore {
-                tune.sip_n = UNIT_SIP_N;
-                tune.sip_m = align_up(info.M, UNIT_SIP_M);
-
-                let sum_mem_sip_result = sum_mem(tune.sip_m, tune.sip_n, tune.sip_k, BPE, n_align);
-                let sum_va_mem_sip_result = sum_va_mem(tune.sip_m, tune.sip_n, 4);
-
-                if sum_mem_sip_result > l1_mem || sum_va_mem_sip_result > va_mem {
-                    let mut l1_mem_sip_m = (l1_mem / 2 / BPE - 2 * k_align * tune.sip_n - n_align)
-                        / (2 * k_align + tune.sip_n);
-
-                    l1_mem_sip_m = align_down(l1_mem_sip_m, UNIT_SIP_M);
-                    let mut va_mem_sip_m = va_mem / 16 / tune.sip_n;
-                    va_mem_sip_m = align_down(va_mem_sip_m, UNIT_SIP_M);
-                    tune.sip_m = l1_mem_sip_m;
-
-                    if l1_mem_sip_m > va_mem_sip_m {
-                        tune.sip_m = va_mem_sip_m;
-                    }
-                }
-                let pattern_type: &str;
-
-                if 2 * tune.sip_m >= info.M {
-                    pattern_type = "cachediff";
-                } else if l31_n_num <= sip_cnt * 2 {
-                    pattern_type = "cachesame";
-                } else {
-                    pattern_type = "general";
-                }
-                set_split_option!(
-                    tune,
-                    pattern_type,
-                    false,
-                    false,
-                    true,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false
-                );
-            }
-        } else {
-            tune.sip_n = UNIT_SIP_N;
-            tune.sip_m = UNIT_SIP_M;
-            tune.sip_k = k_align;
-
-            let l1_mem_sip_k = (l1_mem / 2 / BPE - tune.sip_m * tune.sip_n - n_align)
-                / (2 * tune.sip_m + 2 * tune.sip_n);
-            tune.sip_k = align_down(l1_mem_sip_k, UNIT_SIP_K);
-
-            set_split_option!(
-                tune,
-                "general",
-                batch_multicore,
-                lhs_multicore,
-                rhs_multicore,
-                false,
-                false,
-                false,
-                false,
-                false
-            );
-        };
-        // println!("TunerInt8GemmI8");
-        0
-    }
 }

@@ -52,7 +52,8 @@ pub struct GcuLaunchConfig {
 impl GcuLaunchConfig {
     pub fn set_shared_memory(&mut self, size_in_bytes: u32) {
         const VDMEM_VALID_SIZE : u32 = 0x180000 - 0x8000 - 0x800;
-        self.shared_mem_bytes = if size_in_bytes > VDMEM_VALID_SIZE { VDMEM_VALID_SIZE } else { size_in_bytes };
+        let shared_mem_bytes = ((size_in_bytes + 4095) / 4096) * 4096 + 4096;
+        self.shared_mem_bytes = if shared_mem_bytes > VDMEM_VALID_SIZE { VDMEM_VALID_SIZE } else { shared_mem_bytes };
     }
     
     pub fn for_threds(n: u32) -> Self {
