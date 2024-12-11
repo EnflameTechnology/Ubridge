@@ -12,6 +12,9 @@
 #include <tops/bfloat.h>
 using namespace std;
 using namespace tops;
+#define FUNC_ATTRIBUTE (noinline, no_mem_alias_in_vldst, no_mem_alias_in_tar, \
+   loop_iterator_less_than_1024, enable_software_pipeliner, enable_bc_resolver)
+
 constexpr int MAX_RANK = 4;
 constexpr int MAX_PAVO_CLUSTER_NUM = 4;
 constexpr int MAX_PAVO_SIP_NUM = 6;

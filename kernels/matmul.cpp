@@ -1190,6 +1190,15 @@ extern "C" __global__ void FN_NAME(TYPE *in_a, TYPE_WEIGHT *in_b, TYPE *out, \
                                             float alpha, float beta, float addmm_beta, \
                                             int sip_m, int sip_k, int sip_n, int broadcasted_weight, int group_size) {\
     __local__ __valigned__ char buffer_sip[VDMEM_VALID_SIZE];\
+    extern __shared__ char l2_buffer[];\
+    int32_t M_align = CeilDiv(input_m, sip_m) * sip_m;\
+    int32_t K_align = CeilDiv(input_k, sip_k) * sip_k; \
+    int LSIZE = M_align * K_align * sizeof(TYPE); \
+    int R_SIP_SIZE = sip_k * sip_n * 2 * sizeof(TYPE) + M_align * sip_n * 2 * sizeof(TYPE) + 64 * sip_n * sizeof(TYPE); \
+    if (LSIZE + R_SIP_SIZE < VDMEM_VALID_SIZE) { \
+      matmul_kernel_lhs_l1<TYPE, TYPE_WEIGHT, TYPE, TYPE, TYPE>(in_a, in_b, out, out, scales, zeros, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
+        lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, group_size, buffer_sip, l2_buffer);\
+    } else \
       matmul_kernel_batch<TYPE, TYPE_WEIGHT, TYPE, TYPE, TYPE>(in_a, in_b, out, out, scales, zeros, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
         lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, group_size, buffer_sip);\
 }\

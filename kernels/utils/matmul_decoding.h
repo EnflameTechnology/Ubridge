@@ -9,10 +9,9 @@
 #define BYTE_ALIGN 512
 #define ALIGN_UP_512(x) (((x + 511) >> 9) << 9)
 
-#if 0
 template <typename lhs_t, typename rhs_t, typename out_t, typename bias_t,
           typename scale_t>
-__device__ __attribute__((noinline)) void matmul_kernel_lhs_l1(
+__device__ __attribute__((noinline, enable_software_pipeliner, enable_bc_resolver)) void matmul_kernel_lhs_l1(
     lhs_t *lhs, rhs_t *rhs, out_t *out, bias_t *bias, scale_t *scale,
     lhs_t *zeros, int input_dtype, int input_batch, int input_m, int input_k,
     int input_n, int lhs_multicore, int rhs_multicore, int batch_multicore,
@@ -133,11 +132,13 @@ __device__ __attribute__((noinline)) void matmul_kernel_lhs_l1(
   }
 
   tops::private_dte dte_lhs_ctx;
+  dte_lhs_ctx.init();
   tops::event event_lhs;
 
   tops::private_cdte dte_private_rhs_ctx;
   dte_private_rhs_ctx.init();
   tops::private_dte dte_rhs_ctx;
+  dte_rhs_ctx.init();
   tops::event event_private_rhs;
   tops::event event_rhs;
 
@@ -145,12 +146,15 @@ __device__ __attribute__((noinline)) void matmul_kernel_lhs_l1(
   tops::event event_bias;
 
   tops::private_dte dte_scale_ctx;
+  dte_scale_ctx.init();
   tops::event event_scale;
 
   tops::private_dte dte_zeros_ctx;
+  dte_zeros_ctx.init();
   tops::event event_zeros;
 
   tops::private_dte dte_out_ctx;
+  dte_out_ctx.init();
   tops::event event_out;
 
   int32_t hbm_rhs_shape[3] = {B, K, N};
@@ -238,29 +242,29 @@ __device__ __attribute__((noinline)) void matmul_kernel_lhs_l1(
   char *l1_lhs_ptr = reinterpret_cast<char *>(l1_buffer);
 
   // rhs -> slice_padding to L2 -> transpose to L1
-  char *l2_rhs_ptr0 = reinterpret_cast<char *>(l2_buffer + l2_lhs_size +
-                                               thread_id * (l2_rhs_size * 2));
-  char *l2_rhs_ptr1 = reinterpret_cast<char *>(l2_rhs_ptr0 + l2_rhs_size);
-  char *l1_out_ptr0 = reinterpret_cast<char *>(l1_lhs_ptr + l1_lhs_size);
-  char *l1_out_ptr1 = reinterpret_cast<char *>(l1_out_ptr0 + l1_out_size);
-  char *l1_bias_ptr0 = reinterpret_cast<char *>(l1_out_ptr1 + l1_out_size);
-  char *l1_bias_ptr1 = reinterpret_cast<char *>(l1_bias_ptr0 + l1_bias_size);
-  char *l1_act_weight_ptr0 =
-      l1_bias_ptr1 + ALIGN_UP_512(l1_bias_size); // no l1 mem assigned defaultly
-  char *l1_act_weight_ptr1 = l1_act_weight_ptr0;
-  char *l1_scale_ptr0 = reinterpret_cast<char *>(
-      l1_act_weight_ptr1 + ALIGN_UP_512(l1_act_weight_size));
-  char *l1_scale_ptr1 = reinterpret_cast<char *>(l1_scale_ptr0 + l1_scale_size);
-  char *l1_rhs_ptr0 = reinterpret_cast<char *>(l1_scale_ptr1 + l1_scale_size);
-  char *l1_rhs_ptr1 = reinterpret_cast<char *>(l1_rhs_ptr0 + l1_rhs_size);
-  char *private_rhs_requant_buff =
-      reinterpret_cast<char *>(l1_rhs_ptr1 + l1_rhs_size);
-  char *l1_zeros_ptr0;
-  char *l1_zeros_ptr1; // no l1 mem assigned
+  char* l2_rhs_ptr0 = reinterpret_cast<char*>(l2_buffer + l2_lhs_size +
+                                              thread_id * (l2_rhs_size * 2));
+  char* l2_rhs_ptr1 = reinterpret_cast<char*>(l2_rhs_ptr0 + l2_rhs_size);
+  char* l1_out_ptr0 = reinterpret_cast<char*>(l1_lhs_ptr + l1_lhs_size);
+  char* l1_out_ptr1 = reinterpret_cast<char*>(l1_out_ptr0 + l1_out_size);
+  char* l1_bias_ptr0 = reinterpret_cast<char*>(l1_out_ptr1 + l1_out_size);
+  char* l1_bias_ptr1 = reinterpret_cast<char*>(l1_bias_ptr0 + l1_bias_size);
+  char* l1_act_weight_ptr0 = l1_bias_ptr1 +
+      ALIGN_UP_512(l1_bias_size);  // no l1 mem assigned defaultly
+  char* l1_act_weight_ptr1 = l1_act_weight_ptr0;
+  char* l1_scale_ptr0 = reinterpret_cast<char*>(l1_act_weight_ptr1 +
+         ALIGN_UP_512(l1_act_weight_size));
+  char* l1_scale_ptr1 = reinterpret_cast<char*>(l1_scale_ptr0 + l1_scale_size);
+  char* l1_rhs_ptr0 = reinterpret_cast<char*>(l1_scale_ptr1 + l1_scale_size);
+  char* l1_rhs_ptr1 = reinterpret_cast<char*>(l1_rhs_ptr0 + l1_rhs_size);
+  char* private_rhs_requant_buff =
+      reinterpret_cast<char*>(l1_rhs_ptr1 + l1_rhs_size);
+  char* l1_zeros_ptr0;
+  char* l1_zeros_ptr1;  // no l1 mem assigned
   if (quant_type == 1) {
     l1_zeros_ptr0 =
-        reinterpret_cast<char *>(private_rhs_requant_buff + l1_rhs_size * 2);
-    l1_zeros_ptr1 = reinterpret_cast<char *>(l1_zeros_ptr0 + l1_zeros_size);
+        reinterpret_cast<char*>(private_rhs_requant_buff + l1_rhs_size * 2);
+    l1_zeros_ptr1 = reinterpret_cast<char*>(l1_zeros_ptr0 + l1_zeros_size);
   }
 
   if ((global_thread_id < sip_num_used_0) ||
@@ -272,30 +276,28 @@ __device__ __attribute__((noinline)) void matmul_kernel_lhs_l1(
 
     if (need_trans_lhs) {
       dte_lhs_ctx.config_transpose(
-          tops::mdspan(tops::Private, reinterpret_cast<lhs_t *>(l1_lhs_ptr),
+          tops::mdspan(tops::Private, reinterpret_cast<lhs_t*>(l1_lhs_ptr),
                        l1_lhs_shape),
-          tops::mdspan(tops::Shared, reinterpret_cast<lhs_t *>(l2_lhs_ptr),
+          tops::mdspan(tops::Shared, reinterpret_cast<lhs_t*>(l2_lhs_ptr),
                        l2_lhs_shape1),
           {0, 2, 3, 1});
     } else {
       dte_lhs_ctx.config_transpose(
-          tops::mdspan(tops::Private, reinterpret_cast<lhs_t *>(l1_lhs_ptr),
+          tops::mdspan(tops::Private, reinterpret_cast<lhs_t*>(l1_lhs_ptr),
                        l1_lhs_shape),
-          tops::mdspan(tops::Shared, reinterpret_cast<lhs_t *>(l2_lhs_ptr),
+          tops::mdspan(tops::Shared, reinterpret_cast<lhs_t*>(l2_lhs_ptr),
                        l2_lhs_shape1),
           {2, 0, 1, 3});
     }
 
     if (enable_quant) {
       dte_scale_ctx.config_slice(
-          tops::mdspan(tops::Private,
-                       reinterpret_cast<scale_t *>(l1_scale_ptr0),
+          tops::mdspan(tops::Private, reinterpret_cast<scale_t*>(l1_scale_ptr0),
                        l1_scale_shape),
           tops::mdspan(tops::Global, scale, hbm_scale_shape), {0, 0});
       if (quant_type == 1) {
         dte_zeros_ctx.config_slice(
-            tops::mdspan(tops::Private,
-                         reinterpret_cast<lhs_t *>(l1_zeros_ptr0),
+            tops::mdspan(tops::Private, reinterpret_cast<lhs_t*>(l1_zeros_ptr0),
                          l1_zeros_shape),
             tops::mdspan(tops::Global, zeros, hbm_zeros_shape), {0, 0});
       }
@@ -303,25 +305,25 @@ __device__ __attribute__((noinline)) void matmul_kernel_lhs_l1(
 
     if (need_trans_rhs) {
       dte_private_rhs_ctx.config_slice(
-          tops::mdspan(tops::Shared, reinterpret_cast<rhs_t *>(l2_rhs_ptr0),
+          tops::mdspan(tops::Shared, reinterpret_cast<rhs_t*>(l2_rhs_ptr0),
                        l2_rhs_shape),
           tops::mdspan(tops::Global, rhs, hbm_rhs_shape), {0, 0, 0});
       dte_rhs_ctx.config_transpose(
-          tops::mdspan(tops::Private, reinterpret_cast<rhs_t *>(l1_rhs_ptr0),
+          tops::mdspan(tops::Private, reinterpret_cast<rhs_t*>(l1_rhs_ptr0),
                        l1_rhs_shape),
-          tops::mdspan(tops::Shared, reinterpret_cast<rhs_t *>(l2_rhs_ptr0),
+          tops::mdspan(tops::Shared, reinterpret_cast<rhs_t*>(l2_rhs_ptr0),
                        l2_rhs_shape),
           {0, 2, 1});
     } else {
       dte_rhs_ctx.config_slice(
-          tops::mdspan(tops::Private, reinterpret_cast<rhs_t *>(l1_rhs_ptr0),
+          tops::mdspan(tops::Private, reinterpret_cast<rhs_t*>(l1_rhs_ptr0),
                        l1_rhs_shape),
           tops::mdspan(tops::Global, rhs, hbm_rhs_shape), {0, 0, 0});
     }
 
     dte_out_ctx.config_deslice(
         tops::mdspan(tops::Global, out, hbm_out_shape),
-        tops::mdspan(tops::Private, reinterpret_cast<out_t *>(l1_out_ptr0),
+        tops::mdspan(tops::Private, reinterpret_cast<out_t*>(l1_out_ptr0),
                      l1_out_shape),
         {0, 0, 0});
 
@@ -491,24 +493,42 @@ __device__ __attribute__((noinline)) void matmul_kernel_lhs_l1(
                 (long)(l1_lhs_ptr +
                        (k_idx * M_align + m_idx * subk_size) * sizeof(lhs_t));
             long mloop_out_addr = out_addr + m_idx * subn_size * sizeof(out_t);
-            lhs_t *rhs_pt = reinterpret_cast<lhs_t *>(
-                (quant_type == 2 || quant_type == 1) ? private_rhs_requant_buff
-                                                     : rhs_ptr);
-            if (std::is_same<lhs_t, __bf16>::value) {
-              c_func_bfmatmul_general(
-                  lhs_addr, (long)rhs_pt, mloop_out_addr, subm_size, subn_size,
-                  subk_size);
+            int acc_flag = (k_idx == 0) ? 0 : 1;
+            int store_flag = (k_idx + subk_size >= K) ? 1 : 0;
+            int vab_offset = m_idx * subn_size / 32;
+            int extra_vab = (enable_bias == 1) ? 12 * m_idx / subm_size : 0;
+            int extra_scale_vab =
+                (quant_type == 3) ? 12 * m_idx / subm_size : 0;
+            vab_offset += extra_vab + quant_vab + extra_scale_vab;
+            out_t* dst_pt = reinterpret_cast<out_t*>(mloop_out_addr);
+            lhs_t* lhs_pt = reinterpret_cast<lhs_t*>(lhs_addr);
+            lhs_t* rhs_pt =
+                reinterpret_cast<lhs_t*>((quant_type == 1 ||
+                                            quant_type == 2)
+                                               ? private_rhs_requant_buff
+                                               : rhs_ptr);
+            bias_t* bias_pt = reinterpret_cast<bias_t*>(bias_ptr);
+            if (sip_m % 128 == 0) {
+              addmm<128>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
+                            subk_size, subn_size, acc_flag, store_flag,
+                            vab_offset, launch_times, alpha, beta);
+            } else if (sip_m % 64 == 0) {
+                addmm<64>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
+                subk_size, subn_size, acc_flag, store_flag,
+                vab_offset, launch_times, alpha, beta);
             } else {
-              c_func_hmatmul_general(
-                    lhs_addr, (long)rhs_pt, mloop_out_addr, subm_size, subn_size,
-                    subk_size);
-            }
+                addmm<32>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
+                subk_size, subn_size, acc_flag, store_flag,
+                vab_offset, launch_times, alpha, beta);
+            } 
+            launch_times += 1;
           }
           k_flag = !k_flag;
-        } // K loop
+        }  // K loop
         if (!first_output) {
           event_out.wait();
         }
+
         SET_SRC_CUR_CFG(dte_out_ctx, l1_out_ptr0, l1_out_ptr1, n_flag);
         dte_out_ctx.set_dst_offset(0, b_idx);
         dte_out_ctx.set_dst_offset(2, n_idx);
@@ -517,8 +537,8 @@ __device__ __attribute__((noinline)) void matmul_kernel_lhs_l1(
         first_output = false;
 
         n_flag = !n_flag;
-      } // N loop
-    }   // batch loop
+      }  // N loop
+    }  // batch loop
     event_out.wait();
   } else {
     for (auto b_idx = 0; b_idx < B; b_idx++) {
@@ -528,8 +548,14 @@ __device__ __attribute__((noinline)) void matmul_kernel_lhs_l1(
       __syncthreads();
     }
   }
-} // func
-#endif
+
+  dte_lhs_ctx.destroy();
+  dte_private_rhs_ctx.destroy();
+  dte_rhs_ctx.destroy();
+  dte_scale_ctx.destroy();
+  dte_zeros_ctx.destroy();
+  dte_out_ctx.destroy();
+}  // func
 
 template <typename lhs_t, typename rhs_t, typename out_t, typename bias_t,
           typename scale_t>
@@ -629,6 +655,8 @@ __device__ void matmul_kernel_trans_avoid(
   tops_dte_ctx_t dte_scale_ctx;
   tops::event event_scale;
 
+  tops_dte_ctx_t dte_scale_broacast_ctx;
+
   tops_dte_ctx_t dte_out_ctx;
   tops::event event_out;
 
@@ -679,6 +707,8 @@ __device__ void matmul_kernel_trans_avoid(
         group_use_num_loop * per_group_use_num * subn_size * sizeof(lhs_t);
     l1_scale_size = l2_scale_size;
   }
+  int scale_src_shape[2] = { mul_m_size, 1 };
+  int scale_dst_shape[2] = { mul_m_size, mul_n_size };
 
   __local__ __attribute__((aligned(512))) int local_workspace[512];
   // lhs -> L2 -> L1
@@ -694,6 +724,9 @@ __device__ void matmul_kernel_trans_avoid(
   // prelu l1 mem, // no l1 mem assigned defaultly
   char* l1_lhs_ptr = l1_rhs_requant_ptr +
       ALIGN_UP_512(l1_rhs_requant_size);
+
+  char* l1_rhs_cast_ptr = l1_lhs_ptr +
+      ALIGN_UP_512(l1_lhs_size);
 
   auto sip_num_used_0 = sip_num_used / block_num + sip_num_used % block_num;
   auto sip_num_used_1 = sip_num_used / block_num;
@@ -852,7 +885,7 @@ __device__ void matmul_kernel_trans_avoid(
           }
 
           if (quant_type == 2) {
-             char* scale_buff;
+              char* scale_buff;
               if (k_group_flag) {
                 scale_buff = reinterpret_cast<char*>(scale_ptr) +
                              (k_idx / subk_size) * per_group_use_num *
@@ -860,11 +893,14 @@ __device__ void matmul_kernel_trans_avoid(
               } else {
                 scale_buff = reinterpret_cast<char*>(scale_ptr);
               }
-
-              mul<0>(reinterpret_cast<lhs_t*>(l1_rhs_requant_ptr),
-                     reinterpret_cast<char*>(rhs_ptr),
-                     reinterpret_cast<lhs_t*>(scale_buff), mul_m_size,
-                     mul_n_size);
+              tops::broadcast(dte_scale_broacast_ctx, 
+                tops::mdspan(tops::Private, reinterpret_cast<lhs_t*>(l1_rhs_requant_ptr), scale_dst_shape), 
+                  tops::mdspan(tops::Private, reinterpret_cast<lhs_t*>(scale_buff), scale_src_shape));
+              convert(reinterpret_cast<lhs_t*>(l1_rhs_cast_ptr), rhs_ptr, mul_m_size * mul_n_size);
+              mul(reinterpret_cast<lhs_t*>(l1_rhs_requant_ptr),
+                    reinterpret_cast<lhs_t*>(l1_rhs_requant_ptr),
+                    reinterpret_cast<lhs_t*>(l1_rhs_cast_ptr),
+                    mul_m_size * mul_n_size);
           }
 
           for (auto m_idx = 0; m_idx < M; m_idx += subm_size) {

@@ -603,6 +603,9 @@ impl AtenGemmTuner {
             let l1_mem_sip_k = (l1_mem / 2 / BPE - tune.sip_m * tune.sip_n - n_align)
                 / (2 * tune.sip_m + 2 * tune.sip_n);
             tune.sip_k = align_down(l1_mem_sip_k, UNIT_SIP_K);
+            if tune.sip_k > info.K {
+                tune.sip_k = info.K;
+            }
             set_split_option!(
                 tune, false, false, true, false, false, false, false, false
             );
