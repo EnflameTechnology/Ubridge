@@ -1137,7 +1137,7 @@ extern "C" __global__ void FN_NAME(TYPE *in_a, TYPE *in_b, TYPE *out,\
     int32_t K_align = CeilDiv(input_k, sip_k) * sip_k; \
     int LSIZE = M_align * K_align * sizeof(TYPE); \
     int R_SIP_SIZE = (sip_k * sip_n * 2 + M_align * sip_n * 2) * sizeof(TYPE);\
-    if (rhs_transpose > 0 && (LSIZE + R_SIP_SIZE < VDMEM_VALID_SIZE)) { \
+    if (sip_m == 1 && rhs_transpose > 0 && (LSIZE + R_SIP_SIZE < VDMEM_VALID_SIZE)) { \
       matmul_kernel_trans_avoid<TYPE, TYPE, TYPE, TYPE, TYPE>(in_a, in_b, out, out, out, out, input_dtype, input_batch, input_m, input_k, input_n, lhs_multicore, rhs_multicore, batch_multicore, \
         lhs_transpose, rhs_transpose, alpha, beta, addmm_beta, sip_m, sip_k, sip_n, broadcasted_weight, -1, buffer_sip, l2_buffer);\
     } else \
