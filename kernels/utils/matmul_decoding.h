@@ -157,7 +157,7 @@ __device__ __attribute__((noinline, enable_software_pipeliner, enable_bc_resolve
   dte_out_ctx.init();
   tops::event event_out;
 
-  int32_t hbm_rhs_shape[3] = {B, K, N};
+  int32_t hbm_rhs_shape[3] = {broadcasted_weight ? 1 : B, K, N};
   if (need_trans_rhs) {
     hbm_rhs_shape[1] = N;
     hbm_rhs_shape[2] = K;
@@ -351,14 +351,14 @@ __device__ __attribute__((noinline, enable_software_pipeliner, enable_bc_resolve
         SET_DST_CUR_CFG(dte_private_rhs_ctx, l2_rhs_ptr0, l2_rhs_ptr1, k_flag);
         SET_SRC_CUR_CFG(dte_rhs_ctx, l2_rhs_ptr0, l2_rhs_ptr1, k_flag);
         SET_DST_CUR_CFG(dte_rhs_ctx, l1_rhs_ptr0, l1_rhs_ptr1, k_flag);
-        dte_private_rhs_ctx.set_src_offset(0, b_idx);
+        dte_private_rhs_ctx.set_src_offset(0, broadcasted_weight ? 0 : b_idx);
         dte_private_rhs_ctx.set_src_offset(1, n_idx);
         dte_private_rhs_ctx.set_src_offset(2, 0);
         event_private_rhs = dte_private_rhs_ctx.trigger();
         event_rhs = dte_rhs_ctx.trigger();
       } else {
         SET_DST_CUR_CFG(dte_rhs_ctx, l1_rhs_ptr0, l1_rhs_ptr1, k_flag);
-        dte_rhs_ctx.set_src_offset(0, b_idx);
+        dte_rhs_ctx.set_src_offset(0, broadcasted_weight ? 0 : b_idx);
         dte_rhs_ctx.set_src_offset(1, 0);
         dte_rhs_ctx.set_src_offset(2, n_idx);
         event_rhs = dte_rhs_ctx.trigger();
@@ -426,7 +426,7 @@ __device__ __attribute__((noinline, enable_software_pipeliner, enable_bc_resolve
                                k_flag);
               SET_SRC_NEXT_CFG(dte_rhs_ctx, l2_rhs_ptr0, l2_rhs_ptr1, k_flag);
               SET_DST_NEXT_CFG(dte_rhs_ctx, l1_rhs_ptr0, l1_rhs_ptr1, k_flag);
-              dte_private_rhs_ctx.set_src_offset(0, b_idx);
+              dte_private_rhs_ctx.set_src_offset(0, broadcasted_weight ? 0 : b_idx);
               dte_private_rhs_ctx.set_src_offset(1, next_n_idx);
               if (quant_type == 1) {
                 dte_private_rhs_ctx.set_src_offset(2, next_k_idx / 2);
@@ -437,7 +437,7 @@ __device__ __attribute__((noinline, enable_software_pipeliner, enable_bc_resolve
               event_rhs = dte_rhs_ctx.trigger();
             } else {
               SET_DST_NEXT_CFG(dte_rhs_ctx, l1_rhs_ptr0, l1_rhs_ptr1, k_flag);
-              dte_rhs_ctx.set_src_offset(0, b_idx);
+              dte_rhs_ctx.set_src_offset(0, broadcasted_weight ? 0 : b_idx);
               if (quant_type == 1) {
                 dte_rhs_ctx.set_src_offset(1, next_k_idx / 2);
               } else {
@@ -509,9 +509,13 @@ __device__ __attribute__((noinline, enable_software_pipeliner, enable_bc_resolve
                                                : rhs_ptr);
             bias_t* bias_pt = reinterpret_cast<bias_t*>(bias_ptr);
             if (sip_m % 128 == 0) {
-              addmm<128>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
+                addmm<128>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
                             subk_size, subn_size, acc_flag, store_flag,
                             vab_offset, launch_times, alpha, beta);
+            } else if (sip_m % 96 == 0) {
+                addmm<96>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
+                subk_size, subn_size, acc_flag, store_flag,
+                vab_offset, launch_times, alpha, beta);
             } else if (sip_m % 64 == 0) {
                 addmm<64>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
                 subk_size, subn_size, acc_flag, store_flag,
@@ -920,7 +924,22 @@ __device__ void matmul_kernel_trans_avoid(
             lhs_t* rhs_pt = reinterpret_cast<lhs_t*>(
                 quant_type == 2 ? l1_rhs_requant_ptr : rhs_ptr);
             bias_t* bias_pt = reinterpret_cast<bias_t*>(bias_ptr);
-            if (sip_m % 32 == 0) {
+            if (sip_m % 128 == 0) {
+                addmm<128, MK_NK>(dst_pt, lhs_pt, rhs_pt, bias_pt,
+                                  reinterpret_cast<int*>(local_workspace),
+                                  subk_size, subn_size, acc_flag, store_flag,
+                                  vab_offset, launch_times, alpha, beta);
+            } else if (sip_m % 96 == 0) {
+                addmm<96, MK_NK>(dst_pt, lhs_pt, rhs_pt, bias_pt,
+                                  reinterpret_cast<int*>(local_workspace),
+                                  subk_size, subn_size, acc_flag, store_flag,
+                                  vab_offset, launch_times, alpha, beta);
+            } else if (sip_m % 64 == 0) {
+                addmm<64, MK_NK>(dst_pt, lhs_pt, rhs_pt, bias_pt,
+                                  reinterpret_cast<int*>(local_workspace),
+                                  subk_size, subn_size, acc_flag, store_flag,
+                                  vab_offset, launch_times, alpha, beta);
+            } else if (sip_m % 32 == 0) {
                 addmm<32, MK_NK>(dst_pt, lhs_pt, rhs_pt, bias_pt,
                                   reinterpret_cast<int*>(local_workspace),
                                   subk_size, subn_size, acc_flag, store_flag,
