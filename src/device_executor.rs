@@ -370,7 +370,7 @@ impl DeviceExecutor {
             "kvconcat_f32",
         ];
 
-        let embedding_functions = vec!["rope_f32", "rope_f16", "rope_bf16"];
+        let embedding_functions = vec!["rope_f32", "rope_f16", "rope_bf16", "rope_f32_f16", "rope_f32_bf16"];
 
         let conv_functions = vec![
             "conv1d_f32",

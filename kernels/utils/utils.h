@@ -23,7 +23,28 @@ constexpr int MAX_DRD_SIP_NUM = 12;
 constexpr int MAX_SCP_CLUSTER_NUM = 1;
 constexpr int MAX_SCP_SIP_NUM = 12;
 constexpr int SIP_VECTOR_LENGTH = 128;
-#define SHARE_BUFFER_SIZE 1024 * 1024 * 64 //64MB
+#define SHARE_BUFFER_SIZE 1024 * 1024 * 48 //64MB - 16MB (reserved)
+
+typedef enum {
+  TOPSOP_DATA_NONE = -1,  /**< TOPSOP_DATA_NONE -1  */
+  TOPSOP_DATA_I8 = 0,     /**< TOPSOP_DATA_I8 0  */
+  TOPSOP_DATA_U8,         /**< TOPSOP_DATA_U8 1  */
+  TOPSOP_DATA_I16,        /**< TOPSOP_DATA_I16 2  */
+  TOPSOP_DATA_U16,        /**< TOPSOP_DATA_U16 3  */
+  TOPSOP_DATA_FP16,       /**< TOPSOP_DATA_FP16 4  */
+  TOPSOP_DATA_BF16,       /**< TOPSOP_DATA_BF16 5  */
+  TOPSOP_DATA_I32,        /**< TOPSOP_DATA_I32 6  */
+  TOPSOP_DATA_U32,        /**< TOPSOP_DATA_U32 7  */
+  TOPSOP_DATA_FP32,       /**< TOPSOP_DATA_FP32 8  */
+  TOPSOP_DATA_EF32,       /**< TOPSOP_DATA_EF32 9  */
+  TOPSOP_DATA_TF32,       /**< TOPSOP_DATA_TF32 10  */
+  TOPSOP_DATA_I64,        /**< TOPSOP_DATA_I64 11  */
+  TOPSOP_DATA_U64,        /**< TOPSOP_DATA_U64 12  */
+  TOPSOP_DATA_F64,        /**< TOPSOP_DATA_F64 13  */
+  TOPSOP_DATA_PRED,       /**< TOPSOP_DATA_PRED 14  */
+  TOPSOP_DATA_I4,         /**< TOPSOP_DATA_I4 15  */
+} topsopDataType_t;
+
 // #define KERNEL_TEST
 constexpr int VDMEM_VALID_SIZE = 0x180000 - 0x8000 - 0x800;
 

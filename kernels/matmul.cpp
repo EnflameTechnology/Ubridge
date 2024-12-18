@@ -31,25 +31,6 @@ using namespace std;
 #define MAX_NUM 1540096 - 1024
 #define TEMPLATE_ALIGN_UP(a, b) (((a + b - 1) / b) * b)
 #define L1_ALIGN_SIZE (128)
-typedef enum {
-  TOPSOP_DATA_NONE = -1,  /**< TOPSOP_DATA_NONE -1  */
-  TOPSOP_DATA_I8 = 0,     /**< TOPSOP_DATA_I8 0  */
-  TOPSOP_DATA_U8,         /**< TOPSOP_DATA_U8 1  */
-  TOPSOP_DATA_I16,        /**< TOPSOP_DATA_I16 2  */
-  TOPSOP_DATA_U16,        /**< TOPSOP_DATA_U16 3  */
-  TOPSOP_DATA_FP16,       /**< TOPSOP_DATA_FP16 4  */
-  TOPSOP_DATA_BF16,       /**< TOPSOP_DATA_BF16 5  */
-  TOPSOP_DATA_I32,        /**< TOPSOP_DATA_I32 6  */
-  TOPSOP_DATA_U32,        /**< TOPSOP_DATA_U32 7  */
-  TOPSOP_DATA_FP32,       /**< TOPSOP_DATA_FP32 8  */
-  TOPSOP_DATA_EF32,       /**< TOPSOP_DATA_EF32 9  */
-  TOPSOP_DATA_TF32,       /**< TOPSOP_DATA_TF32 10  */
-  TOPSOP_DATA_I64,        /**< TOPSOP_DATA_I64 11  */
-  TOPSOP_DATA_U64,        /**< TOPSOP_DATA_U64 12  */
-  TOPSOP_DATA_F64,        /**< TOPSOP_DATA_F64 13  */
-  TOPSOP_DATA_PRED,       /**< TOPSOP_DATA_PRED 14  */
-  TOPSOP_DATA_I4,         /**< TOPSOP_DATA_I4 15  */
-} topsopDataType_t;
 
 
 template <typename lhs_t, typename rhs_t>
@@ -221,7 +202,7 @@ __device__ __attribute__((noinline)) void matmul_kernel(lhs_t *lhs, rhs_t *rhs, 
 //   tops::mdspan sip_bias0(tops::Private, buffer_sip_bias0, N);
   auto M_SIP_LOOP_CNT_TASKS = M / subm_size + (M % subm_size > 0 ? 1 : 0);
   auto N_SIP_LOOP_CNT_TASKS = N / subn_size + (N % subn_size > 0 ? 1 : 0);
-  auto subk_count_each_thread = K / subk_size + (K % subk_size > 0 ? 1 : 0);
+  auto subk_count = K / subk_size + (K % subk_size > 0 ? 1 : 0);
   auto xhs_multicore = 0;
   if ((is_lhs_split == 1) || (is_rhs_split == 1) || (is_batch_split == 1)) {
     xhs_multicore = 1;
@@ -233,8 +214,8 @@ __device__ __attribute__((noinline)) void matmul_kernel(lhs_t *lhs, rhs_t *rhs, 
     sdma_tasks_num = B;
   }
   auto sip_num_used = (sdma_tasks_num > sip_cnt) ? sip_cnt : sdma_tasks_num;
-  auto lhs_loop_step_each_thread = (is_lhs_split == 1) ? sip_num_used : 1;
-  auto rhs_loop_step_each_thread = (is_rhs_split == 1) ? sip_num_used : 1;
+  auto lhs_loop_step = (is_lhs_split == 1) ? sip_num_used : 1;
+  auto rhs_loop_step = (is_rhs_split == 1) ? sip_num_used : 1;
   auto reminder = sdma_tasks_num % sip_cnt;
   auto loop_len_this_sip = (thread_idx < reminder)
                                ? (sdma_tasks_num / sip_cnt + 1)
@@ -248,9 +229,9 @@ __device__ __attribute__((noinline)) void matmul_kernel(lhs_t *lhs, rhs_t *rhs, 
                            ? (thread_idx * loop_len_this_sip)
                            : (thread_idx * loop_len_this_sip + reminder);
   }
-  auto subm_count_each_thread =
+  auto subm_count =
       is_lhs_split == 1 ? loop_len_this_sip : M_SIP_LOOP_CNT_TASKS;
-  auto subn_count_each_thread =
+  auto subn_count =
       is_rhs_split == 1 ? loop_len_this_sip : N_SIP_LOOP_CNT_TASKS;
   auto Batch_SIP_LOOP_CNT = (is_batch_split == 1) ? loop_len_this_sip : B;
 
@@ -303,60 +284,60 @@ __device__ __attribute__((noinline)) void matmul_kernel(lhs_t *lhs, rhs_t *rhs, 
       e_beta_output = tops::memset_async(dte_b, private_out0, 0.0f);
 
       beta_output_sdma_wait = 1;
-      int next_n_sip_idx_temp, next_subm_index_each_thread, next_m_sip_idx_temp;
+      int next_n_sip_idx_temp, next_subm_index, next_m_sip_idx_temp;
 
-      for (auto subm_index_each_thread = 0;
-           subm_index_each_thread < subm_count_each_thread;
-           subm_index_each_thread++) {
+      for (auto subm_index = 0;
+           subm_index < subm_count;
+           subm_index++) {
         int subm_index_global;
         if (is_lhs_split) {
           subm_index_global =
-              subm_index_each_thread * lhs_loop_step_each_thread + thread_idx;
+              subm_index * lhs_loop_step + thread_idx;
         } else {
-          subm_index_global = subm_index_each_thread;
+          subm_index_global = subm_index;
         }
         int subm_offset_global = subm_index_global * subm_size;
-        for (auto subn_index_each_thread = 0;
-             subn_index_each_thread < subn_count_each_thread;
-             subn_index_each_thread++) {
+        for (auto subn_index = 0;
+             subn_index < subn_count;
+             subn_index++) {
           int subn_index_global;
           if (is_rhs_split) {
             subn_index_global =
-                subn_index_each_thread * rhs_loop_step_each_thread + thread_idx;
+                subn_index * rhs_loop_step + thread_idx;
           } else {
-            subn_index_global = subn_index_each_thread;
+            subn_index_global = subn_index;
           }
 
           int subn_offset_global = subn_index_global * subn_size;
 
-          auto subout_index_each_thread =
-              subm_index_each_thread * subn_count_each_thread +
-              subn_index_each_thread;
-          auto cur_private_out = ((subout_index_each_thread % 2) == 0)
+          auto subout_index =
+              subm_index * subn_count +
+              subn_index;
+          auto cur_private_out = ((subout_index % 2) == 0)
                                      ? &private_out0
                                      : &private_out1;
           cur_out_addr =
-              (long)((subout_index_each_thread % 2) == 0 ? buffer_private_out0
+              (long)((subout_index % 2) == 0 ? buffer_private_out0
                                                          : buffer_private_out1);
           auto cur_private_output_ptr =
-              ((subout_index_each_thread % 2) == 0 ? buffer_private_out0
+              ((subout_index % 2) == 0 ? buffer_private_out0
                                                    : buffer_private_out1);
-          for (auto subk_index_each_thread = 0;
-               subk_index_each_thread < subk_count_each_thread;
-               subk_index_each_thread++) {
+          for (auto subk_index = 0;
+               subk_index < subk_count;
+               subk_index++) {
             // no parallel split k
-            // auto k_sip_offset = subk_index_each_thread * subk_size;
+            // auto k_sip_offset = subk_index * subk_size;
             auto global_loop_index =
-                subm_index_each_thread * subn_count_each_thread *
-                    subk_count_each_thread +
-                subn_index_each_thread * subk_count_each_thread +
-                subk_index_each_thread;
+                subm_index * subn_count *
+                    subk_count +
+                subn_index * subk_count +
+                subk_index;
 
             auto next_private_lhs =
                 (global_loop_index % 2) ? &private_lhs0 : &private_lhs1;
             auto next_private_rhs =
                 (global_loop_index % 2) ? &private_rhs0 : &private_rhs1;
-            auto next_private_out = (subout_index_each_thread % 2) == 1
+            auto next_private_out = (subout_index % 2) == 1
                                         ? &private_out0
                                         : &private_out1;
             auto next_private_lhs_trans = (global_loop_index % 2) == 1
@@ -366,44 +347,44 @@ __device__ __attribute__((noinline)) void matmul_kernel(lhs_t *lhs, rhs_t *rhs, 
                                               ? &private_rhs0_trans
                                               : &private_rhs1_trans;
 
-            int next_subk_index_each_thread, next_subn_index_each_thread,
-                next_subm_index_each_thread;
+            int next_subk_index, next_subn_index,
+                next_subm_index;
 
-            if (subk_index_each_thread + 1 < subk_count_each_thread) {
-              next_subk_index_each_thread = subk_index_each_thread + 1;
-              next_subn_index_each_thread = subn_index_each_thread;
-              next_subm_index_each_thread = subm_index_each_thread;
+            if (subk_index + 1 < subk_count) {
+              next_subk_index = subk_index + 1;
+              next_subn_index = subn_index;
+              next_subm_index = subm_index;
             } else {
-              // subk_index_each_thread + 1 == subk_count_each_thread
-              next_subk_index_each_thread = 0;
-              if (subn_index_each_thread + 1 < subn_count_each_thread) {
-                next_subn_index_each_thread = subn_index_each_thread + 1;
-                next_subm_index_each_thread = subm_index_each_thread;
+              // subk_index + 1 == subk_count
+              next_subk_index = 0;
+              if (subn_index + 1 < subn_count) {
+                next_subn_index = subn_index + 1;
+                next_subm_index = subm_index;
               } else {
-                // subn_index_each_thread + 1 == subn_count_each_thread
-                next_subn_index_each_thread = 0;
-                next_subm_index_each_thread = subm_index_each_thread + 1;
+                // subn_index + 1 == subn_count
+                next_subn_index = 0;
+                next_subm_index = subm_index + 1;
               }
             }
 
             auto next_subk_offset_global =
-                next_subk_index_each_thread * subk_size;
-            // auto next_subn_offset_global = next_subn_index_each_thread *
+                next_subk_index * subk_size;
+            // auto next_subn_offset_global = next_subn_index *
             // subn_size;
             auto next_subn_offset_global =
-                is_rhs_split ? ((next_subn_index_each_thread *
-                                     rhs_loop_step_each_thread +
+                is_rhs_split ? ((next_subn_index *
+                                     rhs_loop_step +
                                  thread_idx) *
                                 subn_size)
-                             : (next_subn_index_each_thread * subn_size);
-            // auto next_subm_offset_global = next_subm_index_each_thread *
+                             : (next_subn_index * subn_size);
+            // auto next_subm_offset_global = next_subm_index *
             // subm_size;
             auto next_subm_offset_global =
-                is_lhs_split ? ((next_subm_index_each_thread *
-                                     lhs_loop_step_each_thread +
+                is_lhs_split ? ((next_subm_index *
+                                     lhs_loop_step +
                                  thread_idx) *
                                 subm_size)
-                             : (next_subm_index_each_thread * subm_size);
+                             : (next_subm_index * subm_size);
 
             auto cur_event_lhs =
                 (global_loop_index % 2) == 0 ? event_lhs0 : event_lhs1;
@@ -468,9 +449,9 @@ __device__ __attribute__((noinline)) void matmul_kernel(lhs_t *lhs, rhs_t *rhs, 
               beta_output_sdma_wait = 1;
             }
 
-            auto nacc_flag = subk_index_each_thread == 0 ? 1 : 0;
+            auto nacc_flag = subk_index == 0 ? 1 : 0;
             auto store_flag =
-                subk_index_each_thread + 1 == subk_count_each_thread ? 1 : 0;
+                subk_index + 1 == subk_count ? 1 : 0;
             lhs_addr = long((global_loop_index % 2) == 0 ? buffer_sip_lhs0
                                                          : buffer_sip_lhs1);
             auto cur_buffer_sip_rhs = (global_loop_index % 2) == 0
@@ -781,7 +762,7 @@ __device__ __attribute__((noinline)) void matmul_kernel_batch(lhs_t *lhs, rhs_t 
                               subn_size);
   auto M_SIP_LOOP_CNT_TASKS = M / subm_size + (M % subm_size > 0 ? 1 : 0);
   auto N_SIP_LOOP_CNT_TASKS = N / subn_size + (N % subn_size > 0 ? 1 : 0);
-  auto subk_count_each_thread = K / subk_size + (K % subk_size > 0 ? 1 : 0);
+  auto subk_count = K / subk_size + (K % subk_size > 0 ? 1 : 0);
   auto xhs_multicore = 0;
   if ((is_lhs_split == 1) || (is_rhs_split == 1) || (is_batch_split == 1)) {
     xhs_multicore = 1;
@@ -793,8 +774,8 @@ __device__ __attribute__((noinline)) void matmul_kernel_batch(lhs_t *lhs, rhs_t 
     sdma_tasks_num = B;
   }
   auto sip_num_used = (sdma_tasks_num > sip_cnt) ? sip_cnt : sdma_tasks_num;
-  auto lhs_loop_step_each_thread = (is_lhs_split == 1) ? sip_num_used : 1;
-  auto rhs_loop_step_each_thread = (is_rhs_split == 1) ? sip_num_used : 1;
+  auto lhs_loop_step = (is_lhs_split == 1) ? sip_num_used : 1;
+  auto rhs_loop_step = (is_rhs_split == 1) ? sip_num_used : 1;
   auto reminder = sdma_tasks_num % sip_cnt;
   auto loop_len_this_sip = (thread_idx < reminder)
                                ? (sdma_tasks_num / sip_cnt + 1)
@@ -808,9 +789,9 @@ __device__ __attribute__((noinline)) void matmul_kernel_batch(lhs_t *lhs, rhs_t 
                            ? (thread_idx * loop_len_this_sip)
                            : (thread_idx * loop_len_this_sip + reminder);
   }
-  auto subm_count_each_thread =
+  auto subm_count =
       is_lhs_split == 1 ? loop_len_this_sip : M_SIP_LOOP_CNT_TASKS;
-  auto subn_count_each_thread =
+  auto subn_count =
       is_rhs_split == 1 ? loop_len_this_sip : N_SIP_LOOP_CNT_TASKS;
   auto Batch_SIP_LOOP_CNT = (is_batch_split == 1) ? loop_len_this_sip : B;
   int vab_offset = (enable_quant == 1) ? 512 : 0;
@@ -863,53 +844,53 @@ __device__ __attribute__((noinline)) void matmul_kernel_batch(lhs_t *lhs, rhs_t 
                                            {0, n_hbm_offset});
         }
       }
-      int next_n_sip_idx_temp, next_subm_index_each_thread, next_m_sip_idx_temp;
-      for (auto subm_index_each_thread = 0;
-           subm_index_each_thread < subm_count_each_thread;
-           subm_index_each_thread++) {
+      int next_n_sip_idx_temp, next_subm_index, next_m_sip_idx_temp;
+      for (auto subm_index = 0;
+           subm_index < subm_count;
+           subm_index++) {
         int subm_index_global;
         if (is_lhs_split) {
           subm_index_global =
-              subm_index_each_thread * lhs_loop_step_each_thread + thread_idx;
+              subm_index * lhs_loop_step + thread_idx;
         } else {
-          subm_index_global = subm_index_each_thread;
+          subm_index_global = subm_index;
         }
         int subm_offset_global = subm_index_global * subm_size;
-        for (auto subn_index_each_thread = 0;
-             subn_index_each_thread < subn_count_each_thread;
-             subn_index_each_thread++) {
+        for (auto subn_index = 0;
+             subn_index < subn_count;
+             subn_index++) {
           int subn_index_global;
           if (is_rhs_split) {
             subn_index_global =
-                subn_index_each_thread * rhs_loop_step_each_thread + thread_idx;
+                subn_index * rhs_loop_step + thread_idx;
           } else {
-            subn_index_global = subn_index_each_thread;
+            subn_index_global = subn_index;
           }
 
           int subn_offset_global = subn_index_global * subn_size;
 
-          auto subout_index_each_thread =
-              subm_index_each_thread * subn_count_each_thread +
-              subn_index_each_thread;
-          auto cur_private_out = ((subout_index_each_thread % 2) == 0)
+          auto subout_index =
+              subm_index * subn_count +
+              subn_index;
+          auto cur_private_out = ((subout_index % 2) == 0)
                                      ? &private_out0
                                      : &private_out1;
           auto cur_private_out_ptr =
-              ((subout_index_each_thread % 2) == 0 ? buffer_private_out0
+              ((subout_index % 2) == 0 ? buffer_private_out0
                                                    : buffer_private_out1);
-          for (auto subk_index_each_thread = 0;
-               subk_index_each_thread < subk_count_each_thread;
-               subk_index_each_thread++) {
+          for (auto subk_index = 0;
+               subk_index < subk_count;
+               subk_index++) {
             auto global_loop_index =
-                subm_index_each_thread * subn_count_each_thread *
-                    subk_count_each_thread +
-                subn_index_each_thread * subk_count_each_thread +
-                subk_index_each_thread;
+                subm_index * subn_count *
+                    subk_count +
+                subn_index * subk_count +
+                subk_index;
             auto next_private_lhs =
                 (global_loop_index % 2) ? &private_lhs0 : &private_lhs1;
             auto next_private_rhs =
                 (global_loop_index % 2) ? &private_rhs0 : &private_rhs1;
-            auto next_private_out = (subout_index_each_thread % 2) == 1
+            auto next_private_out = (subout_index % 2) == 1
                                         ? &private_out0
                                         : &private_out1;
             auto next_private_lhs_trans = (global_loop_index % 2) == 1
@@ -925,39 +906,39 @@ __device__ __attribute__((noinline)) void matmul_kernel_batch(lhs_t *lhs, rhs_t 
             auto next_private_zeros =
                 (global_loop_index % 2) ? &private_zeros0 : &private_zeros1;
 
-            int next_subk_index_each_thread, next_subn_index_each_thread,
-                next_subm_index_each_thread;
+            int next_subk_index, next_subn_index,
+                next_subm_index;
 
-            if (subk_index_each_thread + 1 < subk_count_each_thread) {
-              next_subk_index_each_thread = subk_index_each_thread + 1;
-              next_subn_index_each_thread = subn_index_each_thread;
-              next_subm_index_each_thread = subm_index_each_thread;
+            if (subk_index + 1 < subk_count) {
+              next_subk_index = subk_index + 1;
+              next_subn_index = subn_index;
+              next_subm_index = subm_index;
             } else {
-              next_subk_index_each_thread = 0;
-              if (subn_index_each_thread + 1 < subn_count_each_thread) {
-                next_subn_index_each_thread = subn_index_each_thread + 1;
-                next_subm_index_each_thread = subm_index_each_thread;
+              next_subk_index = 0;
+              if (subn_index + 1 < subn_count) {
+                next_subn_index = subn_index + 1;
+                next_subm_index = subm_index;
               } else {
-                next_subn_index_each_thread = 0;
-                next_subm_index_each_thread = subm_index_each_thread + 1;
+                next_subn_index = 0;
+                next_subm_index = subm_index + 1;
               }
             }
             auto next_subk_offset_global =
-                next_subk_index_each_thread * subk_size;
+                next_subk_index * subk_size;
             auto next_rhs_subk_offset_global =
-                next_subk_index_each_thread * rhs_subk_size;
+                next_subk_index * rhs_subk_size;
             auto next_subn_offset_global =
-                is_rhs_split ? ((next_subn_index_each_thread *
-                                     rhs_loop_step_each_thread +
+                is_rhs_split ? ((next_subn_index *
+                                     rhs_loop_step +
                                  thread_idx) *
                                 subn_size)
-                             : (next_subn_index_each_thread * subn_size);
+                             : (next_subn_index * subn_size);
             auto next_subm_offset_global =
-                is_lhs_split ? ((next_subm_index_each_thread *
-                                     lhs_loop_step_each_thread +
+                is_lhs_split ? ((next_subm_index *
+                                     lhs_loop_step +
                                  thread_idx) *
                                 subm_size)
-                             : (next_subm_index_each_thread * subm_size);
+                             : (next_subm_index * subm_size);
 
             auto cur_event_lhs =
                 (global_loop_index % 2) == 0 ? event_lhs0 : event_lhs1;
@@ -1088,8 +1069,8 @@ __device__ __attribute__((noinline)) void matmul_kernel_batch(lhs_t *lhs, rhs_t 
             }
 
             auto store_flag =
-                subk_index_each_thread + 1 == subk_count_each_thread ? 1 : 0;
-            int acc_flag = (subk_index_each_thread == 0) ? 0 : 1;
+                subk_index + 1 == subk_count ? 1 : 0;
+            int acc_flag = (subk_index == 0) ? 0 : 1;
 
             out_t* dst_ptr = reinterpret_cast<out_t*>(cur_private_out_ptr);
             lhs_t* lhs_ptr = reinterpret_cast<lhs_t*>(cur_private_lhs_ptr);
