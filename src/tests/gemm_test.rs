@@ -64,9 +64,9 @@ fn load_module<'a>(name: &str) -> DeviceResult<Module> {
 struct Layer<'a, T: DeviceCopy> {
     op: &'a str,
     weight: Option<DeviceBuffer<T>>,
-    input_size: (i64, i64, i64),
+    _input_size: (i64, i64, i64),
     output_size: (i64, i64, i64),
-    out_ref: Option<&'a DeviceBuffer<T>>,
+    _out_ref: Option<&'a DeviceBuffer<T>>,
 }
 
 #[allow(non_snake_case)]
@@ -101,9 +101,9 @@ pub fn gemm_test() -> DeviceResult<()> {
         Layer::<f32> {
             op: "gemm",
             weight: Some(DeviceBuffer::from_slice(&rhs)?),
-            input_size: (B as i64, M as i64, K as i64),
+            _input_size: (B as i64, M as i64, K as i64),
             output_size: (B as i64, M as i64, N as i64),
-            out_ref: None,
+            _out_ref: None,
         }, //weight is N x N matric for next layer
     ];
 

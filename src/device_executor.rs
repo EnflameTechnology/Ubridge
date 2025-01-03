@@ -17,7 +17,7 @@
 * @brief
 *
 * @author  Guoqing Bao
-* @date    2022-10-27 - 2024-01-19
+* @date    2022-10-27 - 2025-01-03
 * @version V0.1
 * @par     Copyright (c) Enflame Tech Company.
 * @par     History: Add supports for fused kernels
@@ -27,20 +27,19 @@ use crate::device_opcode::DeviceOpCode;
 use crate::device_tensor::{DeviceTensor, DeviceTensorKind};
 use core::fmt::Debug;
 use core::panic;
+use once_cell::sync::OnceCell;
 use std::collections::HashMap;
-
-use std::sync::{Arc, Once};
-
-use tops::driv;
-//Import UHAL for common computing interfaces
 use std::fs;
-use uhal::error::DeviceResult;
+use tops::driv;
+
+//Import UHAL for common computing interfaces
+use uhal::error::{DeviceError, DeviceResult};
+use uhal::function::FunctionTrait;
 use uhal::launch;
 use uhal::memory::DeviceBufferTrait;
 use uhal::module::ModuleTrait;
 use uhal::stream::{StreamFlags, StreamTrait};
 use uhal::DriverLibraryTrait;
-
 //Tops backend
 #[cfg(feature = "tops_backend")]
 use tops::device::TopsDevice as Device;
@@ -78,138 +77,72 @@ use cuda::CuApi as Api;
 use cuda_backend as cuda;
 
 #[derive(Debug)]
-pub struct MemPool(driv::topsMemPool_t);
+pub struct ModuleX(Module);
 
-unsafe impl Send for MemPool {}
-unsafe impl Sync for MemPool {}
-
-pub(crate) static mut G_KERNEL: (
-    Option<Box<HashMap<String, Module>>>,
-    Option<Device>,
-    Option<Stream>,
-    // Option<MemPool>,
-) = (None, None, None);
-
-static INIT: Once = Once::new();
-
-static mut GCU: Option<DeviceExecutor> = None;
-
-pub fn init_api(device_id: u32) -> Option<Device> {
-    match Api::quick_init(device_id) {
-        Ok(device) => Some(device),
-        _ => None,
+#[derive(Debug)]
+pub struct FuncX(driv::topsFunction_t);
+impl FuncX {
+    pub fn as_inner(&self) -> driv::topsFunction_t {
+        self.0
     }
 }
 
-pub fn init_kernels(
-    device_id: u32,
-    kernel_platform: &str,
-) -> (
-    Option<Box<HashMap<String, Module>>>,
-    Option<Device>,
-    Option<Stream>,
-    // Option<MemPool>,
-) {
-    match init_api(device_id) {
-        Some(device) => {
-            // let mut mempool = MemPool { 0: std::ptr::null_mut() };
-            // unsafe { driv::topsDeviceGetMemPool(&mut mempool.0, device.as_raw()); }
-
-            let stream = match Stream::new(StreamFlags::NON_BLOCKING, None) {
-                Ok(_stream) => _stream,
-                _ => {
-                    panic!("Unable to create stream!");
-                }
-            };
-            let mut module_map = Box::new(HashMap::<String, Module>::new());
-
-            let full_kernel_folder =
-                format!("{}/kernels/{}", env!("CARGO_MANIFEST_DIR"), kernel_platform).to_string();
-
-            let paths = fs::read_dir(&full_kernel_folder).unwrap();
-
-            for path in paths {
-                let p = path.unwrap().path();
-                let file = p.file_name().unwrap();
-                let filename = file.to_str().unwrap();
-                let kernel_name = p.file_stem().unwrap().to_str().unwrap();
-                if filename.ends_with(".topsfb") || filename.ends_with(".ptx") {
-                    #[cfg(feature = "cuda_backend")]
-                    let ptx = format!("{}/{}.ptx", full_kernel_folder, kernel_name).to_string();
-
-                    #[cfg(feature = "tops_backend")]
-                    let ptx = format!("{}/{}.topsfb", full_kernel_folder, kernel_name).to_string();
-
-                    println!("{}", ptx);
-
-                    let module = Module::from_file(&ptx).unwrap();
-
-                    module_map.insert(kernel_name.to_string(), module);
-                }
-            }
-
-            if module_map.len() > 0 {
-                println!("{} kernel(s) loaded!", module_map.len());
-            }
-            (Some(module_map), Some(device), Some(stream))
-        }
-        _ => (None, None, None),
-    }
-}
-
-fn get_kernels(
-    device_id: u32,
-    kernel_platform: &str,
-) -> &'static (
-    Option<Box<HashMap<String, Module>>>,
-    Option<Device>,
-    Option<Stream>,
-    // Option<MemPool>,
-) {
-    unsafe {
-        INIT.call_once(|| {
-            G_KERNEL = init_kernels(device_id, kernel_platform);
-        });
-        &G_KERNEL
-    }
-}
+unsafe impl Send for ModuleX {}
+unsafe impl Sync for ModuleX {}
+unsafe impl Send for FuncX {}
+unsafe impl Sync for FuncX {}
+pub(crate) static G_KERNEL: OnceCell<DeviceExecutor> = OnceCell::new();
 
 #[derive(Debug)]
 pub struct DeviceExecutor {
-    pub module_map: Option<&'static Box<HashMap<String, Module>>>,
-    pub function_map: Option<HashMap<String, Arc<Function<'static>>>>,
-    pub device: Option<&'static Device>,
-    pub stream: Option<&'static Stream>,
-    // pub mem_pool: Option<&'static MemPool>,
+    pub module_map: HashMap<String, ModuleX>,
+    pub function_map: HashMap<String, FuncX>,
+    pub device: Option<Device>,
+    pub stream: Option<Stream>,
     cache_buffer: HashMap<String, Box<DeviceTensor>>,
     cache_shape: HashMap<String, Box<DeviceBuffer<i32>>>,
 }
 
 impl DeviceExecutor {
-    pub fn get_gcu_executor(device_id: u32) -> Option<&'static mut DeviceExecutor> {
-        unsafe {
-            match &mut GCU {
-                Some(gcu) => Some(gcu),
-                _ => {
-                    GCU = Some(DeviceExecutor::new(device_id));
-                    match &mut GCU {
-                        Some(gcu) => Some(gcu),
-                        _ => {
-                            panic!("Unable to obtain GCU executor!");
-                        }
-                    }
-                }
+    pub fn get_gcu_executor(device_id: u32) -> &'static DeviceExecutor {
+        G_KERNEL.get_or_init(|| DeviceExecutor::new(device_id))
+    }
+
+    pub fn init_kernels(&mut self, kernel_platform: &str) -> DeviceResult<()> {
+        let full_kernel_folder =
+            format!("{}/kernels/{}", env!("CARGO_MANIFEST_DIR"), kernel_platform).to_string();
+        let paths = fs::read_dir(&full_kernel_folder).unwrap();
+        for path in paths {
+            let p = path.unwrap().path();
+            let file = p.file_name().unwrap();
+            let filename = file.to_str().unwrap();
+            let kernel_name = p.file_stem().unwrap().to_str().unwrap();
+            if filename.ends_with(".topsfb") || filename.ends_with(".ptx") {
+                #[cfg(feature = "cuda_backend")]
+                let ptx = format!("{}/{}.ptx", full_kernel_folder, kernel_name).to_string();
+
+                #[cfg(feature = "tops_backend")]
+                let ptx = format!("{}/{}.topsfb", full_kernel_folder, kernel_name).to_string();
+
+                println!("{}", ptx);
+                let module = ModuleX {
+                    0: Module::from_file(&ptx).unwrap(),
+                };
+                self.module_map.insert(kernel_name.to_string(), module);
             }
         }
+
+        if self.module_map.len() > 0 {
+            println!("{} kernel(s) loaded!", self.module_map.len());
+        }
+        Ok(())
     }
+
     pub fn new(device_id: u32) -> Self {
         println!("DeviceExecutor::new");
 
         #[cfg(feature = "tops_backend")]
         let kernel_platform = "scorpio"; //default kernel path
-
-        #[cfg(feature = "dorado")]
-        let kernel_platform = "dorado";
 
         #[cfg(feature = "scorpio")]
         let kernel_platform = "scorpio";
@@ -370,7 +303,13 @@ impl DeviceExecutor {
             "kvconcat_f32",
         ];
 
-        let embedding_functions = vec!["rope_f32", "rope_f16", "rope_bf16", "rope_f32_f16", "rope_f32_bf16"];
+        let embedding_functions = vec![
+            "rope_f32",
+            "rope_f16",
+            "rope_bf16",
+            "rope_f32_f16",
+            "rope_f32_bf16",
+        ];
 
         let conv_functions = vec![
             "conv1d_f32",
@@ -391,7 +330,6 @@ impl DeviceExecutor {
             "dequantize_block_q8_0_f16",
             "dequantize_block_q8_0_bf16",
             "dequantize_block_q8_0_f32",
-
             "quantize_block_q4_k_f16",
             "quantize_block_q4_k_bf16",
             "quantize_block_q4_k_f32",
@@ -400,129 +338,183 @@ impl DeviceExecutor {
             "dequantize_block_q4_k_f32",
         ];
 
-        let mut function_map = HashMap::<String, Arc<Function<'static>>>::new();
-        match get_kernels(device_id, kernel_platform) {
-            (Some(_module_map), Some(_device), Some(_stream)) => {
-                for module in _module_map.keys() {
-                    if module == "unary" {
-                        for dt in ["bf16", "f16", "f32"] {
-                            for func in &unary_functions {
-                                let name = format!("{}_{}", func, dt);
-                                println!("Load function {}", name);
-                                let function = _module_map[module].get_function(&name).unwrap();
-                                function_map.insert(name, Arc::new(function));
-                            }
-                        }
-                    } else if module == "binary" {
-                        for dt in ["bf16", "f16", "f32"] {
-                            for func in &binary_functions {
-                                let name = format!("{}_{}", func, dt);
-                                println!("Load function {}", name);
-                                let function = _module_map[module].get_function(&name).unwrap();
-                                function_map.insert(name, Arc::new(function));
-                            }
-                        }
-                    } else if module == "fill" {
-                        for dt in ["bf16", "f16", "f32", "f64", "i32", "i16", "i8", "bool"] {
-                            let name = format!("{}_{}", module, dt);
-                            println!("Load function {}", name);
-                            let function = _module_map[module].get_function(&name).unwrap();
-                            function_map.insert(name, Arc::new(function));
-                        }
-                    } else if module == "matmul" {
-                        for dt in ["bf16", "f16", "f32", "f16_4bit", "f16_8bit", "bf16_4bit", "bf16_8bit"] {
-                            let name = format!("{}_{}", module, dt);
-                            println!("Load function {}", name);
-                            let function = _module_map[module].get_function(&name).unwrap();
-                            function_map.insert(name, Arc::new(function));
-                        }
-                    } else if module == "affine" {
-                        for dt in ["bf16", "f16", "f32"] {
-                            let name = format!("{}_{}", module, dt);
-                            println!("Load function {}", name);
-                            let function = _module_map[module].get_function(&name).unwrap();
-                            function_map.insert(name, Arc::new(function));
-                        }
-                    } else if module == "cast" {
-                        for func in &cast_functions {
-                            println!("Load function {}", func);
-                            let function = _module_map[module].get_function(func).unwrap();
-                            function_map.insert(func.to_string(), Arc::new(function));
-                        }
-                    } else if module == "reduce" {
-                        for func in &reduce_functions {
-                            println!("Load function {}", func);
-                            let function = _module_map[module].get_function(func).unwrap();
-                            function_map.insert(func.to_string(), Arc::new(function));
-                        }
-                    } else if module == "ternary" {
-                        for func in &where_functions {
-                            println!("Load function {}", func);
-                            let function = _module_map[module].get_function(func).unwrap();
-                            function_map.insert(func.to_string(), Arc::new(function));
-                        }
-                    } else if module == "indexing" {
-                        for func in &index_functions {
-                            println!("Load function {}", func);
-                            let function = _module_map[module].get_function(func).unwrap();
-                            function_map.insert(func.to_string(), Arc::new(function));
-                        }
-                    } else if module == "embedding" {
-                        for func in &embedding_functions {
-                            println!("Load function {}", func);
-                            let function = _module_map[module].get_function(func).unwrap();
-                            function_map.insert(func.to_string(), Arc::new(function));
-                        }
-                    } else if module == "kvconcat" {
-                        for func in &kvconcat_functions {
-                            println!("Load function {}", func);
-                            let function = _module_map[module].get_function(func).unwrap();
-                            function_map.insert(func.to_string(), Arc::new(function));
-                        }
-                    } else if module == "conv" {
-                        for func in &conv_functions {
-                            println!("Load function {}", func);
-                            let function = _module_map[module].get_function(func).unwrap();
-                            function_map.insert(func.to_string(), Arc::new(function));
-                        }
-                    } else if module == "copy" {
-                        for func in &copy_functions {
-                            println!("Load function {}", func);
-                            let function = _module_map[module].get_function(func).unwrap();
-                            function_map.insert(func.to_string(), Arc::new(function));
-                        }
-                    } else if module == "quant" {
-                        for func in &quant_functions {
-                            println!("Load function {}", func);
-                            let function = _module_map[module].get_function(func).unwrap();
-                            function_map.insert(func.to_string(), Arc::new(function));
-                        }
-                    } else {
-                        println!("Module not load: {}", module);
-                    }
-                }
+        let (device, stream) = match Api::quick_init(device_id) {
+            Ok(device) => match Stream::new(StreamFlags::NON_BLOCKING, None) {
+                Ok(stream) => (device, stream),
+                _ => panic!("Failed to create stream!"),
+            },
+            _ => panic!("Failed to create device!"),
+        };
 
-                Self {
-                    device: Some(_device),
-                    module_map: Some(_module_map),
-                    function_map: Some(function_map),
-                    // mem_pool: Some(_mempool),
-                    cache_buffer: HashMap::<String, Box<DeviceTensor>>::new(),
-                    cache_shape: HashMap::<String, Box<DeviceBuffer<i32>>>::new(),
-                    stream: Some(_stream),
+        let mut executor = DeviceExecutor {
+            device: Some(device),
+            module_map: HashMap::<String, ModuleX>::new(),
+            function_map: HashMap::<String, FuncX>::new(),
+            cache_buffer: HashMap::<String, Box<DeviceTensor>>::new(),
+            cache_shape: HashMap::<String, Box<DeviceBuffer<i32>>>::new(),
+            stream: Some(stream),
+        };
+        match executor.init_kernels(kernel_platform) {
+            Ok(()) => {
+                for module in executor.module_map.keys().by_ref() {
+                    match module.as_str() {
+                        "unary" => {
+                            for dt in ["bf16", "f16", "f32"] {
+                                for func in &unary_functions {
+                                    let name = format!("{}_{}", func, dt);
+                                    println!("Load function {}", name);
+                                    let function = executor.get_function(module, &name);
+                                    executor.function_map.insert(name, function);
+                                }
+                            }
+                        }
+                        "binary" => {
+                            for dt in ["bf16", "f16", "f32"] {
+                                for func in &binary_functions {
+                                    let name = format!("{}_{}", func, dt);
+                                    println!("Load function {}", name);
+                                    let function = executor.get_function(module, &name);
+                                    executor.function_map.insert(name, function.into());
+                                }
+                            }
+                        }
+                        "fill" => {
+                            for dt in ["bf16", "f16", "f32", "f64", "i32", "i16", "i8", "bool"] {
+                                let name = format!("{}_{}", module, dt);
+                                println!("Load function {}", name);
+                                let function = executor.get_function(module, &name);
+                                executor.function_map.insert(name, function.into());
+                            }
+                        }
+                        "matmul" => {
+                            for dt in [
+                                "bf16",
+                                "f16",
+                                "f32",
+                                "f16_4bit",
+                                "f16_8bit",
+                                "bf16_4bit",
+                                "bf16_8bit",
+                            ] {
+                                let name = format!("{}_{}", module, dt);
+                                println!("Load function {}", name);
+                                let function = executor.get_function(module, &name);
+                                executor.function_map.insert(name, function.into());
+                            }
+                        }
+                        "affine" => {
+                            for dt in ["bf16", "f16", "f32"] {
+                                let name = format!("{}_{}", module, dt);
+                                println!("Load function {}", name);
+                                let function = executor.get_function(module, &name);
+                                executor.function_map.insert(name, function.into());
+                            }
+                        }
+                        "cast" => {
+                            for func in &cast_functions {
+                                println!("Load function {}", func);
+                                let function = executor.get_function(module, &func.to_string());
+                                executor
+                                    .function_map
+                                    .insert(func.to_string(), function.into());
+                            }
+                        }
+                        "reduce" => {
+                            for func in &reduce_functions {
+                                println!("Load function {}", func);
+                                let function = executor.get_function(module, &func.to_string());
+                                executor
+                                    .function_map
+                                    .insert(func.to_string(), function.into());
+                            }
+                        }
+                        "ternary" => {
+                            for func in &where_functions {
+                                println!("Load function {}", func);
+                                let function = executor.get_function(module, &func.to_string());
+                                executor
+                                    .function_map
+                                    .insert(func.to_string(), function.into());
+                            }
+                        }
+                        "indexing" => {
+                            for func in &index_functions {
+                                println!("Load function {}", func);
+                                let function = executor.get_function(module, &func.to_string());
+                                executor
+                                    .function_map
+                                    .insert(func.to_string(), function.into());
+                            }
+                        }
+                        "embedding" => {
+                            for func in &embedding_functions {
+                                println!("Load function {}", func);
+                                let function = executor.get_function(module, &func.to_string());
+                                executor
+                                    .function_map
+                                    .insert(func.to_string(), function.into());
+                            }
+                        }
+                        "kvconcat" => {
+                            for func in &kvconcat_functions {
+                                println!("Load function {}", func);
+                                let function = executor.get_function(module, &func.to_string());
+                                executor
+                                    .function_map
+                                    .insert(func.to_string(), function.into());
+                            }
+                        }
+                        "conv" => {
+                            for func in &conv_functions {
+                                println!("Load function {}", func);
+                                let function = executor.get_function(module, &func.to_string());
+                                executor
+                                    .function_map
+                                    .insert(func.to_string(), function.into());
+                            }
+                        }
+                        "copy" => {
+                            for func in &copy_functions {
+                                println!("Load function {}", func);
+                                let function = executor.get_function(module, &func.to_string());
+                                executor
+                                    .function_map
+                                    .insert(func.to_string(), function.into());
+                            }
+                        }
+                        "quant" => {
+                            for func in &quant_functions {
+                                println!("Load function {}", func);
+                                let function = executor.get_function(module, &func.to_string());
+                                executor
+                                    .function_map
+                                    .insert(func.to_string(), function.into());
+                            }
+                        }
+                        _ => {
+                            println!("Module not load: {}", module);
+                        }
+                    }
                 }
             }
             _ => panic!("Load kernels failed!"),
+        };
+        executor
+    }
+
+    pub fn get_function(&self, module: &String, name: &String) -> FuncX {
+        FuncX {
+            0: self.module_map[module]
+                .0
+                .get_function(name)
+                .unwrap()
+                .to_raw(),
         }
     }
 
     pub fn has_function(&self, module_name: String, func_name: String) -> bool {
-        if let Some(modules) = &self.module_map {
-            if modules.contains_key(&module_name) {
-                if let Some(funcs) = &self.function_map {
-                    return funcs.contains_key(&func_name);
-                }
-            }
+        if self.module_map.contains_key(&module_name) {
+            return self.function_map.contains_key(&func_name);
         }
         false
     }
@@ -692,11 +684,13 @@ impl DeviceExecutor {
         tp: i32,
         eager_mode: bool,
     ) -> DeviceResult<DeviceTensor> {
-        let kernel = match &self.function_map {
-            Some(kmap) => &kmap["elementf32"],
-            _ => {
-                panic!("Unable to use kernel!");
-            }
+        let kernel = if self.function_map.contains_key("elementf32") {
+            Function::new(
+                self.function_map["elementf32"].0,
+                &self.module_map["unary"].0,
+            )
+        } else {
+            return Err(DeviceError::InvalidPtx);
         };
         let size: usize = lhs.shape.iter().product();
         let matOut = DeviceBuffer::from_slice(&vec![0.0f32; size])?;
@@ -783,11 +777,13 @@ impl DeviceExecutor {
         tp: i32,
         eager_mode: bool,
     ) -> DeviceResult<DeviceTensor> {
-        let kernel = match &self.function_map {
-            Some(kmap) => &kmap["elementi32"],
-            _ => {
-                panic!("Unable to use kernel!");
-            }
+        let kernel = if self.function_map.contains_key("elementi32") {
+            Function::new(
+                self.function_map["elementi32"].0,
+                &self.module_map["unary"].0,
+            )
+        } else {
+            return Err(DeviceError::InvalidPtx);
         };
         let size: usize = lhs.shape.iter().product();
         let matOut = DeviceBuffer::from_slice(&vec![0i32; size])?;
@@ -876,11 +872,10 @@ impl DeviceExecutor {
         rhs: &DeviceTensor,
         eager_mode: bool,
     ) -> DeviceResult<DeviceTensor> {
-        let kernel = match &self.function_map {
-            Some(kmap) => &kmap["matmul"],
-            _ => {
-                panic!("Unable to use kernel!");
-            }
+        let kernel = if self.function_map.contains_key("matmul") {
+            Function::new(self.function_map["matmul"].0, &self.module_map["matmul"].0)
+        } else {
+            return Err(DeviceError::InvalidPtx);
         };
         #[cfg(feature = "tops_backend")]
         let inputShapeA =
@@ -969,13 +964,14 @@ impl DeviceExecutor {
         out: &DeviceTensor,
         eager_mode: bool,
     ) -> DeviceResult<()> {
-        let kernel = match &self.function_map {
-            Some(kmap) => &kmap["batch_matmul"],
-            _ => {
-                panic!("Unable to use kernel!");
-            }
+        let kernel = if self.function_map.contains_key("batch_matmul") {
+            Function::new(
+                self.function_map["batch_matmul"].0,
+                &self.module_map["matmul"].0,
+            )
+        } else {
+            return Err(DeviceError::InvalidPtx);
         };
-
         // #[cfg(feature = "tops_backend")]
         // let inputShapeA = DeviceBuffer::from_slice(&[lhs.shape[0] as i32, lhs.shape[1] as i32, lhs.shape[2] as i32])?;
         // #[cfg(feature = "tops_backend")]
@@ -1045,7 +1041,7 @@ impl DeviceExecutor {
         let result: DeviceResult<()> = match (
             &lhs.data,
             &rhs.data,
-            self.stream,
+            &self.stream,
             &matTranpose.data,
             &out.data,
         ) {
@@ -1177,17 +1173,21 @@ impl DeviceExecutor {
         out: &DeviceTensor,
         eager_mode: bool,
     ) -> DeviceResult<()> {
-        let kernel_transpose = match &self.function_map {
-            Some(kmap) => &kmap["transpose_kernel"],
-            _ => {
-                panic!("Unable to use kernel!");
-            }
+        let kernel_transpose = if self.function_map.contains_key("transpose_kernel") {
+            Function::new(
+                self.function_map["transpose_kernel"].0,
+                &self.module_map["transpose"].0,
+            )
+        } else {
+            return Err(DeviceError::InvalidPtx);
         };
-        let kernel_matmul = match &self.function_map {
-            Some(kmap) => &kmap["transposed_matmul"],
-            _ => {
-                panic!("Unable to use kernel!");
-            }
+        let kernel_matmul = if self.function_map.contains_key("transposed_matmul") {
+            Function::new(
+                self.function_map["transposed_matmul"].0,
+                &self.module_map["transpose"].0,
+            )
+        } else {
+            return Err(DeviceError::InvalidPtx);
         };
 
         let shape1 = format!(
@@ -1383,13 +1383,14 @@ impl DeviceExecutor {
         rhs: &DeviceTensor,
         eager_mode: bool,
     ) -> DeviceResult<DeviceTensor> {
-        let kernel = match &self.function_map {
-            Some(kmap) => &kmap["convolution"],
-            _ => {
-                panic!("Unable to use kernel!");
-            }
+        let kernel = if self.function_map.contains_key("convolution") {
+            Function::new(
+                self.function_map["convolution"].0,
+                &self.module_map["conv"].0,
+            )
+        } else {
+            return Err(DeviceError::InvalidPtx);
         };
-
         #[cfg(feature = "tops_backend")]
         let inputShapeA =
             DeviceBuffer::from_slice(&[lhs.shape[0] as i32, lhs.shape[1] as i32, 1i32, 1i32])?;
@@ -1493,11 +1494,13 @@ impl DeviceExecutor {
             panic!("Activation type not supported!");
         }
 
-        let kernel = match &self.function_map {
-            Some(kmap) => &kmap["activationf32"],
-            _ => {
-                panic!("Unable to use kernel!");
-            }
+        let kernel = if self.function_map.contains_key("activationf32") {
+            Function::new(
+                self.function_map["activationf32"].0,
+                &self.module_map["unary"].0,
+            )
+        } else {
+            return Err(DeviceError::InvalidPtx);
         };
         let size: usize = arg.shape.iter().product();
 
@@ -1582,11 +1585,13 @@ impl DeviceExecutor {
         arg: &DeviceTensor,
         eager_mode: bool,
     ) -> DeviceResult<DeviceTensor> {
-        let kernel = match &self.function_map {
-            Some(kmap) => &kmap["transpose"],
-            _ => {
-                panic!("Unable to use kernel!");
-            }
+        let kernel = if self.function_map.contains_key("transpose") {
+            Function::new(
+                self.function_map["transpose"].0,
+                &self.module_map["transpose"].0,
+            )
+        } else {
+            return Err(DeviceError::InvalidPtx);
         };
         // #[cfg(feature = "tops_backend")]
         let input_shape =

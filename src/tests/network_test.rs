@@ -82,7 +82,6 @@ struct Layer<'a, T: DeviceCopy> {
     weight: Option<&'a DeviceBuffer<T>>,
     input_size: (usize, usize),
     output_size: (usize, usize),
-    out_ref: Option<&'a DeviceBuffer<T>>,
 }
 pub fn get_block_grid(shape1: usize, shape0: usize) -> (usize, usize, usize) {
     let grid_a: usize = (shape1 + 16 - 1) / 16;
@@ -111,84 +110,72 @@ pub fn network_test() -> DeviceResult<()> {
             weight: Some(&w1),
             input_size: (N, N),
             output_size: (N, N),
-            out_ref: None,
         }, //weight is N x N matric for next layer
         Layer::<f32> {
             op: "tanh",
             weight: None,
             input_size: (N, N),
             output_size: (N, N),
-            out_ref: None,
         }, //out N x N
         Layer::<f32> {
             op: "batch_matmul_legacy",
             weight: Some(&w2),
             input_size: (N, N),
             output_size: (N, N),
-            out_ref: None,
         }, //weight is N x N matric for next layer
         Layer::<f32> {
             op: "relu",
             weight: None,
             input_size: (N, N),
             output_size: (N, N),
-            out_ref: None,
         }, //out N x N
         Layer::<f32> {
             op: "batch_matmul_legacy",
             weight: Some(&w3),
             input_size: (N, N),
             output_size: (N, N),
-            out_ref: None,
         }, //weight is convolution kernel for next layer
         Layer::<f32> {
             op: "tanh",
             weight: None,
             input_size: (N, N),
             output_size: (N, N),
-            out_ref: None,
         }, //out N x N
         Layer::<f32> {
             op: "convolution",
             weight: Some(&w4),
             input_size: (N, N),
             output_size: (N - K + 1, N - K + 1),
-            out_ref: None,
         }, //weight is (N - K + 1) * (N - K + 1) matric for next layer
         Layer::<f32> {
             op: "tanh",
             weight: None,
             input_size: (N - K + 1, N - K + 1),
             output_size: (N - K + 1, N - K + 1),
-            out_ref: None,
         }, //out (N - K + 1) x (N - K + 1)
         Layer::<f32> {
             op: "batch_matmul_legacy",
             weight: Some(&w5),
             input_size: (N - K + 1, N - K + 1),
             output_size: (N - K + 1, N - K + 1),
-            out_ref: None,
         }, //weight is (N - K + 1) * (N - K + 1) matric for next layer
         Layer::<f32> {
             op: "tanh",
             weight: None,
             input_size: (N - K + 1, N - K + 1),
             output_size: (N - K + 1, N - K + 1),
-            out_ref: None,
         }, //output shape (N - K + 1) * (N - K + 1)
         Layer::<f32> {
             op: "batch_matmul_legacy",
             weight: None,
             input_size: (N - K + 1, N - K + 1),
             output_size: (N - K + 1, N - K + 1),
-            out_ref: None,
         }, // no weight in the last layer
         Layer::<f32> {
             op: "gelu",
             weight: None,
             input_size: (N - K + 1, N - K + 1),
             output_size: (N - K + 1, N - K + 1),
-            out_ref: None,
         }, //output shape (N - K + 1) * (N - K + 1)
     ];
     let mat = vec![0.5f32; N * N];

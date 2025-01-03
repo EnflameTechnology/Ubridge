@@ -116,7 +116,15 @@ pub struct AtenGemmInfo {
 }
 
 impl AtenGemmInfo {
-    pub fn new(datatype: DATATYPE, weight_type: DATATYPE, batch: usize, M: usize, K: usize, N: usize, rhs_trans: i32) -> AtenGemmInfo {
+    pub fn new(
+        datatype: DATATYPE,
+        weight_type: DATATYPE,
+        batch: usize,
+        M: usize,
+        K: usize,
+        N: usize,
+        rhs_trans: i32,
+    ) -> AtenGemmInfo {
         AtenGemmInfo {
             data_type: datatype,
             weight_type,
@@ -418,21 +426,9 @@ impl AtenGemmTuner {
                 }
 
                 if lhs_multicore {
-                    set_split_option!(
-                        tune,
-                        false,
-                        true,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false
-                    );
+                    set_split_option!(tune, false, true, false, false, false, false, false, false);
                 } else if batch_multicore {
-                    set_split_option!(
-                        tune, true, false, false, false, false, false, false, false
-                    );
+                    set_split_option!(tune, true, false, false, false, false, false, false, false);
                 }
             } else if rhs_multicore {
                 tune.sip_n = UNIT_SIP_N;
@@ -450,17 +446,7 @@ impl AtenGemmTuner {
                         tune.sip_m = va_mem_sip_m;
                     }
                 }
-                set_split_option!(
-                    tune,
-                    false,
-                    false,
-                    true,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false
-                );
+                set_split_option!(tune, false, false, true, false, false, false, false, false);
             }
         } else {
             tune.sip_n = if info.N / UNIT_SIP_N > 1000 {
@@ -503,17 +489,25 @@ impl AtenGemmTuner {
 
         let sum_va_mem = |m: i64, n: i64, bpe: i64| -> i64 { (m * n * 2) * bpe };
 
-        let UNIT_SIP_M = if info.M > 32 { 64 } else { 
-            if (info.M * info.batch <= 8) && info.transb 
-              && (info.weight_type == DATATYPE::DataBf16 || info.weight_type == DATATYPE::DataFp16) 
-                    { 1 } else { 32 } 
+        let UNIT_SIP_M = if info.M > 32 {
+            64
+        } else {
+            if (info.M * info.batch <= 8)
+                && info.transb
+                && (info.weight_type == DATATYPE::DataBf16
+                    || info.weight_type == DATATYPE::DataFp16)
+            {
+                1
+            } else {
+                32
+            }
         };
         const UNIT_SIP_N: i64 = 128;
         let UNIT_SIP_K = if info.M > 32 { 64 } else { 128 };
         const BPE: i64 = 2;
         // let RBPE = if (info.weight_type == DATATYPE::DataBf16 || info.weight_type == DATATYPE::DataFp16) { 2 } else { 1 };
         let sip_cnt = 12; //todo!()
-        // const VDMEM_VALID_SIZE: i64 = 0x180000 - 0x8000 - 0x800;
+                          // const VDMEM_VALID_SIZE: i64 = 0x180000 - 0x8000 - 0x800;
         let l1_mem = 1536 * 1024 - 1024;
         let va_mem = 4096 * 16 * 2 * 4;
 
@@ -552,21 +546,9 @@ impl AtenGemmTuner {
                 }
 
                 if lhs_multicore {
-                    set_split_option!(
-                        tune,
-                        false,
-                        true,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false
-                    );
+                    set_split_option!(tune, false, true, false, false, false, false, false, false);
                 } else {
-                    set_split_option!(
-                        tune, true, false, false, false, false, false, false, false
-                    );
+                    set_split_option!(tune, true, false, false, false, false, false, false, false);
                 }
             } else if rhs_multicore {
                 tune.sip_n = UNIT_SIP_N;
@@ -584,17 +566,7 @@ impl AtenGemmTuner {
                         tune.sip_m = va_mem_sip_m;
                     }
                 }
-                set_split_option!(
-                    tune,
-                    false,
-                    false,
-                    true,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false
-                );
+                set_split_option!(tune, false, false, true, false, false, false, false, false);
             }
         } else {
             tune.sip_n = UNIT_SIP_N;
@@ -606,13 +578,10 @@ impl AtenGemmTuner {
             if tune.sip_k > info.K {
                 tune.sip_k = info.K;
             }
-            set_split_option!(
-                tune, false, false, true, false, false, false, false, false
-            );
+            set_split_option!(tune, false, false, true, false, false, false, false, false);
         }
 
         // println!("TunerHGemmF16");
         0
     }
-
 }

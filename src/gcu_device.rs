@@ -46,9 +46,6 @@ use tops::memory::TopsDeviceBuffer as DeviceBuffer;
 #[cfg(feature = "tops_backend")]
 use tops_backend as tops;
 
-#[cfg(feature = "tops_backend")]
-use tops::stream::TopsStream as Stream;
-
 use crate::device_executor::DeviceExecutor;
 use crate::device_ptr::DevicePtr;
 use crate::gcu_slice::GcuSlice;
@@ -60,9 +57,7 @@ use tops::error::ToResult;
 // #[derive(Clone)]
 pub struct GcuDevice {
     pub id: usize,
-    device: Option<&'static Device>,
-    pub stream: Option<&'static Stream>,
-    executor: Arc<&'static mut DeviceExecutor>,
+    pub executor: Arc<&'static DeviceExecutor>,
     is_async: bool,
     prop: driv::topsDeviceProp_t,
     pub launch_cfg: GcuLaunchConfig,
@@ -86,13 +81,8 @@ impl GcuFunction {
             func: None,
             stream: None,
             is_async: false,
-            // executor: None
         }
     }
-
-    // pub fn launch(&self) {
-
-    // }
 }
 
 impl std::fmt::Debug for GcuDevice {
@@ -102,57 +92,46 @@ impl std::fmt::Debug for GcuDevice {
 }
 
 impl std::ops::Deref for GcuDevice {
-    type Target = Option<&'static Device>;
+    type Target = Option<Device>;
 
     fn deref(&self) -> &Self::Target {
-        &self.device
+        &self.executor.device
     }
 }
 
 impl GcuDevice {
     pub fn new(ordinal: usize, eager_mode: bool) -> DeviceResult<Arc<Self>> {
-        match DeviceExecutor::get_gcu_executor(ordinal as u32) {
-            Some(gcu_executor) => {
-                let mut prop = driv::topsDeviceProp_t::default();
-                unsafe {
-                    driv::topsGetDeviceProperties(
-                        &mut prop as *mut driv::topsDeviceProp_t,
-                        ordinal as i32,
-                    );
-                }
-                let mut property = format!("**GCU device property: {:?} \n", prop);
-                property = property.replace(" 0, 0,", "");
-                println!("{}", property);
-                Ok(Arc::new(Self {
-                    id: ordinal,
-                    device: gcu_executor.device,
-                    stream: gcu_executor.stream,
-                    executor: Arc::new(gcu_executor),
-                    is_async: !eager_mode,
-                    prop,
-                    launch_cfg: GcuLaunchConfig {
-                        grid_dim: (prop.multiProcessorCount as u32, 1, 1),
-                        block_dim: (prop.maxThreadsPerMultiProcessor as u32, 1, 1),
-                        shared_mem_bytes: 0,
-                    },
-                    tuner: AtenGemmTuner::new(),
-                }))
-            }
-            _ => {
-                panic!("Unable to obtain GCU device!");
-            }
+        let gcu_executor = DeviceExecutor::get_gcu_executor(ordinal as u32);
+        let mut prop = driv::topsDeviceProp_t::default();
+        unsafe {
+            driv::topsGetDeviceProperties(
+                &mut prop as *mut driv::topsDeviceProp_t,
+                ordinal as i32,
+            );
         }
-        // let (device, stream) = match Api::quick_init(ordinal) {
-        //     Ok(_device) => {
-        //         match Stream::new(StreamFlags::NON_BLOCKING, None) {
-        //             Ok(_stream) => (_device, _stream),
-        //             _ => {
-        //                 panic!("Unable to create stream!");
-        //             }
-        //         };
-        //     }
-        //     _ => {panic!("Unable to obtain GCU device!");}
-        // };
+        let mut property = format!("**GCU device property: {:?} \n", prop);
+        property = property.replace(" 0, 0,", "");
+        println!("{}", property);
+        Ok(Arc::new(Self {
+            id: ordinal,
+            executor: Arc::new(gcu_executor),
+            is_async: !eager_mode,
+            prop,
+            launch_cfg: GcuLaunchConfig {
+                grid_dim: (prop.multiProcessorCount as u32, 1, 1),
+                block_dim: (prop.maxThreadsPerMultiProcessor as u32, 1, 1),
+                shared_mem_bytes: 0,
+            },
+            tuner: AtenGemmTuner::new(),
+        }))
+    }
+
+    pub fn stream_inner(&self) -> Option<topsStream_t> {
+        if self.executor.stream.is_some() {
+            Some(self.executor.stream.as_ref().unwrap().as_inner() as topsStream_t)
+        } else {
+            None
+        }
     }
 
     pub fn ordinal(&self) -> usize {
@@ -167,15 +146,13 @@ impl GcuDevice {
             .executor
             .has_function(module_name.to_string(), func_name.to_string())
         {
-            if let Some(funcs) = &self.executor.function_map {
-                return Ok(GcuFunction {
-                    func_name: func_name.to_string(),
-                    module_name: module_name.to_string(),
-                    func: Some(funcs[func_name].inner),
-                    stream: Some(self.stream.unwrap().as_inner()),
-                    is_async: self.is_async,
-                });
-            }
+            return Ok(GcuFunction {
+                func_name: func_name.to_string(),
+                module_name: module_name.to_string(),
+                func: Some(self.executor.function_map[func_name].as_inner()),
+                stream: self.stream_inner(),
+                is_async: self.is_async,
+            });
         } else {
             println!("Kernel {} not found!", func_name);
         }
@@ -206,7 +183,9 @@ impl GcuDevice {
     pub fn alloc<T: DeviceCopy>(self: &Arc<Self>, len: usize) -> DeviceResult<GcuSlice<T>> {
         let device_ptr = if self.is_async {
             // println!("alloc async!  (len={})", len);
-            unsafe { DeviceBuffer::uninitialized_async(len, self.stream.unwrap())? }
+            unsafe {
+                DeviceBuffer::uninitialized_async(len, self.executor.stream.as_ref().unwrap())?
+            }
         } else {
             unsafe { DeviceBuffer::uninitialized(len)? }
         };
@@ -229,12 +208,13 @@ impl GcuDevice {
         let device_ptr = if self.is_async {
             unsafe {
                 // println!("alloc_zeros async! (len={})", len);
-                let device_ptr = DeviceBuffer::uninitialized_async(len, self.stream.unwrap())?;
+                let device_ptr =
+                    DeviceBuffer::uninitialized_async(len, self.executor.stream.as_ref().unwrap())?;
                 driv::topsMemsetD8Async(
                     device_ptr.as_device_ptr().as_raw(),
                     0,
                     (std::mem::size_of::<T>() * len) as u64,
-                    self.stream.unwrap().as_inner(),
+                    self.stream_inner().expect("unable to obtain stream"),
                 )
                 .to_result()?;
                 device_ptr
@@ -308,7 +288,7 @@ impl GcuDevice {
                     dst.device_ptr(),
                     src.device_ptr(),
                     (src.len() * std::mem::size_of::<T>()) as u64,
-                    self.stream.unwrap().as_inner(),
+                    self.stream_inner().expect("unable to obtain stream"),
                 )
                 .to_result()
             }
@@ -378,7 +358,7 @@ impl GcuDevice {
                     dst.device_ptr(),
                     ptr,
                     size as u64,
-                    self.stream.unwrap().as_inner(),
+                    self.stream_inner().expect("unable to obtain stream"),
                 )
                 .to_result();
                 // } else {
@@ -441,7 +421,7 @@ impl GcuDevice {
                     dst.device_ptr(),
                     val.as_ptr() as *mut c_void,
                     std::mem::size_of_val(val) as u64,
-                    self.stream.unwrap().as_inner(),
+                    self.stream_inner().expect("unable to obtain stream"),
                 )
                 .to_result()?;
             }
@@ -500,7 +480,7 @@ impl GcuDevice {
                     val.as_mut_ptr() as *mut c_void,
                     src.device_ptr(),
                     std::mem::size_of_val(val) as u64,
-                    self.stream.unwrap().as_inner(),
+                    self.stream_inner().expect("unable to obtain stream"),
                 )
                 .to_result()?;
             }
@@ -538,7 +518,7 @@ impl GcuDevice {
 
     /// Synchronizes the stream.
     pub fn synchronize(self: &Arc<Self>) -> DeviceResult<()> {
-        match self.stream {
+        match self.executor.stream.as_ref() {
             Some(_stream) => _stream.synchronize(),
             _ => {
                 println!("Unable to use stream!");

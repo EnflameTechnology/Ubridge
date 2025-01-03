@@ -51,11 +51,15 @@ pub struct GcuLaunchConfig {
 
 impl GcuLaunchConfig {
     pub fn set_shared_memory(&mut self, size_in_bytes: u32) {
-        const SHARED_MEM_SIZE : u32 = 48 * 1024 * 1024;
+        const SHARED_MEM_SIZE: u32 = 48 * 1024 * 1024;
         let shared_mem_bytes = ((size_in_bytes + 4095) / 4096) * 4096 + 4096;
-        self.shared_mem_bytes = if shared_mem_bytes > SHARED_MEM_SIZE { SHARED_MEM_SIZE } else { shared_mem_bytes };
+        self.shared_mem_bytes = if shared_mem_bytes > SHARED_MEM_SIZE {
+            SHARED_MEM_SIZE
+        } else {
+            shared_mem_bytes
+        };
     }
-    
+
     pub fn for_threds(n: u32) -> Self {
         Self {
             grid_dim: (1, 1, 1),
@@ -242,7 +246,6 @@ impl_launch!(
     [A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W],
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
 );
-
 
 impl GcuFunction {
     #[inline(always)]
