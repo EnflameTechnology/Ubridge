@@ -104,10 +104,7 @@ impl GcuDevice {
         let gcu_executor = DeviceExecutor::get_gcu_executor(ordinal as u32);
         let mut prop = driv::topsDeviceProp_t::default();
         unsafe {
-            driv::topsGetDeviceProperties(
-                &mut prop as *mut driv::topsDeviceProp_t,
-                ordinal as i32,
-            );
+            driv::topsGetDeviceProperties(&mut prop as *mut driv::topsDeviceProp_t, ordinal as i32);
         }
         let mut property = format!("**GCU device property: {:?} \n", prop);
         property = property.replace(" 0, 0,", "");

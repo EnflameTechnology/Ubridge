@@ -198,6 +198,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "eccl_raw"
+version = "0.1.1"
+dependencies = [
+ "libloading",
+ "tops_raw",
+]
+
+[[package]]
 name = "either"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -386,6 +394,7 @@ checksum = "bc52e53916c08643f1b56ec082790d1e86a32e58dc5268f897f313fbae7b4872"
 dependencies = [
  "cfg-if",
  "crunchy",
+ "num-traits",
 ]
 
 [[package]]
@@ -548,6 +557,16 @@ name = "libc"
 version = "0.2.155"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97b3888a4aecf77e811145cadf6eef5901f4782c53886191b2f693f24761847c"
+
+[[package]]
+name = "libloading"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
+dependencies = [
+ "cfg-if",
+ "windows-targets 0.52.5",
+]
 
 [[package]]
 name = "libm"
@@ -1120,6 +1139,8 @@ dependencies = [
  "bitflags 1.3.2",
  "cust_core",
  "cust_derive",
+ "eccl_raw",
+ "libloading",
  "tops_raw",
  "uhal",
 ]
@@ -1188,6 +1209,7 @@ dependencies = [
  "cust_core",
  "float_eq",
  "gcu-kernels",
+ "half",
  "lazy_static",
  "num-traits",
  "once_cell",

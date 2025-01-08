@@ -23,6 +23,10 @@ pub mod gcu_launch;
 pub mod gcu_slice;
 pub mod gemm_tuner;
 pub mod tests;
+#[cfg(feature = "eccl")]
+pub mod eccl;
+#[cfg(feature = "eccl")]
+pub mod eccllib;
 /// Prelude module for users to import
 pub mod prelude {
     // prelude
@@ -43,6 +47,9 @@ pub mod prelude {
 
     #[cfg(feature = "cuda_backend")]
     pub use cuda_backend::memory::CopyDestination;
+
+    #[cfg(feature = "eccl")]
+    pub use crate::eccl::*;
 }
 
 // pub const AFFINE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/affine.topsfb");
