@@ -255,16 +255,6 @@ impl GcuFunction {
         params: &mut [*mut std::ffi::c_void],
     ) -> DeviceResult<()> {
         if let Some(func) = self.func {
-            // println!("Launch {} func {:?}!", self.name, func);
-            // let mut args_ = Vec::new();
-            // for i in 0..args.len(){
-            //     let vaddress = std::mem::transmute::<*mut c_void, *mut *mut c_void>((*params)[i]);
-            //     unsafe {args_.push(*vaddress);}
-
-            // }
-
-            // let mut size :usize = (std::mem::size_of::<c_ulonglong>() * (params.len() - 1) + std::mem::size_of::<usize>()) as usize;
-            // let _config = vec![0x1 as *const c_void, params.as_mut_ptr() as *const _ as *mut c_void, 0x2 as *const c_void, &mut size as *const _ as *mut c_void, 0x3 as *const c_void];
             let null = ptr::null_mut();
             let stream = if self.is_async {
                 self.stream.unwrap()

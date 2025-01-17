@@ -27,41 +27,46 @@ use std::ffi::c_void;
 
 use std::{marker::Unpin, pin::Pin, sync::Arc, vec::Vec};
 use tops::stream::topsStream_t;
-use uhal::error::DeviceResult;
+use uhal::error::{DeviceError, DeviceResult};
 
 use crate::gemm_tuner::{AtenGemmInfo, AtenGemmTuner, GEMM_OP_PARAS};
 use crate::prelude::GcuLaunchConfig;
 pub use cust_core::_hidden::DeviceCopy;
 use std::string::String;
 use uhal::memory::{DeviceBufferTrait, DevicePointerTrait};
-use uhal::stream::StreamTrait;
-
-//Tops backend
-#[cfg(feature = "tops_backend")]
 use tops::device::TopsDevice as Device;
-#[cfg(feature = "tops_backend")]
+use tops::stream::TopsStream as Stream;
+//Tops backend
 use tops::memory::CopyDestination;
-#[cfg(feature = "tops_backend")]
 use tops::memory::TopsDeviceBuffer as DeviceBuffer;
-#[cfg(feature = "tops_backend")]
 use tops_backend as tops;
-
+use tops::TopsApi as Api;
+use uhal::DriverLibraryTrait;
+use uhal::stream::{StreamFlags, StreamTrait};
+use uhal::device::DeviceTrait;
 use crate::device_executor::DeviceExecutor;
 use crate::device_ptr::DevicePtr;
 use crate::gcu_slice::GcuSlice;
 use driv::topsFunction_t;
-#[cfg(feature = "tops_backend")]
 pub use tops::driv;
 use tops::error::ToResult;
+use lazy_static::lazy_static;
+use std::sync::Mutex;
 
+// Define a global Mutex
+lazy_static! {
+    static ref GLOBAL_LOCK: Mutex<()> = Mutex::new(());
+}
 // #[derive(Clone)]
 pub struct GcuDevice {
     pub id: usize,
-    pub executor: Arc<&'static DeviceExecutor>,
+    pub executor: Arc<DeviceExecutor>,
     is_async: bool,
     prop: driv::topsDeviceProp_t,
     pub launch_cfg: GcuLaunchConfig,
     pub tuner: AtenGemmTuner,
+    pub device: Option<Device>,
+    pub stream: Option<Stream>,
 }
 
 pub struct GcuFunction {
@@ -95,13 +100,20 @@ impl std::ops::Deref for GcuDevice {
     type Target = Option<Device>;
 
     fn deref(&self) -> &Self::Target {
-        &self.executor.device
+        &self.device
     }
 }
 
 impl GcuDevice {
     pub fn new(ordinal: usize, eager_mode: bool) -> DeviceResult<Arc<Self>> {
-        let gcu_executor = DeviceExecutor::get_gcu_executor(ordinal as u32);
+        let (device, stream) = match Api::quick_init(ordinal as u32) {
+            Ok(device) => match Stream::new(StreamFlags::NON_BLOCKING, None) {
+                Ok(stream) => (device, stream),
+                _ => panic!("Failed to create stream!"),
+            },
+            _ => panic!("Failed to create device!"),
+        };
+        let gcu_executor = DeviceExecutor::new(ordinal as u32);
         let mut prop = driv::topsDeviceProp_t::default();
         unsafe {
             driv::topsGetDeviceProperties(&mut prop as *mut driv::topsDeviceProp_t, ordinal as i32);
@@ -120,12 +132,22 @@ impl GcuDevice {
                 shared_mem_bytes: 0,
             },
             tuner: AtenGemmTuner::new(),
+            device: Some(device),
+            stream: Some(stream),
         }))
     }
 
+    //TODO: Fix this with topsCtxSetCurrent
+    //Given that device context is not support at the moment on GCU,
+    //we temporarily use device select (which is not stable) instead of topsCtxSetCurrent 
+    pub fn bind_to_thread(self: &Arc<Self>) -> DeviceResult<()> {
+        let _guard = GLOBAL_LOCK.lock().unwrap(); // Acquire the lock
+        Device::select_device(self.ordinal() as u32) 
+    }
+
     pub fn stream_inner(&self) -> Option<topsStream_t> {
-        if self.executor.stream.is_some() {
-            Some(self.executor.stream.as_ref().unwrap().as_inner() as topsStream_t)
+        if self.stream.is_some() {
+            Some(self.stream.as_ref().unwrap().as_inner() as topsStream_t)
         } else {
             None
         }
@@ -181,7 +203,7 @@ impl GcuDevice {
         let device_ptr = if self.is_async {
             // println!("alloc async!  (len={})", len);
             unsafe {
-                DeviceBuffer::uninitialized_async(len, self.executor.stream.as_ref().unwrap())?
+                DeviceBuffer::uninitialized_async(len, self.stream.as_ref().unwrap())?
             }
         } else {
             unsafe { DeviceBuffer::uninitialized(len)? }
@@ -206,7 +228,7 @@ impl GcuDevice {
             unsafe {
                 // println!("alloc_zeros async! (len={})", len);
                 let device_ptr =
-                    DeviceBuffer::uninitialized_async(len, self.executor.stream.as_ref().unwrap())?;
+                    DeviceBuffer::uninitialized_async(len, self.stream.as_ref().unwrap())?;
                 driv::topsMemsetD8Async(
                     device_ptr.as_device_ptr().as_raw(),
                     0,
@@ -515,7 +537,7 @@ impl GcuDevice {
 
     /// Synchronizes the stream.
     pub fn synchronize(self: &Arc<Self>) -> DeviceResult<()> {
-        match self.executor.stream.as_ref() {
+        match self.stream.as_ref() {
             Some(_stream) => _stream.synchronize(),
             _ => {
                 println!("Unable to use stream!");

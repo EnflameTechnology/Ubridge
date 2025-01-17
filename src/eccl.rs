@@ -11,13 +11,15 @@ use tops::driv_eccl::{EcclError, EcclStatus};
 use tops_backend as tops;
 use half;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Comm {
     comm: sys::ecclComm_t,
     device: Arc<GcuDevice>,
     rank: usize,
     world_size: usize,
 }
+
+unsafe impl Send for Comm {}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Id {
