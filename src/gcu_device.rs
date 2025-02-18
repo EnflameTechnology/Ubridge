@@ -33,25 +33,25 @@ use crate::gemm_tuner::{AtenGemmInfo, AtenGemmTuner, GEMM_OP_PARAS};
 use crate::prelude::GcuLaunchConfig;
 pub use cust_core::_hidden::DeviceCopy;
 use std::string::String;
-use uhal::memory::{DeviceBufferTrait, DevicePointerTrait};
 use tops::device::TopsDevice as Device;
 use tops::stream::TopsStream as Stream;
+use uhal::memory::{DeviceBufferTrait, DevicePointerTrait};
 //Tops backend
-use tops::memory::CopyDestination;
-use tops::memory::TopsDeviceBuffer as DeviceBuffer;
-use tops_backend as tops;
-use tops::TopsApi as Api;
-use uhal::DriverLibraryTrait;
-use uhal::stream::{StreamFlags, StreamTrait};
-use uhal::device::DeviceTrait;
 use crate::device_executor::DeviceExecutor;
 use crate::device_ptr::DevicePtr;
 use crate::gcu_slice::GcuSlice;
 use driv::topsFunction_t;
-pub use tops::driv;
-use tops::error::ToResult;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
+pub use tops::driv;
+use tops::error::ToResult;
+use tops::memory::CopyDestination;
+use tops::memory::TopsDeviceBuffer as DeviceBuffer;
+use tops::TopsApi as Api;
+use tops_backend as tops;
+use uhal::device::DeviceTrait;
+use uhal::stream::{StreamFlags, StreamTrait};
+use uhal::DriverLibraryTrait;
 
 // Define a global Mutex
 lazy_static! {
@@ -139,10 +139,10 @@ impl GcuDevice {
 
     //TODO: Fix this with topsCtxSetCurrent
     //Given that device context is not support at the moment on GCU,
-    //we temporarily use device select (which is not stable) instead of topsCtxSetCurrent 
+    //we temporarily use device select (which is not stable) instead of topsCtxSetCurrent
     pub fn bind_to_thread(self: &Arc<Self>) -> DeviceResult<()> {
         let _guard = GLOBAL_LOCK.lock().unwrap(); // Acquire the lock
-        Device::select_device(self.ordinal() as u32) 
+        Device::select_device(self.ordinal() as u32)
     }
 
     pub fn stream_inner(&self) -> Option<topsStream_t> {
@@ -202,9 +202,7 @@ impl GcuDevice {
     pub fn alloc<T: DeviceCopy>(self: &Arc<Self>, len: usize) -> DeviceResult<GcuSlice<T>> {
         let device_ptr = if self.is_async {
             // println!("alloc async!  (len={})", len);
-            unsafe {
-                DeviceBuffer::uninitialized_async(len, self.stream.as_ref().unwrap())?
-            }
+            unsafe { DeviceBuffer::uninitialized_async(len, self.stream.as_ref().unwrap())? }
         } else {
             unsafe { DeviceBuffer::uninitialized(len)? }
         };

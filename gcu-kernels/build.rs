@@ -1,17 +1,34 @@
 use anyhow::{Context, Result};
+use reqwest::blocking::Client;
 use std::path::PathBuf;
 use std::str::FromStr;
-use reqwest::blocking::Client;
 
-const KERNELS: [&str; 14] =  ["unary", "fill", "binary", "affine", "cast", 
-            "reduce", "ternary", "indexing", "matmul", "embedding", "kvconcat", "conv", "copy", "quant"];
+const KERNELS: [&str; 17] = [
+    "unary",
+    "fill",
+    "binary",
+    "affine",
+    "cast",
+    "reduce",
+    "ternary",
+    "indexing",
+    "matmul",
+    "embedding",
+    "kvconcat",
+    "conv",
+    "copy",
+    "quant",
+    "cache",
+    "attention",
+    "sort",
+];
 
 fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
     let mut command_tar = std::process::Command::new("tar");
-                command_tar.arg("-xf");
-                command_tar.arg(&filename);
-                command_tar.arg("-C");
-                command_tar.arg(&path);
+    command_tar.arg("-xf");
+    command_tar.arg(&filename);
+    command_tar.arg("-C");
+    command_tar.arg(&path);
 
     let output = command_tar
         .spawn()
@@ -29,10 +46,19 @@ fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
 }
 
 fn check_atomic_op(path: PathBuf) -> Result<()> {
-    let lib_file = format!("topsacore_{:}-{:}.tar.gz",  std::env::var("ATOMIC_TAG")?, std::env::var("ATOMIC_VERSION")?);
-    let url = format!("{:}/{:}/{:}", std::env::var("ATOMIC_URL")?, std::env::var("ATOMIC_VERSION")?, lib_file);
+    let lib_file = format!(
+        "topsacore_{:}-{:}.tar.gz",
+        std::env::var("ATOMIC_TAG")?,
+        std::env::var("ATOMIC_VERSION")?
+    );
+    let url = format!(
+        "{:}/{:}/{:}",
+        std::env::var("ATOMIC_URL")?,
+        std::env::var("ATOMIC_VERSION")?,
+        lib_file
+    );
     let filename = path.join("atomic/".to_string() + &lib_file);
-    
+
     if !filename.exists() {
         let _ = std::fs::create_dir(path.join("atomic/"));
         let client = Client::new();
@@ -56,7 +82,7 @@ fn check_atomic_op(path: PathBuf) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    let platform = "scorpio"; 
+    let platform = "scorpio";
     let kernel_dir = PathBuf::from("../kernels/");
     let absolute_kernel_dir = std::fs::canonicalize(&kernel_dir).unwrap();
     let kernel_out_dir = absolute_kernel_dir.join(platform.to_string() + "/");

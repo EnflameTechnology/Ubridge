@@ -3,13 +3,13 @@ use crate::eccllib;
 #[allow(unused_imports)]
 use crate::eccllib::{group_end, group_start};
 use crate::gcu_device::GcuDevice;
+use half;
 use std::mem::MaybeUninit;
 use std::ptr;
 use std::{sync::Arc, vec, vec::Vec};
 use tops::driv_eccl::sys;
 use tops::driv_eccl::{EcclError, EcclStatus};
 use tops_backend as tops;
-use half;
 
 #[derive(Debug, Clone)]
 pub struct Comm {

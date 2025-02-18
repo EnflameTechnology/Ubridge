@@ -18,15 +18,15 @@ pub mod device_executor;
 pub mod device_opcode;
 pub mod device_ptr;
 pub mod device_tensor;
+#[cfg(feature = "eccl")]
+pub mod eccl;
+#[cfg(feature = "eccl")]
+pub mod eccllib;
 pub mod gcu_device;
 pub mod gcu_launch;
 pub mod gcu_slice;
 pub mod gemm_tuner;
 pub mod tests;
-#[cfg(feature = "eccl")]
-pub mod eccl;
-#[cfg(feature = "eccl")]
-pub mod eccllib;
 /// Prelude module for users to import
 pub mod prelude {
     // prelude
@@ -78,6 +78,9 @@ pub const KCCONCAT: &str = "kvconcat";
 pub const FILLCOPY: &str = "copy2d";
 pub const EMBEDDING: &str = "embedding";
 pub const QUANTIZED: &str = "quant";
+pub const CACHE: &str = "cache";
+pub const ATTENTION: &str = "attention";
+pub const SORT: &str = "sort";
 
 // pub const TRANSPOSE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/transpose.topsfb");
 // pub const DOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/dot.topsfb");

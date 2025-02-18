@@ -38,7 +38,6 @@ use uhal::module::ModuleTrait;
 use tops::module::TopsModule as Module;
 use tops_backend as tops;
 
-
 #[derive(Debug)]
 pub struct ModuleX(Module);
 
@@ -292,6 +291,13 @@ impl DeviceExecutor {
             "dequantize_block_q4_k_f32",
         ];
 
+        let cache_functions = vec![
+            "reshape_and_cache_f32",
+            "reshape_and_cache_f16",
+            "reshape_and_cache_bf16",
+        ];
+        let attention_functions = vec!["paged_attention_v1_f16", "paged_attention_v1_bf16"];
+        let sort_functions = vec!["asort_asc", "asort_desc"];
         let mut executor = DeviceExecutor {
             module_map: HashMap::<String, ModuleX>::new(),
             function_map: HashMap::<String, FuncX>::new(),
@@ -431,6 +437,34 @@ impl DeviceExecutor {
                                 executor
                                     .function_map
                                     .insert(func.to_string(), function.into());
+                            }
+                        }
+                        "cache" => {
+                            for func in &cache_functions {
+                                println!("Load function {}", func);
+                                let function = executor.get_function(module, &func.to_string());
+                                executor
+                                    .function_map
+                                    .insert(func.to_string(), function.into());
+                            }
+                        }
+                        "attention" => {
+                            for func in &attention_functions {
+                                println!("Load function {}", func);
+                                let function = executor.get_function(module, &func.to_string());
+                                executor
+                                    .function_map
+                                    .insert(func.to_string(), function.into());
+                            }
+                        }
+                        "sort" => {
+                            for dt in ["bf16", "f16", "f32", "f64", "u8", "u32", "i64"] {
+                                for func in &sort_functions {
+                                    let name = format!("{}_{}", func, dt);
+                                    println!("Load function {}", name);
+                                    let function = executor.get_function(module, &name);
+                                    executor.function_map.insert(name, function.into());
+                                }
                             }
                         }
                         _ => {
