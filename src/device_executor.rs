@@ -298,6 +298,19 @@ impl DeviceExecutor {
         ];
         let attention_functions = vec!["paged_attention_v1_f16", "paged_attention_v1_bf16"];
         let sort_functions = vec!["asort_asc", "asort_desc"];
+        let gather_functions = vec![
+            "gather_i64",
+            "gather_u8",
+            "gather_u32",
+        ];
+
+        //index_add
+        let ia_functions = vec![
+            "ia_i64",
+            "ia_u8",
+            "ia_u32",
+        ];
+
         let mut executor = DeviceExecutor {
             module_map: HashMap::<String, ModuleX>::new(),
             function_map: HashMap::<String, FuncX>::new(),
@@ -317,7 +330,7 @@ impl DeviceExecutor {
                             }
                         }
                         "binary" => {
-                            for dt in ["bf16", "f16", "f32"] {
+                            for dt in ["bf16", "f16", "f32", "u32"] {
                                 for func in &binary_functions {
                                     let name = format!("{}_{}", func, dt);
                                     println!("Load function {}", name);
@@ -392,6 +405,24 @@ impl DeviceExecutor {
                                 executor
                                     .function_map
                                     .insert(func.to_string(), function.into());
+                            }
+
+                            for func in &gather_functions {
+                                for dt in ["bf16", "f16", "f32", "f64", "u8", "u32", "i64"] {
+                                    let name = format!("{}_{}", func, dt);
+                                    println!("Load function {}", name);
+                                    let function = executor.get_function(module, &name);
+                                    executor.function_map.insert(name, function.into());
+                                }
+                            }
+
+                            for func in &ia_functions {
+                                for dt in ["bf16", "f16", "f32", "f64", "u8", "u32", "i64"] {
+                                    let name = format!("{}_{}", func, dt);
+                                    println!("Load function {}", name);
+                                    let function = executor.get_function(module, &name);
+                                    executor.function_map.insert(name, function.into());
+                                }
                             }
                         }
                         "embedding" => {

@@ -35,12 +35,32 @@
 
 using namespace std;
 
+// #define PRINTHELPER(ARRAY, SZ, MSG) \
+//   printf(MSG); \
+//   for (int i=0; i< SZ; i++) \
+//     printf("%d, ", (int)ARRAY[i]); \
+//   printf("\n") \
+
 #define TILE_SIZE AlignDown(((VDMEM_VALID_SIZE) / 6), 256)
 #define TILE_LEN_BPE4 (TILE_SIZE >> 2)
 #define TILE_LEN_BPE2 (TILE_SIZE >> 1)
 #define TILE_LEN_BPE1 (TILE_SIZE)
 #define PING_PONG_SIZE 2
 #define OPERAND_NUM 2
+
+template <typename dst_t, typename lhs_t, typename rhs_t>
+__device__ void eqx(dst_t *dst, lhs_t *lhs, rhs_t* rhs, unsigned int num) {
+    for(int i=0; i< num; i++) {
+      dst[i] = (dst_t)(lhs[i] == rhs[i]? 1 : 0);
+    }
+}
+
+template <typename dst_t, typename lhs_t, typename rhs_t>
+__device__ void eqx_scalar(dst_t *dst, lhs_t *lhs, rhs_t rhs, unsigned int num) {
+    for(int i=0; i< num; i++) {
+      dst[i] = (dst_t)(lhs[i] == rhs ? 1 : 0);
+    }
+}
 
 #define BINARY_OP(T, TO, FN_NAME, ATOMIC_FUNC) \
 extern "C" __global__ void FN_NAME( \
@@ -223,11 +243,78 @@ BINARY_OP(float, float, bmaximum_f32, max)
 BINARY_OP(float, float, bminimum_f32, min)
 BINARY_OP(float, float, mod_f32, mod)
 
+BINARY_OP(uint32_t, uint32_t, badd_u32, add)
+BINARY_OP(uint32_t, uint32_t, bsub_u32, sub)
+BINARY_OP(uint32_t, uint32_t, bmul_u32, mul)
+BINARY_OP(uint32_t, uint32_t, bdiv_u32, div)
+BINARY_OP(uint32_t, uint32_t, bmaximum_u32, max)
+BINARY_OP(uint32_t, uint32_t, bminimum_u32, min)
+BINARY_OP(uint32_t, uint32_t, mod_u32, mod)
+
+// BINARY_OP(uint32_t, uint8_t, eq_u32, eq)
+BINARY_OP(uint32_t, uint8_t, ne_u32, ne)
+BINARY_OP(uint32_t, uint8_t, ge_u32, ge)
+BINARY_OP(uint32_t, uint8_t, gt_u32, gt)
+BINARY_OP(uint32_t, uint8_t, lt_u32, lt)
+BINARY_OP(uint32_t, uint8_t, le_u32, le)
+
+
 BINARY_OP(float, uint8_t, eq_f32, eq)
 BINARY_OP(float, uint8_t, ne_f32, ne)
 BINARY_OP(float, uint8_t, ge_f32, ge)
 BINARY_OP(float, uint8_t, gt_f32, gt)
 BINARY_OP(float, uint8_t, lt_f32, lt)
 BINARY_OP(float, uint8_t, le_f32, le)
+
+
+extern "C" __global__ void eq_u32( 
+    const size_t numel, 
+    const size_t num_dims, 
+    size_t *dims_and_strides, 
+    uint32_t *in_a, 
+    uint32_t *in_b, 
+    uint8_t *out) {
+    tops_dte_ctx_t ctx; 
+    tops::dte_scope s(ctx); 
+    int thread_id = GetThreadIdx();
+    int MAX_THREADS = GetThreadNum();
+    const int TILESIZE = 128 * 1024 / sizeof(uint32_t); 
+    __local__ __valigned__ uint32_t buffer1[TILESIZE]; 
+    __local__ __valigned__ uint32_t buffer2[TILESIZE]; 
+    __local__ __valigned__ uint8_t buffer3[TILESIZE]; 
+
+    __local__ __valigned__ size_t dims_strides[128];
+    tops::memcpy(ctx, tops::mdspan(tops::Private, dims_strides, num_dims * 3), tops::mdspan(tops::Global, dims_and_strides, num_dims * 3)); 
+    size_t r_strides = 1;
+    for (int i=0; i<num_dims; i++) {
+      r_strides *= dims_strides[2 * num_dims + i];
+    }
+
+    tops::mdspan buffera_l1(tops::Private, buffer1, TILESIZE); 
+    tops::mdspan bufferb_l1(tops::Private, buffer2, TILESIZE); 
+    if (r_strides == 0) {
+      tops::memcpy(ctx, bufferb_l1, tops::mdspan(tops::Global, in_b, 1)); 
+    }
+
+    int N = numel; 
+    int THREAD_STEP = 1; 
+    int thread_step = 1; 
+    GetThreadStep(N, thread_step, THREAD_STEP);
+    for (int i = 0; i < thread_step; i+=TILESIZE) { 
+      unsigned int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i; 
+      int offset = thread_id * THREAD_STEP; 
+      tops::memcpy(ctx, buffera_l1, tops::mdspan(tops::Global, in_a + offset, bufsize)); 
+      if (r_strides > 0) {
+        tops::memcpy(ctx, bufferb_l1, tops::mdspan(tops::Global, in_b + offset, bufsize)); 
+        eqx<uint8_t, uint32_t, uint32_t>(reinterpret_cast<uint8_t*>(buffer3), 
+          reinterpret_cast<uint32_t*>(buffer1), reinterpret_cast<uint32_t*>(buffer2), bufsize);
+      } else {
+          eqx_scalar<uint8_t, uint32_t, uint32_t>(reinterpret_cast<uint8_t*>(buffer3), 
+          reinterpret_cast<uint32_t*>(buffer1), buffer2[0], bufsize);
+      }
+      tops::mdspan out_hbm(tops::Global, out + offset, bufsize); 
+      tops::memcpy(ctx, out_hbm, tops::mdspan(tops::Private, buffer3, bufsize));
+    } 
+} 
 
 int main () {}

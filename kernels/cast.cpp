@@ -55,15 +55,7 @@ __device__ void cast_kernel(T* in, OUTT* out, int len) {
     int N = len;
     int THREAD_STEP = 1;
     int thread_step = 1;
-    if (N > MAX_THREADS) {
-      THREAD_STEP = N / MAX_THREADS;
-      thread_step = THREAD_STEP;
-      if (N % MAX_THREADS != 0) {
-        if (thread_id == MAX_THREADS - 1) {
-          thread_step += N % MAX_THREADS; //last thread also process remains
-        }
-      }
-    }
+    GetThreadStep(N, thread_step, THREAD_STEP);
 
     if (GetThreadIdxInBlock() == 0 && cachable) { 
       tops::memcpy(ctx, tops::mdspan(tops::Shared, sharedBuffer, len), tops::mdspan(tops::Global, in, len)); 

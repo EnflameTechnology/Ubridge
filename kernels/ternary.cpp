@@ -95,15 +95,7 @@ __device__ void where_kernel(ID_TYPENAME* ids, T* in1, T* in2, T* out, const siz
     int N = len;
     int THREAD_STEP = 1;
     int thread_step = 1;
-    if (N > MAX_THREADS) {
-      THREAD_STEP = N / MAX_THREADS;
-      thread_step = THREAD_STEP;
-      if (N % MAX_THREADS != 0) {
-        if (thread_id == MAX_THREADS - 1) {
-          thread_step += N % MAX_THREADS; //last thread also process remains
-        }
-      }
-    }
+    GetThreadStep(N, thread_step, THREAD_STEP);
 
     for (int i = 0; i < thread_step; i+=TILE_SIZE) {
       int bufsize = (i + TILE_SIZE < thread_step) ? TILE_SIZE : thread_step - i;

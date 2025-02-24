@@ -90,15 +90,8 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, con
     int N = out_size;
     int THREAD_STEP = 1;
     int thread_step = 1;
-    if (N > MAX_THREADS) {
-      THREAD_STEP = N / MAX_THREADS;
-      thread_step = THREAD_STEP;
-      if (N % MAX_THREADS != 0) {
-        if (thread_id == MAX_THREADS - 1) {
-          thread_step += N % MAX_THREADS; //last thread also process remains
-        }
-      }
-    }
+    GetThreadStep(N, thread_step, THREAD_STEP);
+
     bool cacheable_l1 = in_size > MAX_THREADS && in_size * sizeof(T) < COPY_L1SIZE;
     bool cacheable_l2 = in_size > MAX_THREADS && in_size * sizeof(T) < SHARE_BUFFER_SIZE;
 
@@ -173,15 +166,8 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
     int N = out_size;
     int THREAD_STEP = 1;
     int thread_step = 1;
-    if (N > MAX_THREADS) {
-      THREAD_STEP = N / MAX_THREADS;
-      thread_step = THREAD_STEP;
-      if (N % MAX_THREADS != 0) {
-        if (thread_id == MAX_THREADS - 1) {
-          thread_step += N % MAX_THREADS; //last thread also process remains
-        }
-      }
-    }
+    GetThreadStep(N, thread_step, THREAD_STEP);
+
     int dst_dim[RANK];
     int dst_strides[RANK];
     for (int j = 0; j < RANK; ++j) {

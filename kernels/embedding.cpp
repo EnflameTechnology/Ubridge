@@ -160,15 +160,7 @@ __device__ void rope(T* query, T* key, CST* cos_sin, int cos_sin_stride, int* in
     int THREAD_STEP = 1;
     int thread_step = 1;
     int N = batch * num_tokens;
-    if (N > MAX_THREADS) {
-      THREAD_STEP = N / MAX_THREADS;
-      thread_step = THREAD_STEP;
-      if (N % MAX_THREADS != 0) {
-        if (thread_id == MAX_THREADS - 1) {
-          thread_step += N % MAX_THREADS; //last thread also process remains
-        }
-      }
-    }
+    GetThreadStep(N, thread_step, THREAD_STEP);
     __local__ __valigned__ CST bufCosSin[1024 * 48];
     __local__ __valigned__ T bufQuery[1024 * 48];
     __local__ __valigned__ T bufKey[1024 * 48];

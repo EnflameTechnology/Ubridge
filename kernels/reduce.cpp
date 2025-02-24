@@ -62,15 +62,7 @@ __device__ __forceinline__ void FN_NAME( \
     T* sharedBuffer = reinterpret_cast<T*>(raw_cache);\
     int THREAD_STEP = 1;\
     int thread_step = 1;\
-    if (N > MAX_THREADS) {\
-      THREAD_STEP = N / MAX_THREADS;\
-      thread_step = THREAD_STEP;\
-      if (N % MAX_THREADS != 0) {\
-        if (thread_id == MAX_THREADS - 1) {\
-          thread_step += N % MAX_THREADS; \
-        }\
-      }\
-    }\
+    GetThreadStep(N, thread_step, THREAD_STEP);\
     for (int i = 0; i < thread_step; i++) {\
       int idx = thread_id * THREAD_STEP + i;\
       if (idx >= N) break;\
@@ -173,15 +165,7 @@ extern "C" __global__ void FN_NAME(T *input, T* output, int batch,\
     int N = batch * chunks;\
     int THREAD_STEP = 1;\
     int thread_step = 1;\
-    if (N > MAX_THREADS) {\
-      THREAD_STEP = N / MAX_THREADS;\
-      thread_step = THREAD_STEP;\
-      if (N % MAX_THREADS != 0) {\
-        if (thread_id == MAX_THREADS - 1) {\
-          thread_step += N % MAX_THREADS; \
-        }\
-      }\
-    }\
+    GetThreadStep(N, thread_step, THREAD_STEP);\
     MAX_KERNEL(reinterpret_cast<TT*>(input), reinterpret_cast<TT*>(output), reinterpret_cast<TT*>(share_max_out), reinterpret_cast<char*>(raw_cache), element_num, last_dim_size, true);\
     __syncthreads();\
     bool output_cachable = element_num * sizeof(T) < SHARE_BUFFER_SIZE - SHARE_REMAIN_BUFFER_SIZE;\
@@ -243,15 +227,7 @@ extern "C" __global__ void softmax_f32(float *input, float* output, int batch,
     int N = batch * chunks;
     int THREAD_STEP = 1;
     int thread_step = 1;
-    if (N > MAX_THREADS) {
-      THREAD_STEP = N / MAX_THREADS;
-      thread_step = THREAD_STEP;
-      if (N % MAX_THREADS != 0) {
-        if (thread_id == MAX_THREADS - 1) {
-          thread_step += N % MAX_THREADS; 
-        }
-      }
-    }
+    GetThreadStep(N, thread_step, THREAD_STEP);
     fast_max_f32_kernel(reinterpret_cast<float*>(input), reinterpret_cast<float*>(output), reinterpret_cast<float*>(share_max_out), reinterpret_cast<char*>(raw_cache), element_num, last_dim_size, true);
     __syncthreads();
 
@@ -328,15 +304,7 @@ __device__ void layernorm_kernel(T *input, T* output, T* weight, T* bias, int ba
     int N = batch * chunks;
     int THREAD_STEP = 1;
     int thread_step = 1;
-    if (N > MAX_THREADS) {
-      THREAD_STEP = N / MAX_THREADS;
-      thread_step = THREAD_STEP;
-      if (N % MAX_THREADS != 0) {
-        if (thread_id == MAX_THREADS - 1) {
-          thread_step += N % MAX_THREADS; //last thread also process remains
-        }
-      }
-    }
+    GetThreadStep(N, thread_step, THREAD_STEP);
 
     //mean = sum(xi)/N
     //varience = sum((xi - mean)^2)/N

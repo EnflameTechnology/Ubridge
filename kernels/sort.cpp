@@ -9,22 +9,6 @@
 #define L1_ALIGN_SIZE (128)
 #define TEMPLATE_ALIGN_UP(a, b) (((a + b - 1) / b) * b)
 
-__forceinline__ __device__ void GetBlockThreadStep(int N, int &thread_step, int &THREAD_STEP) {
-    int thread_id = GetThreadIdxInBlock(); // Thread index 
-    int MAX_THREADS = GetThreadNumEachBlock();; // Total threads per row
-    THREAD_STEP = 1;
-    thread_step = 1;
-    if (N > MAX_THREADS) {
-      THREAD_STEP = N / MAX_THREADS;
-      thread_step = THREAD_STEP;
-      if (N % MAX_THREADS != 0) {
-        if (thread_id == MAX_THREADS - 1) {
-          thread_step += N % MAX_THREADS; //last thread also process remains
-        }
-      }
-    }
-}
-
 template <typename T, bool ascending>
 __device__ void bitonic_sort_kernel(T* arr, u_int32_t * dst, int j, int k, unsigned int cols_pad) {
     __shared__ T temp_val[12];

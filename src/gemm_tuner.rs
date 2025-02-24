@@ -580,7 +580,9 @@ impl AtenGemmTuner {
             }
             set_split_option!(tune, false, false, true, false, false, false, false, false);
         }
-
+        if tune.sip_m % 32 != 0 && tune.sip_m != 1 { //sip_m does not support, change to default 1
+            tune.sip_m = 1; 
+        }
         // println!("TunerHGemmF16");
         0
     }

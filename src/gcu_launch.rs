@@ -68,7 +68,7 @@ impl GcuLaunchConfig {
         }
     }
 
-    pub fn for_ucopy() -> Self {
+    pub fn for_single() -> Self {
         Self {
             grid_dim: (1, 1, 1),
             block_dim: (Self::max_sip_num(), 1, 1),
@@ -76,14 +76,8 @@ impl GcuLaunchConfig {
         }
     }
 
-    #[cfg(feature = "scorpio")]
     pub fn max_sip_num() -> u32 {
         12
-    }
-
-    #[cfg(not(feature = "scorpio"))]
-    pub fn max_sip_num() -> u32 {
-        6
     }
 }
 

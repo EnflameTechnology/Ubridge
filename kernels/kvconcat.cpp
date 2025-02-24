@@ -74,15 +74,7 @@ __device__ __forceinline__ void kvconcat_dim2_kernel(T *ltensor, T* rtensor, T *
 
     int THREAD_STEP = 1;
     int thread_step = 1;
-    if (N > MAX_THREADS) {
-      THREAD_STEP = N / MAX_THREADS;
-      thread_step = THREAD_STEP;
-      if (N % MAX_THREADS != 0) {
-        if (thread_id == MAX_THREADS - 1) {
-          thread_step += N % MAX_THREADS; //last thread also process remains
-        }
-      }
-    }
+    GetThreadStep(N, thread_step, THREAD_STEP);
 
     for (int i = 0; i < thread_step; i++) {
       int idx = thread_id * THREAD_STEP + i;

@@ -178,6 +178,38 @@ __forceinline__ int GetGrids(int total_threads, int sip_number) {
   return grids;
 }
 
+__forceinline__ __device__ void GetThreadStep(int N, int &thread_step, int &THREAD_STEP) {
+    int thread_id = GetThreadIdx(); // Thread index 
+    int MAX_THREADS = GetThreadNum();; // Total threads per row
+    THREAD_STEP = 1;
+    thread_step = 1;
+    if (N > MAX_THREADS) {
+      THREAD_STEP = N / MAX_THREADS;
+      thread_step = THREAD_STEP;
+      if (N % MAX_THREADS != 0) {
+        if (thread_id == MAX_THREADS - 1) {
+          thread_step += N % MAX_THREADS; //last thread also process remains
+        }
+      }
+    }
+}
+
+__forceinline__ __device__ void GetBlockThreadStep(int N, int &thread_step, int &THREAD_STEP) {
+    int thread_id = GetThreadIdxInBlock(); // Thread index 
+    int MAX_THREADS = GetThreadNumEachBlock();; // Total threads per row
+    THREAD_STEP = 1;
+    thread_step = 1;
+    if (N > MAX_THREADS) {
+      THREAD_STEP = N / MAX_THREADS;
+      thread_step = THREAD_STEP;
+      if (N % MAX_THREADS != 0) {
+        if (thread_id == MAX_THREADS - 1) {
+          thread_step += N % MAX_THREADS; //last thread also process remains
+        }
+      }
+    }
+}
+
 // ceiling division of two integers
 template <typename Int_Type, typename Int_Type2 = Int_Type>
 __device__ inline constexpr int CeilDiv(Int_Type x, Int_Type2 y) {
