@@ -8,6 +8,7 @@
 #include "utils/utils.h"
 #define L1_ALIGN_SIZE (128)
 #define TEMPLATE_ALIGN_UP(a, b) (((a + b - 1) / b) * b)
+#define MIN_THREAD_STEP 1024
 
 template <typename T, bool ascending>
 __device__ void bitonic_sort_kernel(T* arr, u_int32_t * dst, int j, int k, unsigned int cols_pad) {
@@ -91,7 +92,7 @@ __device__ void SortKernel(T *values, u_int32_t *indices, int rows, int cols, in
     T* shared_values = reinterpret_cast<T*>(l2_buffer);
     u_int32_t* shared_indices = reinterpret_cast<u_int32_t *>(
         (reinterpret_cast<char *>(shared_values)) +
-            TEMPLATE_ALIGN_UP(cols * sizeof(T), L1_ALIGN_SIZE));
+            TEMPLATE_ALIGN_UP(ncols_pad * sizeof(T), L1_ALIGN_SIZE));
     int N = cols;
     int thread_block_step;
     int THREAD_BLOCK_STEP;
@@ -109,6 +110,7 @@ __device__ void SortKernel(T *values, u_int32_t *indices, int rows, int cols, in
         if (GetThreadIdxInBlock() == 0) {
             for (int k=cols; k<ncols_pad; k++) {
                 shared_values[k] = Ascending ? T(10000.0) : T(-10000.0); //padding
+                shared_indices[k] = cols;
             }
         }
         __syncthreads();

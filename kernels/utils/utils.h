@@ -23,7 +23,7 @@ constexpr int MAX_DRD_SIP_NUM = 12;
 constexpr int MAX_SCP_CLUSTER_NUM = 1;
 constexpr int MAX_SCP_SIP_NUM = 12;
 constexpr int SIP_VECTOR_LENGTH = 128;
-#define SHARE_BUFFER_SIZE 1024 * 1024 * 48 //64MB - 16MB (reserved)
+#define SHARE_BUFFER_SIZE 1024 * 1024 * (64 - 4) //64MB - 4MB (reserved)
 
 typedef enum {
   TOPSOP_DATA_NONE = -1,  /**< TOPSOP_DATA_NONE -1  */
