@@ -21,7 +21,7 @@
 #include <tops/dte_chain.h>
 
 #include "tops/tops_runtime.h"
-#include "utils.h"
+#include "../utils/utils.h"
 // #include "krt/scalar_type.h"
 
 using namespace tops;

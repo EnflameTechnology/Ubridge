@@ -12,6 +12,8 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ * @par Copyright (c) Enflame Tech Company.
+ * @par History: revised from TopsOp/Aten for candle-gcu
  */
 
 #include <stdio.h>
@@ -22,7 +24,7 @@
 #include "tops/tops_runtime.h"
 #include "utils/utils.h"
 // #include "krt/scalar_type.h"
-#include "utils/attention_gqa_kernels.h"
+#include "third_party/attention_gqa_kernels.h"
 
 using namespace tops;
 #define TAR32(low, high) (((low) & 0xffff) | (((high) & 0xffff) << 16))

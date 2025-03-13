@@ -27,6 +27,7 @@ pub mod gcu_launch;
 pub mod gcu_slice;
 pub mod gemm_tuner;
 pub mod tests;
+pub mod ffi;
 /// Prelude module for users to import
 pub mod prelude {
     // prelude
@@ -82,10 +83,6 @@ pub const CACHE: &str = "cache";
 pub const ATTENTION: &str = "attention";
 pub const SORT: &str = "sort";
 
-// pub const TRANSPOSE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/transpose.topsfb");
-// pub const DOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/dot.topsfb");
-// pub const DOTLLM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/dotllm.topsfb");
-// pub const GEMM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/gemm.topsfb");
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum DATATYPE {

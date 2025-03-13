@@ -130,6 +130,7 @@ impl GcuDevice {
                 grid_dim: (prop.multiProcessorCount as u32, 1, 1),
                 block_dim: (prop.maxThreadsPerMultiProcessor as u32, 1, 1),
                 shared_mem_bytes: 0,
+                is_cooperative_launch: false,
             },
             tuner: AtenGemmTuner::new(),
             device: Some(device),

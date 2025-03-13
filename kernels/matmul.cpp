@@ -23,8 +23,8 @@
 #include <tops/bfloat.h>
 #include "tops/tops_runtime.h"
 #include "utils/utils.h"
-#include "utils/matmul_general.h"
-#include "utils/matmul_decoding.h"
+#include "third_party/matmul_general.h"
+#include "third_party/matmul_decoding.h"
 #include <acore_op.h>
 
 using namespace std;

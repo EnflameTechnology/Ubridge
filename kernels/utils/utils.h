@@ -336,6 +336,7 @@ __device__ __forceinline__ __DTU_INTRIN_AS__ char* CastToGcuPtr(T ptr) {
   return (__DTU_INTRIN_AS__ char*)ptr;
 }
 
+#if 0
 template <typename T>
 struct DATA {
   T *lhs_d, *rhs_d, *out_d;
@@ -413,6 +414,7 @@ struct DATA {
         free(expected);
   }
 };
+#endif
 
 namespace tops {
 

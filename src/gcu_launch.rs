@@ -47,9 +47,15 @@ pub struct GcuLaunchConfig {
 
     /// Dynamic shared-memory size per thread block in bytes
     pub shared_mem_bytes: u32,
+
+    pub is_cooperative_launch: bool,
 }
 
 impl GcuLaunchConfig {
+    pub fn set_cooperative_launch(&mut self, cooperative: bool) {
+        self.is_cooperative_launch = cooperative;
+    }
+    
     pub fn set_shared_memory(&mut self, size_in_bytes: u32) {
         const SHARED_MEM_SIZE: u32 = 48 * 1024 * 1024;
         let shared_mem_bytes = ((size_in_bytes + 4095) / 4096) * 4096 + 4096;
@@ -65,6 +71,7 @@ impl GcuLaunchConfig {
             grid_dim: (1, 1, 1),
             block_dim: (n, 1, 1),
             shared_mem_bytes: 0,
+            is_cooperative_launch: false,
         }
     }
 
@@ -73,6 +80,7 @@ impl GcuLaunchConfig {
             grid_dim: (1, 1, 1),
             block_dim: (Self::max_sip_num(), 1, 1),
             shared_mem_bytes: 0,
+            is_cooperative_launch: false,
         }
     }
 
@@ -253,6 +261,7 @@ impl GcuFunction {
         cfg: &GcuLaunchConfig,
         params: &mut [*mut std::ffi::c_void],
     ) -> DeviceResult<()> {
+        use crate::gcu_launch::tops::stream::dim3;
         if let Some(func) = self.func {
             let null = ptr::null_mut();
             let stream = if self.is_async {
@@ -260,22 +269,46 @@ impl GcuFunction {
             } else {
                 null
             };
-            let ret = driv::topsModuleLaunchKernel(
-                func,
-                cfg.grid_dim.0,
-                cfg.grid_dim.1,
-                cfg.grid_dim.2,
-                cfg.block_dim.0,
-                cfg.block_dim.1,
-                cfg.block_dim.2,
-                cfg.shared_mem_bytes,
-                stream,
-                params.as_mut_ptr(),
-                null as *mut *mut c_void,
-                // config.as_mut_ptr() as *mut *mut c_void
-            )
-            .to_result();
+            let ret = if cfg.is_cooperative_launch {
+                let val = driv::topsLaunchAttributeValue_t { cooperative : 1};
+                let mut attrs = vec![ driv::topsLaunchAttribute {
+                    id: driv::topsLaunchAttributeID_t::topsLaunchAttributeCooperative,
+                    val 
+                }];
 
+                let launch_cfg = driv::topsLaunchConfig_t {
+                    attrs: attrs.as_mut_ptr() as *mut driv::topsLaunchAttribute_t,
+                    blockDim: dim3 {x: cfg.block_dim.0, y: cfg.block_dim.1, z: cfg.block_dim.2},
+                    dynamicSmemBytes: cfg.shared_mem_bytes as driv::size_t,
+                    gridDim: dim3 {x: cfg.grid_dim.0, y: cfg.grid_dim.1, z: cfg.grid_dim.2},
+                    localSmemBytes: 0 as driv::size_t,
+                    numAttrs: 1,
+                    stream,
+                };
+
+                driv::topsModuleLaunchKernelEx(
+                    &launch_cfg as *const driv::topsLaunchConfig_t,
+                    func,
+                    params.as_mut_ptr(),
+                    null as *mut *mut c_void,
+                ).to_result()
+            } else {
+                driv::topsModuleLaunchKernel(
+                    func,
+                    cfg.grid_dim.0,
+                    cfg.grid_dim.1,
+                    cfg.grid_dim.2,
+                    cfg.block_dim.0,
+                    cfg.block_dim.1,
+                    cfg.block_dim.2,
+                    cfg.shared_mem_bytes,
+                    stream,
+                    params.as_mut_ptr(),
+                    null as *mut *mut c_void,
+                )
+                .to_result()
+            };
+            
             if ret.is_err() {
                 println!("Launch Error for function {}", self.func_name);
             }
