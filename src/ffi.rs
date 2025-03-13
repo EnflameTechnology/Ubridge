@@ -1,10 +1,10 @@
-
 use core::ffi::{c_int, c_long, c_void};
+use half::{f16, bf16};
 
 extern "C" {
     pub fn topk_f32(
-        input: *const c_void,
-        output: *mut c_void,
+        input: *mut f32,
+        output: *mut f32,
         indices: *mut u32,
         workspace: *mut c_void,
         dim0: c_int,
@@ -16,8 +16,8 @@ extern "C" {
     );
 
     pub fn topk_f16(
-        input: *const c_void,
-        output: *mut c_void,
+        input: *mut f16,
+        output: *mut f16,
         indices: *mut u32,
         workspace: *mut c_void,
         dim0: c_int,
@@ -29,8 +29,8 @@ extern "C" {
     );
 
     pub fn topk_bf16(
-        input: *const c_void,
-        output: *mut c_void,
+        input: *mut bf16,
+        output: *mut bf16,
         indices: *mut u32,
         workspace: *mut c_void,
         dim0: c_int,

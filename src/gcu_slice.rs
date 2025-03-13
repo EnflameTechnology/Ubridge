@@ -38,8 +38,8 @@ use uhal::memory::DevicePointerTrait;
 #[cfg(feature = "tops_backend")]
 use tops_backend as tops;
 
-#[cfg(feature = "tops_backend")]
-use tops::memory::TopsDeviceBuffer as DeviceBuffer;
+// #[cfg(feature = "tops_backend")]
+// use tops::memory::TopsDeviceBuffer as DeviceBuffer;
 
 #[cfg(feature = "tops_backend")]
 pub use tops::driv;
@@ -48,11 +48,12 @@ use crate::device_ptr::{DevicePtr, DevicePtrMut, DeviceSlice};
 
 #[derive(Debug)]
 pub struct GcuSlice<T: DeviceCopy> {
-    pub buffer: DeviceBuffer<T>,
+    pub buffer: driv::topsDeviceptr_t,
     pub len: usize,
     pub device: Arc<GcuDevice>,
     pub host_buf: Option<Pin<Vec<T>>>,
     pub host_buf_ptr: Option<*mut c_void>,
+    pub async_free: bool,
 }
 
 unsafe impl<T: Send + DeviceCopy> Send for GcuSlice<T> {}
@@ -65,8 +66,20 @@ impl<T: DeviceCopy> Drop for GcuSlice<T> {
             //     let host_ptr = buf.as_ref().as_ptr() as *mut c_void;
             //     driv::topsHostUnregister(host_ptr);
             // }
+            
             if let Some(ptr) = &self.host_buf_ptr {
                 driv::topsHostFree(*ptr);
+            }
+            if self.len > 0 && std::mem::size_of::<T>() > 0 {
+                let ptr = std::mem::replace(&mut self.buffer, std::ptr::null_mut());
+                unsafe {
+                    if self.async_free {
+                        driv::topsFreeAsync(ptr, self.device.stream_inner().expect("unable to obtain stream!"));
+                    } else {
+                        driv::topsFree(ptr);
+                    }
+                    std::mem::forget(ptr);
+                }
             }
         }
     }
@@ -124,13 +137,9 @@ impl<T: DeviceCopy> GcuSlice<T> {
     /// Fallible version of [CudaSlice::slice]
     pub fn try_slice(&self, range: impl RangeBounds<usize>) -> Option<GcuView<'_, T>> {
         range.bounds(..self.len).map(|(start, end)| GcuView {
-            root: self.buffer.as_device_ptr_ref().as_ref(),
-            // ptr: unsafe { self.buffer.as_device_ptr().offset(isize::try_from(start * std::mem::size_of::<T>()).unwrap()).as_raw()},
+            root: &self.buffer,
             ptr: unsafe {
-                self.buffer
-                    .as_device_ptr()
-                    .offset(isize::try_from(start).unwrap())
-                    .as_raw()
+                (self.buffer as u64 + (start * std::mem::size_of::<T>())  as u64) as *mut c_void
             },
             len: end - start,
             marker: PhantomData,
@@ -146,8 +155,8 @@ impl<T: DeviceCopy> GcuSlice<T> {
     /// for the type `S`.
     pub unsafe fn transmute<S>(&self, len: usize) -> Option<GcuView<'_, S>> {
         (len * std::mem::size_of::<S>() <= self.num_bytes()).then_some(GcuView {
-            root: self.buffer.as_device_ptr_ref().as_ref(),
-            ptr: self.buffer.as_device_ptr().as_raw(),
+            root: &self.buffer,
+            ptr: self.buffer,
             len,
             marker: PhantomData,
         })
@@ -193,11 +202,9 @@ impl<T: DeviceCopy> GcuSlice<T> {
     /// Fallible version of [CudaSlice::slice_mut]
     pub fn try_slice_mut(&mut self, range: impl RangeBounds<usize>) -> Option<GcuViewMut<'_, T>> {
         range.bounds(..self.len).map(|(start, end)| GcuViewMut {
-            // ptr: self.device_ptr + (start * std::mem::size_of::<T>()) as u64,
             ptr: (self.device_ptr() as u64 + (start * std::mem::size_of::<T>()) as u64)
                 as *mut c_void,
-            // ptr: ((self.device_ptr().clone() as u64) + (start * std::mem::size_of::<T>() as u64)) as *mut c_void, //.offset(isize::try_from().unwrap())},
-            root: self.buffer.as_device_ptr_mut().as_mut(),
+            root: &mut self.buffer,
             len: end - start,
             marker: PhantomData,
         })
@@ -212,8 +219,8 @@ impl<T: DeviceCopy> GcuSlice<T> {
     /// for the type `S`.
     pub unsafe fn transmute_mut<S>(&mut self, len: usize) -> Option<GcuViewMut<'_, S>> {
         (len * std::mem::size_of::<S>() <= self.num_bytes()).then_some(GcuViewMut {
-            ptr: self.buffer.as_device_ptr().as_raw(),
-            root: self.buffer.as_device_ptr_mut().as_mut(),
+            ptr: self.buffer,
+            root: &mut self.buffer,
             len,
             marker: PhantomData,
         })
@@ -312,7 +319,7 @@ impl<'a, T> DeviceSlice<T> for GcuViewMut<'a, T> {
 
 impl<T: DeviceCopy> DevicePtr<T> for GcuSlice<T> {
     fn device_ptr(&self) -> driv::topsDeviceptr_t {
-        self.buffer.as_device_ptr().as_raw()
+        self.buffer
     }
 }
 
@@ -330,7 +337,7 @@ impl<'a, T> DevicePtr<T> for GcuViewMut<'a, T> {
 
 impl<T: DeviceCopy> DevicePtrMut<T> for GcuSlice<T> {
     fn device_ptr_mut(&mut self) -> driv::topsDeviceptr_t {
-        self.buffer.as_device_ptr().as_raw()
+        self.buffer
     }
 }
 

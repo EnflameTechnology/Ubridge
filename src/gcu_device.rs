@@ -35,7 +35,7 @@ pub use cust_core::_hidden::DeviceCopy;
 use std::string::String;
 use tops::device::TopsDevice as Device;
 use tops::stream::TopsStream as Stream;
-use uhal::memory::{DeviceBufferTrait, DevicePointerTrait};
+// use uhal::memory::{DeviceBufferTrait, DevicePointerTrait};
 //Tops backend
 use crate::device_executor::DeviceExecutor;
 use crate::device_ptr::DevicePtr;
@@ -46,7 +46,7 @@ use std::sync::Mutex;
 pub use tops::driv;
 use tops::error::ToResult;
 use tops::memory::CopyDestination;
-use tops::memory::TopsDeviceBuffer as DeviceBuffer;
+// use tops::memory::TopsDeviceBuffer as DeviceBuffer;
 use tops::TopsApi as Api;
 use tops_backend as tops;
 use uhal::device::DeviceTrait;
@@ -196,16 +196,41 @@ impl GcuDevice {
         let info = AtenGemmInfo::new(datatype, weight_type, b, m, k, n, rhs_trans);
         unsafe { self.tuner.tuner(&info) }
     }
+
+    pub fn align_up(size: usize, aligned: usize) -> usize {
+        ((size + aligned - 1) / aligned) * aligned
+    }
     /// Allocates device memory and increments the reference counter of [GcuDevice].
     ///
     /// # Safety
     /// This is unsafe because the device memory is unset after this call.
     pub fn alloc<T: DeviceCopy>(self: &Arc<Self>, len: usize) -> DeviceResult<GcuSlice<T>> {
+        let size = len.checked_mul(std::mem::size_of::<T>()).unwrap_or(0);
+        if size == 0 {
+            return Err(DeviceError::InvalidMemoryAllocation);
+        }
         let device_ptr = if self.is_async {
-            // println!("alloc async!  (len={})", len);
-            unsafe { DeviceBuffer::uninitialized_async(len, self.stream.as_ref().unwrap())? }
+            let mut ptr: *mut c_void = std::ptr::null_mut();
+            unsafe {
+                driv::topsMallocAsync(
+                    &mut ptr as *mut *mut c_void,
+                    Self::align_up(size, 4096) as u64,
+                    self.stream_inner().expect("unable to obtain stream"),
+                    0,
+                )
+                .to_result()?;
+            }
+            ptr as driv::topsDeviceptr_t
         } else {
-            unsafe { DeviceBuffer::uninitialized(len)? }
+            let mut ptr: *mut c_void = std::ptr::null_mut();
+            unsafe {
+                driv::topsMalloc(
+                    &mut ptr as *mut *mut c_void,
+                    Self::align_up(size, 4096) as u64,
+                )
+                .to_result()?;
+            }
+            ptr as driv::topsDeviceptr_t
         };
         Ok(GcuSlice {
             buffer: device_ptr,
@@ -213,6 +238,7 @@ impl GcuDevice {
             device: self.clone(),
             host_buf: None,
             host_buf_ptr: None,
+            async_free: self.is_async,
         })
     }
 
@@ -223,44 +249,29 @@ impl GcuDevice {
     /// 1. `T` is marked as [ValidAsZeroBits], so the device memory is valid to use
     /// 2. Self is [`Arc<Self>`], and this method increments the rc for self
     pub fn alloc_zeros<T: DeviceCopy>(self: &Arc<Self>, len: usize) -> DeviceResult<GcuSlice<T>> {
-        let device_ptr = if self.is_async {
+        let slice = self.alloc(len)?;
+        if self.is_async {
             unsafe {
-                // println!("alloc_zeros async! (len={})", len);
-                let device_ptr =
-                    DeviceBuffer::uninitialized_async(len, self.stream.as_ref().unwrap())?;
                 driv::topsMemsetD8Async(
-                    device_ptr.as_device_ptr().as_raw(),
+                    slice.device_ptr(),
                     0,
                     (std::mem::size_of::<T>() * len) as u64,
                     self.stream_inner().expect("unable to obtain stream"),
                 )
                 .to_result()?;
-                device_ptr
             }
         } else {
             unsafe {
-                let device_ptr = DeviceBuffer::uninitialized(len)?;
                 driv::topsMemsetD8(
-                    device_ptr.as_device_ptr().as_raw(),
+                    slice.device_ptr(),
                     0,
                     (std::mem::size_of::<T>() * len) as u64,
                 )
                 .to_result()?;
-                device_ptr
             }
         };
 
-        // unsafe {
-        //     driv::topsMemsetD8(device_ptr.as_device_ptr().as_raw(), 0, std::mem::size_of::<T>() * len).to_result()?;
-        // }
-
-        Ok(GcuSlice {
-            buffer: device_ptr,
-            len,
-            device: self.clone(),
-            host_buf: None,
-            host_buf_ptr: None,
-        })
+        Ok(slice)
     }
 
     /// Sets all memory to 0 asynchronously.
@@ -363,29 +374,29 @@ impl GcuDevice {
     ) -> DeviceResult<()> {
         assert_eq!(src.len(), dst.len);
         let size = std::mem::size_of::<T>() * src.len();
-
-        // let host_ptr = dst.host_buf.as_ref().unwrap().as_ptr() as *mut c_void;
         if self.is_async {
             unsafe {
-                // if size % 256 != 0 {
-                let mut ptr = std::ptr::null_mut();
-                driv::topsHostMalloc(&mut ptr as *mut *mut c_void, size as u64, 0).to_result()?;
-                std::ptr::copy(src.as_ptr() as *mut c_void, ptr, size);
-                dst.host_buf_ptr = Some(ptr);
-                return driv::topsMemcpyHtoDAsync(
+                let mut ptr_host = std::ptr::null_mut();
+                driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size as u64, 0).to_result()?;
+                std::ptr::copy(src.as_ptr() as *mut c_void, ptr_host, size);
+                dst.host_buf_ptr = Some(ptr_host);
+                driv::topsMemcpyHtoDAsync(
                     dst.device_ptr(),
-                    ptr,
+                    ptr_host,
                     size as u64,
                     self.stream_inner().expect("unable to obtain stream"),
                 )
-                .to_result();
-                // } else {
-                //     dst.host_buf = Some(Pin::new(src));
-                //     return Self::memcpy_htod_async(dst.device_ptr(), dst.host_buf.as_ref().unwrap(), self.stream.unwrap().as_inner());
-                // }
-            };
+                .to_result()
+            }
         } else {
-            dst.buffer.copy_from(&src)
+            unsafe {
+                driv::topsMemcpyHtoD(
+                    dst.device_ptr(),
+                    src.as_ptr() as *mut c_void,
+                    size as u64,
+                )
+                .to_result()
+            }
         }
     }
 
@@ -398,17 +409,37 @@ impl GcuDevice {
     /// 1. Since this function doesn't own `src` it is executed synchronously.
     /// 2. Self is [`Arc<Self>`], and this method increments the rc for self
     pub fn htod_sync_copy<T: DeviceCopy>(self: &Arc<Self>, src: &[T]) -> DeviceResult<GcuSlice<T>> {
-        let device_ptr = unsafe { DeviceBuffer::uninitialized(src.len())? };
-        let mut dst = GcuSlice {
-            buffer: device_ptr,
+        let size = std::mem::size_of::<T>() * src.len();
+        // let mut ptr_host = std::ptr::null_mut();
+        // unsafe {
+        //     driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size as u64, 0).to_result()?;
+        //     std::ptr::copy(src.as_ptr() as *mut c_void, ptr_host, size);
+        // }
+        let mut ptr: *mut c_void = std::ptr::null_mut();
+        unsafe {
+            driv::topsMalloc(
+                &mut ptr as *mut *mut c_void,
+                Self::align_up(size, 4096) as u64,
+            )
+            .to_result()?;
+    
+            driv::topsMemcpyHtoD(
+                ptr,
+                src.as_ptr() as *mut c_void,
+                size as u64,
+            )
+            .to_result()?;
+        }
+
+        let slice = GcuSlice {
+            buffer: ptr,
             len: src.len(),
             device: self.clone(),
             host_buf: None,
             host_buf_ptr: None,
+            async_free: false,
         };
-
-        dst.buffer.copy_from(src)?;
-        Ok(dst)
+        Ok(slice)
     }
 
     /// Synchronously copies data from `src` into the new allocation.
@@ -433,27 +464,21 @@ impl GcuDevice {
     ) -> DeviceResult<()> {
         let val = src.as_ref();
         assert_eq!(val.len(), dst.len());
-        if self.is_async {
-            unsafe {
-                driv::topsMemcpyHtoDAsync(
-                    dst.device_ptr(),
-                    val.as_ptr() as *mut c_void,
-                    std::mem::size_of_val(val) as u64,
-                    self.stream_inner().expect("unable to obtain stream"),
-                )
-                .to_result()?;
-            }
-        } else {
-            unsafe {
-                driv::topsMemcpyHtoD(
-                    dst.device_ptr(),
-                    val.as_ptr() as *mut c_void,
-                    std::mem::size_of_val(val) as u64,
-                )
-                .to_result()?;
-            }
+        let size = std::mem::size_of::<T>() * val.len();
+        // let mut ptr_host = std::ptr::null_mut();
+        // unsafe {
+        //     driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size as u64, 0).to_result()?;
+        //     std::ptr::copy(val.as_ptr() as *mut c_void, ptr_host, size);
+        // }
+
+        unsafe {
+            driv::topsMemcpyHtoD(
+                dst.device_ptr(),
+                val.as_ptr() as *mut c_void,
+                size as u64,
+            )
+            .to_result()
         }
-        self.synchronize()
     }
 
     /// Synchronously copies device memory into host memory.

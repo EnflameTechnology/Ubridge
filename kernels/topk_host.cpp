@@ -33,12 +33,14 @@ TOPK_OP(float, f32, true)
 #include <random>
 using namespace std;
 int main() {
-    const int NUM = 1024 * 128;
-    float inputData[NUM] = {0};
-    float outputData[NUM] = {0};
+    const int NUM = 64;
+    const int B = 11;
 
-    u_int32_t indices[NUM];
-    int dims[3] = {1, 1, NUM};
+    float inputData[B * NUM] = {0};
+    float outputData[B * NUM] = {0};
+
+    u_int32_t indices[B * NUM];
+    int dims[3] = {1, B, NUM};
     float* inputData_dev, *outputData_dev;
     const int K = 6;
     const int AXIS = 2;
@@ -50,9 +52,9 @@ int main() {
     topsStream_t stream;
     topsStreamCreate(&stream);
 
-    topsMallocAsync(&inputData_dev, NUM * 4, stream, topsDeviceMallocDefault);
-    topsMallocAsync(&outputData_dev, NUM * 4, stream, topsDeviceMallocDefault);
-    topsMallocAsync(&indices_dev, NUM * 4, stream, topsDeviceMallocDefault);
+    topsMallocAsync(&inputData_dev, B * NUM * 4, stream, topsDeviceMallocDefault);
+    topsMallocAsync(&outputData_dev, B * NUM * 4, stream, topsDeviceMallocDefault);
+    topsMallocAsync(&indices_dev, B * NUM * 4, stream, topsDeviceMallocDefault);
 
     int workspace_size = dims[0] * (sizeof(float) + 4) * 24 * next_power_of_2(K) * ALIGN_UP(dims[1], 128);
     workspace_size = ALIGN_UP(workspace_size, 512);
@@ -62,24 +64,33 @@ int main() {
     unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::default_random_engine gen(seed);
     std::normal_distribution<float> dis(0, 1);
-    for (int i = 0; i < NUM; i++) {
-      inputData[i] = dis(gen);
-      indices[i] = i;
+    for (int k = 0; k < B; k ++) {
+      for (int i = 0; i < NUM; i++) {
+        inputData[k * NUM + i] = dis(gen);
+        indices[k * NUM + i] = i;
+      }
     }
 
-    topsMemcpyAsync(inputData_dev, inputData, NUM * 4,
+
+    topsMemcpyAsync(inputData_dev, inputData, B * NUM * 4,
                    topsMemcpyHostToDevice, stream);
-    topsMemcpyAsync(indices_dev, indices, NUM * 4,
+    topsMemcpyAsync(indices_dev, indices, B * NUM * 4,
                    topsMemcpyHostToDevice, stream);
 
     topk_f32(inputData_dev, outputData_dev, indices_dev, reinterpret_cast<void*>(workspace_dev), dims[0], dims[1], dims[2], AXIS, K, stream);
     topsStreamSynchronize(stream);
-    topsMemcpy(outputData, outputData_dev, NUM * 4,
+    topsMemcpy(outputData, outputData_dev, B * NUM * 4,
                    topsMemcpyDeviceToHost);
-    topsMemcpy(indices, indices_dev, NUM * 4,
+    topsMemcpy(indices, indices_dev, B * NUM * 4,
                    topsMemcpyDeviceToHost);
-    for (int i = 0; i < K; i++) {
-      printf("indices %d, value %.5f\n", indices[i], outputData[i]);
+    for (int k=0; k<B; k++) {
+      printf("Batch %d \n", k);
+      for (int i = 0; i < K; i++) {
+        printf("indices %d, value %.5f\n", indices[k * K + i], outputData[k * K + i]);
+      }
+      printf("******* \n\n");
+
     }
+
 }
 #endif
