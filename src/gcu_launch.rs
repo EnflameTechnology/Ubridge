@@ -55,7 +55,7 @@ impl GcuLaunchConfig {
     pub fn set_cooperative_launch(&mut self, cooperative: bool) {
         self.is_cooperative_launch = cooperative;
     }
-    
+
     pub fn set_shared_memory(&mut self, size_in_bytes: u32) {
         const SHARED_MEM_SIZE: u32 = 48 * 1024 * 1024;
         let shared_mem_bytes = ((size_in_bytes + 4095) / 4096) * 4096 + 4096;
@@ -270,17 +270,25 @@ impl GcuFunction {
                 null
             };
             let ret = if cfg.is_cooperative_launch {
-                let val = driv::topsLaunchAttributeValue_t { cooperative : 1};
-                let mut attrs = vec![ driv::topsLaunchAttribute {
+                let val = driv::topsLaunchAttributeValue_t { cooperative: 1 };
+                let mut attrs = vec![driv::topsLaunchAttribute {
                     id: driv::topsLaunchAttributeID_t::topsLaunchAttributeCooperative,
-                    val 
+                    val,
                 }];
 
                 let launch_cfg = driv::topsLaunchConfig_t {
                     attrs: attrs.as_mut_ptr() as *mut driv::topsLaunchAttribute_t,
-                    blockDim: dim3 {x: cfg.block_dim.0, y: cfg.block_dim.1, z: cfg.block_dim.2},
+                    blockDim: dim3 {
+                        x: cfg.block_dim.0,
+                        y: cfg.block_dim.1,
+                        z: cfg.block_dim.2,
+                    },
                     dynamicSmemBytes: cfg.shared_mem_bytes as driv::size_t,
-                    gridDim: dim3 {x: cfg.grid_dim.0, y: cfg.grid_dim.1, z: cfg.grid_dim.2},
+                    gridDim: dim3 {
+                        x: cfg.grid_dim.0,
+                        y: cfg.grid_dim.1,
+                        z: cfg.grid_dim.2,
+                    },
                     localSmemBytes: 0 as driv::size_t,
                     numAttrs: 1,
                     stream,
@@ -291,7 +299,8 @@ impl GcuFunction {
                     func,
                     params.as_mut_ptr(),
                     null as *mut *mut c_void,
-                ).to_result()
+                )
+                .to_result()
             } else {
                 driv::topsModuleLaunchKernel(
                     func,
@@ -308,7 +317,7 @@ impl GcuFunction {
                 )
                 .to_result()
             };
-            
+
             if ret.is_err() {
                 println!("Launch Error for function {}", self.func_name);
             }

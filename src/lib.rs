@@ -22,12 +22,12 @@ pub mod device_tensor;
 pub mod eccl;
 #[cfg(feature = "eccl")]
 pub mod eccllib;
+pub mod ffi;
 pub mod gcu_device;
 pub mod gcu_launch;
 pub mod gcu_slice;
 pub mod gemm_tuner;
 pub mod tests;
-pub mod ffi;
 /// Prelude module for users to import
 pub mod prelude {
     // prelude
@@ -82,7 +82,6 @@ pub const QUANTIZED: &str = "quant";
 pub const CACHE: &str = "cache";
 pub const ATTENTION: &str = "attention";
 pub const SORT: &str = "sort";
-
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum DATATYPE {

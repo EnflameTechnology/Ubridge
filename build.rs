@@ -129,7 +129,6 @@ fn main() -> Result<()> {
             } else {
                 true
             };
-            
             let build_file = if is_host_kernel {
                 build_dir.join(f.to_string() + ".o")
             } else {
@@ -162,7 +161,7 @@ fn main() -> Result<()> {
                     .arg(format!("-I{:}", absolute_kernel_dir.join("atomic/include/common").to_str().unwrap()))
                     .arg(format!("--tops-device-lib-path={:}", absolute_kernel_dir.join("atomic/lib").to_str().unwrap()))
                     .arg("--tops-device-lib=libacoreop.bc");
-    
+
                     let output = command
                         .spawn()
                         .context(format!("failed spawning {compiler}"))?
@@ -193,7 +192,7 @@ fn main() -> Result<()> {
                             String::from_utf8_lossy(&output_linker.stdout),
                             String::from_utf8_lossy(&output_linker.stderr)
                         )
-                    }   
+                    }
                     println!("cargo:rustc-link-search={}", build_dir.display());
                     println!("cargo:rustc-link-lib={}", fname);
                 } else {
@@ -219,7 +218,7 @@ fn main() -> Result<()> {
                     .arg(format!("--tops-device-lib-path={:}", absolute_kernel_dir.join("atomic/lib").to_str().unwrap()))
                     .arg("--tops-device-lib=libacoreop.bc")
                     .arg("--save-temps");
-    
+
                     let output = command
                         .spawn()
                         .context(format!("failed spawning {compiler}"))?
@@ -252,7 +251,6 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            
             Ok(())
         })
         .collect::<Result<()>>()?;

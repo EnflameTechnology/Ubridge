@@ -298,18 +298,10 @@ impl DeviceExecutor {
         ];
         let attention_functions = vec!["paged_attention_v1_f16", "paged_attention_v1_bf16"];
         let sort_functions = vec!["asort_asc", "asort_desc"];
-        let gather_functions = vec![
-            "gather_i64",
-            "gather_u8",
-            "gather_u32",
-        ];
+        let gather_functions = vec!["gather_i64", "gather_u8", "gather_u32"];
 
         //index_add
-        let ia_functions = vec![
-            "ia_i64",
-            "ia_u8",
-            "ia_u32",
-        ];
+        let ia_functions = vec!["ia_i64", "ia_u8", "ia_u32"];
 
         let mut executor = DeviceExecutor {
             module_map: HashMap::<String, ModuleX>::new(),

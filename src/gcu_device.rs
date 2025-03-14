@@ -311,7 +311,6 @@ impl GcuDevice {
     ) -> DeviceResult<()> {
         assert!(src.len() <= dst.len());
         if self.is_async {
-            // println!("dtod_copy async! (len={}, len={})", src.len(), dst.len());
             unsafe {
                 driv::topsMemcpyDtoDAsync(
                     dst.device_ptr(),
@@ -374,11 +373,13 @@ impl GcuDevice {
     ) -> DeviceResult<()> {
         assert_eq!(src.len(), dst.len);
         let size = std::mem::size_of::<T>() * src.len();
+        let mut ptr_host = std::ptr::null_mut();
+        unsafe {
+            driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size as u64, 0).to_result()?;
+            std::ptr::copy(src.as_ptr() as *mut c_void, ptr_host, size);
+        }
         if self.is_async {
             unsafe {
-                let mut ptr_host = std::ptr::null_mut();
-                driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size as u64, 0).to_result()?;
-                std::ptr::copy(src.as_ptr() as *mut c_void, ptr_host, size);
                 dst.host_buf_ptr = Some(ptr_host);
                 driv::topsMemcpyHtoDAsync(
                     dst.device_ptr(),
@@ -390,12 +391,9 @@ impl GcuDevice {
             }
         } else {
             unsafe {
-                driv::topsMemcpyHtoD(
-                    dst.device_ptr(),
-                    src.as_ptr() as *mut c_void,
-                    size as u64,
-                )
-                .to_result()
+                driv::topsMemcpyHtoD(dst.device_ptr(), ptr_host as *mut c_void, size as u64)
+                    .to_result()?;
+                driv::topsHostFree(ptr_host).to_result()
             }
         }
     }
@@ -410,25 +408,19 @@ impl GcuDevice {
     /// 2. Self is [`Arc<Self>`], and this method increments the rc for self
     pub fn htod_sync_copy<T: DeviceCopy>(self: &Arc<Self>, src: &[T]) -> DeviceResult<GcuSlice<T>> {
         let size = std::mem::size_of::<T>() * src.len();
-        // let mut ptr_host = std::ptr::null_mut();
-        // unsafe {
-        //     driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size as u64, 0).to_result()?;
-        //     std::ptr::copy(src.as_ptr() as *mut c_void, ptr_host, size);
-        // }
         let mut ptr: *mut c_void = std::ptr::null_mut();
         unsafe {
+            let mut ptr_host = std::ptr::null_mut();
+            driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size as u64, 0).to_result()?;
+            std::ptr::copy(src.as_ptr() as *mut c_void, ptr_host, size);
             driv::topsMalloc(
                 &mut ptr as *mut *mut c_void,
                 Self::align_up(size, 4096) as u64,
             )
             .to_result()?;
-    
-            driv::topsMemcpyHtoD(
-                ptr,
-                src.as_ptr() as *mut c_void,
-                size as u64,
-            )
-            .to_result()?;
+
+            driv::topsMemcpyHtoD(ptr, ptr_host as *mut c_void, size as u64).to_result()?;
+            driv::topsHostFree(ptr_host).to_result()?
         }
 
         let slice = GcuSlice {
@@ -465,19 +457,14 @@ impl GcuDevice {
         let val = src.as_ref();
         assert_eq!(val.len(), dst.len());
         let size = std::mem::size_of::<T>() * val.len();
-        // let mut ptr_host = std::ptr::null_mut();
-        // unsafe {
-        //     driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size as u64, 0).to_result()?;
-        //     std::ptr::copy(val.as_ptr() as *mut c_void, ptr_host, size);
-        // }
 
         unsafe {
-            driv::topsMemcpyHtoD(
-                dst.device_ptr(),
-                val.as_ptr() as *mut c_void,
-                size as u64,
-            )
-            .to_result()
+            let mut ptr_host = std::ptr::null_mut();
+            driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size as u64, 0).to_result()?;
+            std::ptr::copy(val.as_ptr() as *mut c_void, ptr_host, size);
+            driv::topsMemcpyHtoD(dst.device_ptr(), ptr_host as *mut c_void, size as u64)
+                .to_result()?;
+            driv::topsHostFree(ptr_host).to_result()
         }
     }
 

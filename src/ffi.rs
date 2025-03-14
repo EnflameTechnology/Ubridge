@@ -1,5 +1,5 @@
 use core::ffi::{c_int, c_long, c_void};
-use half::{f16, bf16};
+use half::{bf16, f16};
 
 extern "C" {
     pub fn topk_f32(

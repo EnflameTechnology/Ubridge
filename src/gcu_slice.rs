@@ -66,7 +66,7 @@ impl<T: DeviceCopy> Drop for GcuSlice<T> {
             //     let host_ptr = buf.as_ref().as_ptr() as *mut c_void;
             //     driv::topsHostUnregister(host_ptr);
             // }
-            
+
             if let Some(ptr) = &self.host_buf_ptr {
                 driv::topsHostFree(*ptr);
             }
@@ -74,7 +74,12 @@ impl<T: DeviceCopy> Drop for GcuSlice<T> {
                 let ptr = std::mem::replace(&mut self.buffer, std::ptr::null_mut());
                 unsafe {
                     if self.async_free {
-                        driv::topsFreeAsync(ptr, self.device.stream_inner().expect("unable to obtain stream!"));
+                        driv::topsFreeAsync(
+                            ptr,
+                            self.device
+                                .stream_inner()
+                                .expect("unable to obtain stream!"),
+                        );
                     } else {
                         driv::topsFree(ptr);
                     }
@@ -139,7 +144,7 @@ impl<T: DeviceCopy> GcuSlice<T> {
         range.bounds(..self.len).map(|(start, end)| GcuView {
             root: &self.buffer,
             ptr: unsafe {
-                (self.buffer as u64 + (start * std::mem::size_of::<T>())  as u64) as *mut c_void
+                (self.buffer as u64 + (start * std::mem::size_of::<T>()) as u64) as *mut c_void
             },
             len: end - start,
             marker: PhantomData,
