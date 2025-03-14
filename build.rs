@@ -117,7 +117,7 @@ fn main() -> Result<()> {
             let fname = f.to_string();
             let is_host_kernel = fname.find("_host").is_some();
             let fatbin_file = if is_host_kernel {
-                build_dir.join(format!("lib{}.a", f.to_string()))
+                build_dir.join(format!("{}.a", f.to_string()))
             } else {
                 kernel_out_dir.join(f.to_string() + ".topsfb")
             };
@@ -193,8 +193,6 @@ fn main() -> Result<()> {
                             String::from_utf8_lossy(&output_linker.stderr)
                         )
                     }
-                    println!("cargo:rustc-link-search={}", build_dir.display());
-                    println!("cargo:rustc-link-lib={}", fname);
                 } else {
                     command
                     .arg(kernel_file)
@@ -235,7 +233,7 @@ fn main() -> Result<()> {
                     }
                     let mut command_mv = std::process::Command::new("mv");
                     command_mv.arg(build_dir.join(f.to_string() + ".cpp-tops-dtu-enflame-tops.topsfb"));
-                    command_mv.arg(fatbin_file);
+                    command_mv.arg(fatbin_file.clone());
                     let output = command_mv
                         .spawn()
                         .context(format!("failed spawning {compiler}"))?
@@ -248,6 +246,28 @@ fn main() -> Result<()> {
                             String::from_utf8_lossy(&output.stdout),
                             String::from_utf8_lossy(&output.stderr)
                         )
+                    }
+                }
+
+                if is_host_kernel {
+                    let mut command_cp = std::process::Command::new("cp");
+                    command_cp.arg(build_dir.join(fatbin_file.clone()));
+                    command_cp.arg(build_dir.join(format!("lib{}.a", fname)));
+                    let output = command_cp
+                        .spawn()
+                        .context(format!("failed spawning {compiler}"))?
+                        .wait_with_output()?;
+                    if !output.status.success() {
+                        anyhow::bail!(
+                            "{:?} error while linking host kernel: {:?}\n\n# stdout\n{:#}\n\n# stderr\n{:#}",
+                            compiler,
+                            &fname,
+                            String::from_utf8_lossy(&output.stdout),
+                            String::from_utf8_lossy(&output.stderr)
+                        )
+                    } else {
+                        println!("cargo:rustc-link-search={}", build_dir.display());
+                        println!("cargo:rustc-link-lib={}", fname);
                     }
                 }
             }
