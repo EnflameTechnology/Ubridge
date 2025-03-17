@@ -1082,22 +1082,30 @@ __device__ __attribute__((noinline)) void matmul_kernel_batch(lhs_t *lhs, rhs_t 
             bias_t* bias_ptr =
                 reinterpret_cast<bias_t*>(cur_private_bias_ptr);
 
-            if (sip_m % 128 == 0) {
-              matmul<128>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
+            if (sip_m % 256 == 0) {
+              matmul<256, MK_KN>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
+                            subk_size, subn_size, acc_flag, store_flag, enable_bias,
+                            vab_offset, launch_times);
+            } else if (sip_m % 128 == 0) {
+              matmul<128, MK_KN>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
                             subk_size, subn_size, acc_flag, store_flag, enable_bias,
                             vab_offset, launch_times);
             } else if (sip_m % 96 == 0) {
-              matmul<96>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
+              matmul<96, MK_KN>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
                             subk_size, subn_size, acc_flag, store_flag, enable_bias,
                             vab_offset, launch_times);
             } else if (sip_m % 64 == 0) {
-              matmul<64>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
+              matmul<64, MK_KN>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
                             subk_size, subn_size, acc_flag, store_flag, enable_bias,
                             vab_offset, launch_times);
-            } else {
-              matmul<32>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
+            } else if (sip_m % 32 == 0) {
+              matmul<32, MK_KN>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
               subk_size, subn_size, acc_flag, store_flag, enable_bias,
               vab_offset, launch_times);
+            } else {
+              matmul<1, MK_KN>(dst_ptr, lhs_ptr, rhs_ptr, bias_ptr, local_workspace,
+                subk_size, subn_size, acc_flag, store_flag, enable_bias,
+                vab_offset, launch_times);
             }
 
             launch_times += 1;

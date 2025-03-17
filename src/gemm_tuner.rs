@@ -492,10 +492,8 @@ impl AtenGemmTuner {
         let UNIT_SIP_M = if info.M > 32 {
             64
         } else {
-            if (info.M * info.batch <= 8)
-                && info.transb
-                && (info.weight_type == DATATYPE::DataBf16
-                    || info.weight_type == DATATYPE::DataFp16)
+            if (info.M * info.batch <= 8
+                && info.transb)
             {
                 1
             } else {

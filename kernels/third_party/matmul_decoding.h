@@ -508,23 +508,31 @@ __device__ __attribute__((noinline, enable_software_pipeliner, enable_bc_resolve
                                                ? private_rhs_requant_buff
                                                : rhs_ptr);
             bias_t* bias_pt = reinterpret_cast<bias_t*>(bias_ptr);
-            if (sip_m % 128 == 0) {
-                addmm<128>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
+            if (sip_m % 256 == 0) {
+                addmm<256, MK_KN>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
+                            subk_size, subn_size, acc_flag, store_flag,
+                            vab_offset, launch_times, alpha, beta);
+            } else if (sip_m % 128 == 0) {
+                addmm<128, MK_KN>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
                             subk_size, subn_size, acc_flag, store_flag,
                             vab_offset, launch_times, alpha, beta);
             } else if (sip_m % 96 == 0) {
-                addmm<96>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
+                addmm<96, MK_KN>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
                 subk_size, subn_size, acc_flag, store_flag,
                 vab_offset, launch_times, alpha, beta);
             } else if (sip_m % 64 == 0) {
-                addmm<64>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
+                addmm<64, MK_KN>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
+                subk_size, subn_size, acc_flag, store_flag,
+                vab_offset, launch_times, alpha, beta);
+            } else if (sip_m % 32 == 0) {
+                addmm<32, MK_KN>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
                 subk_size, subn_size, acc_flag, store_flag,
                 vab_offset, launch_times, alpha, beta);
             } else {
-                addmm<32>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
-                subk_size, subn_size, acc_flag, store_flag,
-                vab_offset, launch_times, alpha, beta);
-            } 
+               matmul<1, MK_KN>(dst_pt, lhs_pt, rhs_pt, bias_pt, local_workspace,
+                subk_size, subn_size, acc_flag, store_flag, 0,
+                vab_offset, launch_times);
+            }
             launch_times += 1;
           }
           k_flag = !k_flag;
