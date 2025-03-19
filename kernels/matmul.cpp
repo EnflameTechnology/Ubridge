@@ -1111,6 +1111,11 @@ __device__ __attribute__((noinline)) void matmul_kernel_batch(lhs_t *lhs, rhs_t 
             launch_times += 1;
           }  // K loop
           __dtu_movs_barrier_all();
+          #if __GCU_ARCH__ == 400
+                  tcle::fence<0xd2>();
+          #elif __GCU_ARCH__ == 300
+                  tcle::fence<0x3>();
+          #endif
           e_out = tops::deslice_async(
               dte_out, hbm_out, *cur_private_out,
               {0, batch_offset, subm_offset_global, subn_offset_global});
