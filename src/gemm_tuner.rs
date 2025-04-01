@@ -489,27 +489,17 @@ impl AtenGemmTuner {
 
         let sum_va_mem = |m: i64, n: i64, bpe: i64| -> i64 { (m * n * 2) * bpe };
 
-        let UNIT_SIP_M = if info.M * info.batch > 64 {
-            if info.M * info.batch > 128 {
-                256
-            } else {
-                128
-            }
+        let UNIT_SIP_M = if info.M * info.batch > 32 {
+            64
         } else {
-            if (info.M * info.batch <= 8
-                && info.transb)
-            {
+            if (info.M * info.batch <= 8) {
                 1
             } else {
-                if info.M * info.batch > 32 {
-                    64
-                } else {
-                    32
-                }
+                32
             }
         };
         const UNIT_SIP_N: i64 = 128;
-        let UNIT_SIP_K = if UNIT_SIP_M > 64 { 64 } else { 128 };
+        let UNIT_SIP_K = if info.M > 32 { 64 } else { 128 };
         const BPE: i64 = 2;
         // let RBPE = if (info.weight_type == DATATYPE::DataBf16 || info.weight_type == DATATYPE::DataFp16) { 2 } else { 1 };
         let sip_cnt = 12; //todo!()
@@ -588,7 +578,7 @@ impl AtenGemmTuner {
         }
         if tune.sip_m % 32 != 0 && tune.sip_m != 1 {
             //sip_m does not support, change to default 1
-            tune.sip_m = 1;
+            tune.sip_m = 32;
         }
         // println!("TunerHGemmF16");
         0
