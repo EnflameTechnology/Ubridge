@@ -28,6 +28,7 @@
 #include <tops.h>
 #include <tops/half.h>
 #include <tops/bfloat.h>
+#include <acore_op.h>
 #include <algorithm>
 #include <vector>
 #include "tops/tops_runtime.h"
@@ -115,7 +116,7 @@ IS_OP(int64_t, uint8_t, is_u8_i64)
 #define L1_ALIGN_SIZE (128)
 template<typename T, typename I>
 __device__ void gather(
-    const size_t numel,
+    const size_t numel, //number of output (gathered elements)
     I *ids,
     T *inp,
     T *out,
@@ -137,34 +138,38 @@ __device__ void gather(
     tops::mdspan hbm_ids(tops::Global, ids, numel);
     tops::memcpy(ctx, l1_ids, hbm_ids);
 
-    GetThreadStep(numel, thread_step, THREAD_STEP);
-    // if (numel * sizeof(T) +  ids_dim_size * sizeof(I) < VDMEM_VALID_SIZE) {
-    //   //input on L1 cache
-    //   T* inp_buffer = reinterpret_cast<T*>(buffer + TEMPLATE_ALIGN_UP(ids_dim_size * sizeof(I), L1_ALIGN_SIZE));
-    //   T* out_buffer = reinterpret_cast<T*>(l2_buffer);
-    //   tops::mdspan l1_inp(tops::Private, inp_buffer, numel);
-    //   tops::mdspan hbm_inp(tops::Global, inp, numel);
-    //   tops::memcpy(ctx, l1_inp, hbm_inp);
+    if (left_size * src_dim_size * sizeof(T) +  numel * sizeof(I) < VDMEM_VALID_SIZE) {
+      GetThreadStep(left_size, thread_step, THREAD_STEP);
+      //input on L1 cache
+      T* inp_buffer = reinterpret_cast<T*>(buffer + TEMPLATE_ALIGN_UP(numel * sizeof(I), L1_ALIGN_SIZE));
+      T* out_buffer = reinterpret_cast<T*>(l2_buffer);
+      tops::mdspan l1_inp(tops::Private, inp_buffer, left_size * src_dim_size);
+      tops::mdspan hbm_inp(tops::Global, inp, left_size * src_dim_size);
+      tops::memcpy(ctx, l1_inp, hbm_inp);
 
-    //   for (int idx = 0; idx < thread_step; idx++) {
-    //     int i = thread_id * THREAD_STEP + idx;
-    //     if (i < numel) {
-    //         size_t post = i % right_size;
-    //         size_t idx_ = ids_buffer[i];
-    //         size_t pre = i / (right_size * ids_dim_size);
-    //         size_t src_i = (pre * src_dim_size + idx_) * right_size + post;
-    //         out_buffer[i] = inp_buffer[src_i];
-    //     }
-    //   }
-    //   __syncthreads();
-    //   tops::mdspan l2_out(tops::Shared, out_buffer + thread_id * THREAD_STEP, thread_step);
-    //   tops::mdspan hbm_out(tops::Global, out + thread_id * THREAD_STEP, thread_step);
-    //   tops::memcpy(ctx, hbm_out, l2_out);
-    // } else {
-      int in_map_size = AlignUp(numel, L1_ALIGN_SIZE) * sizeof(T);
+      for (int idx = 0; idx < thread_step; idx++) {
+        int i = thread_id * THREAD_STEP + idx;
+        if (i < left_size) {
+          for (int j = 0; j < ids_dim_size; j++) {
+            size_t idx_ = ids_buffer[i * ids_dim_size + j];
+            size_t src_i = i * src_dim_size + idx_;
+            out_buffer[i * ids_dim_size + j] = inp_buffer[src_i];
+          }
+        }
+      }
+      __syncthreads();
+      if (thread_id == 0) {
+        tops::mdspan l2_out(tops::Shared, out_buffer, left_size * ids_dim_size);
+        tops::mdspan hbm_out(tops::Global, out, left_size * ids_dim_size);
+        tops::memcpy(ctx, hbm_out, l2_out);
+      }
+    } else {
+      GetThreadStep(numel, thread_step, THREAD_STEP);
+      int in_map_size = AlignUp(left_size * src_dim_size, L1_ALIGN_SIZE) * sizeof(T);
       auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(inp), in_map_size);
       T* src_hbm = reinterpret_cast<T*>(src_l3_addr);
-      auto src_l3_addr1 = map_mem(reinterpret_cast<generic_ptr>(out), in_map_size);
+      int out_map_size = AlignUp(numel, L1_ALIGN_SIZE) * sizeof(T);
+      auto src_l3_addr1 = map_mem(reinterpret_cast<generic_ptr>(out), out_map_size);
       T* out_hbm = reinterpret_cast<T*>(src_l3_addr1);
 
       for (int idx = 0; idx < thread_step; idx++) {
@@ -179,7 +184,7 @@ __device__ void gather(
       }
       unmap_mem(src_l3_addr);
       unmap_mem(src_l3_addr1);
-    // }
+    }
 }
 
 #define GATHER_OP(TYPENAME, INDEX_TYPENAME, FN_NAME) \
@@ -244,37 +249,34 @@ __device__ void index_add(
     tops::mdspan l1_ids(tops::Private, ids_buffer, ids_dim_size);
     tops::mdspan hbm_ids(tops::Global, ids, ids_dim_size);
     tops::memcpy(ctx, l1_ids, hbm_ids);
+    GetThreadStep(ids_dim_size, thread_step, THREAD_STEP);
+    if (ids_dim_size * sizeof(I) + 3 * right_size * sizeof(T) < VDMEM_VALID_SIZE) {
+      T* inp_buffer = reinterpret_cast<T*>(buffer + TEMPLATE_ALIGN_UP(ids_dim_size * sizeof(I), L1_ALIGN_SIZE));
+      T* out_buffer = reinterpret_cast<T*>(buffer + TEMPLATE_ALIGN_UP(ids_dim_size * sizeof(I) + right_size * sizeof(T), L1_ALIGN_SIZE));
+      T* final_buffer = reinterpret_cast<T*>(buffer + TEMPLATE_ALIGN_UP(ids_dim_size * sizeof(I) + 2 * right_size * sizeof(T), L1_ALIGN_SIZE));
 
-    GetThreadStep(numel, thread_step, THREAD_STEP);
-    // if (2 * numel * sizeof(T) < SHARE_BUFFER_SIZE && ids_dim_size * sizeof(I) < VDMEM_VALID_SIZE) {
-    //   T* inp_buffer = reinterpret_cast<T*>(l2_buffer);
-    //   T* out_buffer = reinterpret_cast<T*>(l2_buffer + TEMPLATE_ALIGN_UP(numel * sizeof(T), L1_ALIGN_SIZE));
-
-    //   //input/output on L2 cache
-    //   tops::mdspan l2_inp(tops::Shared, inp_buffer + thread_id * THREAD_STEP, thread_step);
-    //   tops::mdspan hbm_inp(tops::Global, inp + thread_id * THREAD_STEP, thread_step);
-    //   tops::memcpy(ctx, l2_inp, hbm_inp);
-    //   tops::mdspan l2_out(tops::Shared, out_buffer + thread_id * THREAD_STEP, thread_step);
-    //   tops::mdspan hbm_out(tops::Global, out + thread_id * THREAD_STEP, thread_step);
-    //   tops::memcpy(ctx, l2_out, hbm_out);
-    //   __syncthreads();
-
-    //   for (int idx = 0; idx < thread_step; idx++) {
-    //     int i = thread_id * THREAD_STEP + idx;
-    //     if (i < numel) {
-    //         const size_t pre = i / right_size;
-    //         const size_t post = i % right_size;
-    //         for (unsigned int j = 0; j < ids_dim_size; ++j) {
-    //             const size_t idx_ = (size_t)ids_buffer[j];
-    //             const size_t src_i = (pre * ids_dim_size + j) * right_size + post;
-    //             const size_t dst_i = (pre * dst_dim_size + idx_) * right_size + post;
-    //             out_buffer[dst_i] += inp_buffer[src_i];
-    //         }
-    //     }
-    //   }
-    //   __syncthreads();
-    //   tops::memcpy(ctx, hbm_out, l2_out);
-    // } else {
+      for (int idx = 0; idx < thread_step; idx++) {
+        int i = thread_id * THREAD_STEP + idx;
+        if (i < ids_dim_size) {
+            int idx = ids_buffer[i];
+            if (idx < left_size) {
+              //a row of input/output on L1 cache
+              tops::mdspan l1_inp(tops::Private, inp_buffer, right_size);
+              tops::mdspan hbm_inp(tops::Global, inp + idx * right_size, right_size);
+              tops::memcpy(ctx, l1_inp, hbm_inp);
+              tops::mdspan l1_out(tops::Private, out_buffer, right_size);
+              tops::mdspan hbm_out(tops::Global, out + idx * right_size, right_size);
+              tops::memcpy(ctx, l1_out, hbm_out);
+              add(reinterpret_cast<T*>(final_buffer),
+                  reinterpret_cast<T*>(inp_buffer),
+                  reinterpret_cast<T*>(out_buffer),
+                  right_size);
+              tops::mdspan l1_final(tops::Private, final_buffer, right_size);
+              tops::memcpy(ctx, hbm_out, l1_final);
+            }
+        }
+      }
+    } else {
         int in_map_size = AlignUp(numel, L1_ALIGN_SIZE) * sizeof(T);
         auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(inp), in_map_size);
         T* src_hbm = reinterpret_cast<T*>(src_l3_addr);
@@ -282,20 +284,22 @@ __device__ void index_add(
         T* out_hbm = reinterpret_cast<T*>(src_l3_addr1);
         for (int idx = 0; idx < thread_step; idx++) {
           int i = thread_id * THREAD_STEP + idx;
-          if (i < numel) {
-            const size_t pre = i / right_size;
-            const size_t post = i % right_size;
-            for (unsigned int j = 0; j < ids_dim_size; ++j) {
-                const size_t idx = ids_buffer[j];
-                const size_t src_i = (pre * ids_dim_size + j) * right_size + post;
-                const size_t dst_i = (pre * dst_dim_size + idx) * right_size + post;
-                out_hbm[dst_i] += src_hbm[src_i];
-            }
+          if (i < ids_dim_size) {
+              int idx = ids_buffer[i];
+              if (idx < left_size) {
+                //a row of input/output on L1 cache
+                T* inp_buffer = src_hbm + idx * right_size;
+                T* out_buffer = out_hbm + idx * right_size;
+                add(reinterpret_cast<T*>(out_buffer),
+                    reinterpret_cast<T*>(inp_buffer),
+                    reinterpret_cast<T*>(out_buffer),
+                    right_size);
+              }
           }
-      }
-      unmap_mem(src_l3_addr);
-      unmap_mem(src_l3_addr1);
-    // }
+        }
+        unmap_mem(src_l3_addr);
+        unmap_mem(src_l3_addr1);
+    }
 }
 
 #define IA_OP(TYPENAME, INDEX_TYPENAME, FN_NAME) \
@@ -314,25 +318,25 @@ extern "C" __global__ void FN_NAME(  \
 IA_OP(__fp16, int64_t, ia_i64_f16)
 IA_OP(__bf16, int64_t, ia_i64_bf16)
 IA_OP(float, int64_t, ia_i64_f32)
-IA_OP(double, int64_t, ia_i64_f64)
+// IA_OP(double, int64_t, ia_i64_f64)
 IA_OP(uint8_t, int64_t, ia_i64_u8)
-IA_OP(int64_t, int64_t, ia_i64_i64)
+// IA_OP(int64_t, int64_t, ia_i64_i64)
 IA_OP(uint32_t, int64_t, ia_i64_u32)
 
 IA_OP(__fp16, uint32_t, ia_u32_f16)
 IA_OP(__bf16, uint32_t, ia_u32_bf16)
 IA_OP(float, uint32_t, ia_u32_f32)
-IA_OP(double, uint32_t, ia_u32_f64)
+// IA_OP(double, uint32_t, ia_u32_f64)
 IA_OP(uint8_t, uint32_t, ia_u32_u8)
-IA_OP(int64_t, uint32_t, ia_u32_i64)
+// IA_OP(int64_t, uint32_t, ia_u32_i64)
 IA_OP(uint32_t, uint32_t, ia_u32_u32)
 
 IA_OP(__fp16, uint8_t, ia_u8_f16)
 IA_OP(__bf16, uint8_t, ia_u8_bf16)
 IA_OP(float, uint8_t, ia_u8_f32)
-IA_OP(double, uint8_t, ia_u8_f64)
+// IA_OP(double, uint8_t, ia_u8_f64)
 IA_OP(uint8_t, uint8_t, ia_u8_u8)
 IA_OP(uint32_t, uint8_t, ia_u8_u32)
-IA_OP(int64_t, uint8_t, ia_u8_i64)
+// IA_OP(int64_t, uint8_t, ia_u8_i64)
 
 int main() {}

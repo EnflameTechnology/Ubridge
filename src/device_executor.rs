@@ -409,7 +409,7 @@ impl DeviceExecutor {
                             }
 
                             for func in &ia_functions {
-                                for dt in ["bf16", "f16", "f32", "f64", "u8", "u32", "i64"] {
+                                for dt in ["bf16", "f16", "f32", "u8", "u32"] {
                                     let name = format!("{}_{}", func, dt);
                                     println!("Load function {}", name);
                                     let function = executor.get_function(module, &name);
