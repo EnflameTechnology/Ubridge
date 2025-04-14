@@ -336,6 +336,54 @@ __device__ __forceinline__ __DTU_INTRIN_AS__ char* CastToGcuPtr(T ptr) {
   return (__DTU_INTRIN_AS__ char*)ptr;
 }
 
+
+template <bool MAX, typename T,
+          typename std::enable_if<std::numeric_limits<T>::has_infinity &&
+                                      std::numeric_limits<T>::is_signed,
+                                  bool>::type = true>
+__device__ T get_pad_value() {
+  if KERNEL_CONSTEXPR17 (MAX) {
+    return -std::numeric_limits<T>::infinity();
+  } else {
+    return std::numeric_limits<T>::infinity();
+  }
+}
+
+template <bool MAX, typename T,
+          typename std::enable_if<!std::numeric_limits<T>::has_infinity &&
+                                      std::numeric_limits<T>::is_bounded,
+                                  bool>::type = false>
+__device__ T get_pad_value() {
+  if KERNEL_CONSTEXPR17 (MAX) {
+    return std::numeric_limits<T>::lowest();
+  } else {
+    return std::numeric_limits<T>::max();
+  }
+}
+
+template <bool MAX, typename T,
+          typename std::enable_if<!(std::numeric_limits<T>::has_infinity &&
+                                   std::numeric_limits<T>::is_signed) &&
+                                 !((!std::numeric_limits<T>::has_infinity &&
+                                   std::numeric_limits<T>::is_bounded)),
+                                  bool>::type = false>
+__device__ T get_pad_value() {
+  if KERNEL_CONSTEXPR17 (MAX) {
+    return static_cast<T>(-std::numeric_limits<float>::infinity());
+  } else {
+    return static_cast<T>(std::numeric_limits<float>::infinity());
+  }
+}
+
+template <typename T>
+__device__ T get_inf_value(bool is_largest) {
+  if (is_largest) {
+    return get_pad_value<false, T>();
+  } else {
+    return get_pad_value<true, T>();
+  }
+}
+
 #if 0
 template <typename T>
 struct DATA {

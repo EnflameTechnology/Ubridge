@@ -223,8 +223,6 @@ GATHER_OP(uint8_t, uint8_t, gather_u8_u8)
 GATHER_OP(uint32_t, uint8_t, gather_u8_u32)
 GATHER_OP(int64_t, uint8_t, gather_u8_i64)
 
-
-
 template<typename T, typename I>
 __device__ void index_add(
     I *ids,
@@ -251,18 +249,21 @@ __device__ void index_add(
     tops::memcpy(ctx, l1_ids, hbm_ids);
     GetThreadStep(ids_dim_size, thread_step, THREAD_STEP);
     if (ids_dim_size * sizeof(I) + 3 * right_size * sizeof(T) < VDMEM_VALID_SIZE) {
-      T* inp_buffer = reinterpret_cast<T*>(buffer + TEMPLATE_ALIGN_UP(ids_dim_size * sizeof(I), L1_ALIGN_SIZE));
-      T* out_buffer = reinterpret_cast<T*>(buffer + TEMPLATE_ALIGN_UP(ids_dim_size * sizeof(I) + right_size * sizeof(T), L1_ALIGN_SIZE));
-      T* final_buffer = reinterpret_cast<T*>(buffer + TEMPLATE_ALIGN_UP(ids_dim_size * sizeof(I) + 2 * right_size * sizeof(T), L1_ALIGN_SIZE));
+      int mem_size = (TEMPLATE_ALIGN_UP(ids_dim_size * sizeof(I), L1_ALIGN_SIZE) + L1_ALIGN_SIZE);
+      T* inp_buffer = reinterpret_cast<T*>(buffer + mem_size);
+      mem_size += (TEMPLATE_ALIGN_UP(right_size * sizeof(T), L1_ALIGN_SIZE) + 2 * L1_ALIGN_SIZE);
+      T* out_buffer = reinterpret_cast<T*>(buffer + mem_size);
+      mem_size += (TEMPLATE_ALIGN_UP(right_size * sizeof(T), L1_ALIGN_SIZE)+ 3 * L1_ALIGN_SIZE);
+      T* final_buffer = reinterpret_cast<T*>(buffer + mem_size);
 
-      for (int idx = 0; idx < thread_step; idx++) {
-        int i = thread_id * THREAD_STEP + idx;
+      for (int idx_ = 0; idx_ < thread_step; idx_++) {
+        int i = thread_id * THREAD_STEP + idx_;
         if (i < ids_dim_size) {
             int idx = ids_buffer[i];
-            if (idx < left_size) {
+            if (idx < dst_dim_size) {
               //a row of input/output on L1 cache
               tops::mdspan l1_inp(tops::Private, inp_buffer, right_size);
-              tops::mdspan hbm_inp(tops::Global, inp + idx * right_size, right_size);
+              tops::mdspan hbm_inp(tops::Global, inp + i * right_size, right_size);
               tops::memcpy(ctx, l1_inp, hbm_inp);
               tops::mdspan l1_out(tops::Private, out_buffer, right_size);
               tops::mdspan hbm_out(tops::Global, out + idx * right_size, right_size);
@@ -280,15 +281,15 @@ __device__ void index_add(
         int in_map_size = AlignUp(numel, L1_ALIGN_SIZE) * sizeof(T);
         auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(inp), in_map_size);
         T* src_hbm = reinterpret_cast<T*>(src_l3_addr);
-        auto src_l3_addr1 = map_mem(reinterpret_cast<generic_ptr>(out), in_map_size);
-        T* out_hbm = reinterpret_cast<T*>(src_l3_addr1);
-        for (int idx = 0; idx < thread_step; idx++) {
-          int i = thread_id * THREAD_STEP + idx;
+        int out_map_size = AlignUp(dst_dim_size * right_size, L1_ALIGN_SIZE) * sizeof(T);
+        auto out_l3_addr = map_mem(reinterpret_cast<generic_ptr>(out), out_map_size);
+        T* out_hbm = reinterpret_cast<T*>(out_l3_addr);
+        for (int idx_ = 0; idx_ < thread_step; idx_++) {
+          int i = thread_id * THREAD_STEP + idx_;
           if (i < ids_dim_size) {
               int idx = ids_buffer[i];
-              if (idx < left_size) {
-                //a row of input/output on L1 cache
-                T* inp_buffer = src_hbm + idx * right_size;
+              if (idx < dst_dim_size) {
+                T* inp_buffer = src_hbm + i * right_size;
                 T* out_buffer = out_hbm + idx * right_size;
                 add(reinterpret_cast<T*>(out_buffer),
                     reinterpret_cast<T*>(inp_buffer),
@@ -298,7 +299,7 @@ __device__ void index_add(
           }
         }
         unmap_mem(src_l3_addr);
-        unmap_mem(src_l3_addr1);
+        unmap_mem(out_l3_addr);
     }
 }
 

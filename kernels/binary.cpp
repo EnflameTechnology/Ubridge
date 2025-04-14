@@ -48,19 +48,19 @@ using namespace std;
 #define PING_PONG_SIZE 2
 #define OPERAND_NUM 2
 
-template <typename dst_t, typename lhs_t, typename rhs_t>
-__device__ void eqx(dst_t *dst, lhs_t *lhs, rhs_t* rhs, unsigned int num) {
-    for(int i=0; i< num; i++) {
-      dst[i] = (dst_t)(lhs[i] == rhs[i]? 1 : 0);
-    }
-}
+// template <typename dst_t, typename lhs_t, typename rhs_t>
+// __device__ void eqx(dst_t *dst, lhs_t *lhs, rhs_t* rhs, unsigned int num) {
+//     for(int i=0; i< num; i++) {
+//       dst[i] = (dst_t)(lhs[i] == rhs[i]? 1 : 0);
+//     }
+// }
 
-template <typename dst_t, typename lhs_t, typename rhs_t>
-__device__ void eqx_scalar(dst_t *dst, lhs_t *lhs, rhs_t rhs, unsigned int num) {
-    for(int i=0; i< num; i++) {
-      dst[i] = (dst_t)(lhs[i] == rhs ? 1 : 0);
-    }
-}
+// template <typename dst_t, typename lhs_t, typename rhs_t>
+// __device__ void eqx_scalar(dst_t *dst, lhs_t *lhs, rhs_t rhs, unsigned int num) {
+//     for(int i=0; i< num; i++) {
+//       dst[i] = (dst_t)(lhs[i] == rhs ? 1 : 0);
+//     }
+// }
 
 #define BINARY_OP(T, TO, FN_NAME, ATOMIC_FUNC) \
 extern "C" __global__ void FN_NAME( \
@@ -78,6 +78,18 @@ extern "C" __global__ void FN_NAME( \
     tops::event evs_out[PING_PONG_SIZE];\
     int thread_num = GetThreadNum();\
     int thread_id = GetThreadIdx();\
+    tops_dte_ctx_t ctx; \
+    tops::dte_scope s(ctx); \
+    __local__ __valigned__ size_t dims_strides[128];\
+    __local__ __valigned__ T in_b_scalar[128];\
+    tops::memcpy(ctx, tops::mdspan(tops::Private, dims_strides, num_dims * 3), tops::mdspan(tops::Global, dims_and_strides, num_dims * 3)); \
+    size_t r_strides = 1;\
+    for (int i=0; i<num_dims; i++) {\
+      r_strides *= dims_strides[2 * num_dims + i];\
+    }\
+    if (r_strides == 0) {\
+      tops::memcpy(ctx, tops::mdspan(tops::Private, in_b_scalar, 1), tops::mdspan(tops::Global, in_b, 1)); \
+    }\
     __local__ __valigned__ char in_buffer[OPERAND_NUM][PING_PONG_SIZE][TILE_SIZE];\
     __local__ __valigned__ char out_buffer[PING_PONG_SIZE][TILE_SIZE];\
     int TILE_LEN = sizeof(T) == 4 ? TILE_LEN_BPE4 : \
@@ -104,19 +116,22 @@ extern "C" __global__ void FN_NAME( \
                       thread_len_leading),\
           tops::mdspan(tops::Global, in_a + thread_off_leading,\
                       thread_len_leading));\
-      ctxs_in[1][0].config_memcpy(\
-          tops::mdspan(tops::Private,\
-                      reinterpret_cast<T*>(in_buffer[1][pp_flag]),\
-                      thread_len_leading),\
-          tops::mdspan(tops::Global, in_b + thread_off_leading,\
-                      thread_len_leading));\
+      if (r_strides > 0) {\
+        ctxs_in[1][0].config_memcpy(\
+            tops::mdspan(tops::Private,\
+                        reinterpret_cast<T*>(in_buffer[1][pp_flag]),\
+                        thread_len_leading),\
+            tops::mdspan(tops::Global, in_b + thread_off_leading,\
+                        thread_len_leading));\
+      }\
       ctxs_out[0].config_memcpy(\
           tops::mdspan(tops::Global, out + thread_off_leading,\
                       thread_len_leading),\
           tops::mdspan(tops::Private, reinterpret_cast<TO*>(out_buffer[pp_flag]),\
                       thread_len_leading));\
       evs_in[0][pp_flag] = ctxs_in[0][pp_flag].trigger();\
-      evs_in[1][pp_flag] = ctxs_in[1][pp_flag].trigger();\
+      if (r_strides > 0) \
+        evs_in[1][pp_flag] = ctxs_in[1][pp_flag].trigger();\
     }\
     if (thread_len_leading_next > 0) {\
       ctxs_in[0][1].config_memcpy(\
@@ -125,12 +140,14 @@ extern "C" __global__ void FN_NAME( \
                       thread_len_leading_next),\
           tops::mdspan(tops::Global, in_a + thread_off_leading_next,\
                       thread_len_leading_next));\
-      ctxs_in[1][1].config_memcpy(\
-          tops::mdspan(tops::Private,\
-                      reinterpret_cast<T*>(in_buffer[1][1 - pp_flag]),\
-                      thread_len_leading_next),\
-          tops::mdspan(tops::Global, in_b + thread_off_leading_next,\
-                      thread_len_leading_next));\
+      if (r_strides > 0) {\
+        ctxs_in[1][1].config_memcpy(\
+            tops::mdspan(tops::Private,\
+                        reinterpret_cast<T*>(in_buffer[1][1 - pp_flag]),\
+                        thread_len_leading_next),\
+            tops::mdspan(tops::Global, in_b + thread_off_leading_next,\
+                        thread_len_leading_next));\
+      }\
       ctxs_out[1].config_memcpy(\
           tops::mdspan(tops::Global, out + thread_off_leading_next,\
                       thread_len_leading_next),\
@@ -148,7 +165,8 @@ extern "C" __global__ void FN_NAME( \
           thread_remain_next >= TILE_LEN ? TILE_LEN : thread_remain_next;\
       if (thread_len_next > 0) {\
         evs_in[0][pp_flag_next] = ctxs_in[0][pp_flag_next].trigger();\
-        evs_in[1][pp_flag_next] = ctxs_in[1][pp_flag_next].trigger();\
+        if (r_strides > 0) \
+          evs_in[1][pp_flag_next] = ctxs_in[1][pp_flag_next].trigger();\
       }\
       int thread_off_next2 = i + thread_step * 2;\
       int thread_remain_next2 = N - thread_off_next2;\
@@ -156,7 +174,8 @@ extern "C" __global__ void FN_NAME( \
           thread_remain_next2 >= TILE_LEN ? TILE_LEN : thread_remain_next2;\
       if (thread_len > 0) {\
         evs_in[0][pp_flag].wait();\
-        evs_in[1][pp_flag].wait();\
+        if (r_strides > 0) \
+          evs_in[1][pp_flag].wait();\
       }\
       if (thread_len_next2 > 0) {\
         ctxs_in[0][pp_flag].config_memcpy(\
@@ -165,18 +184,27 @@ extern "C" __global__ void FN_NAME( \
                         thread_len_next2),\
             tops::mdspan(tops::Global, in_a + thread_off_next2,\
                         thread_len_next2));\
-        ctxs_in[1][pp_flag].config_memcpy(\
-            tops::mdspan(tops::Private,\
-                        reinterpret_cast<T*>(in_buffer[1][pp_flag]),\
-                        thread_len_next2),\
-            tops::mdspan(tops::Global, in_b + thread_off_next2,\
-                        thread_len_next2));\
+        if (r_strides > 0) {\
+          ctxs_in[1][pp_flag].config_memcpy(\
+              tops::mdspan(tops::Private,\
+                          reinterpret_cast<T*>(in_buffer[1][pp_flag]),\
+                          thread_len_next2),\
+              tops::mdspan(tops::Global, in_b + thread_off_next2,\
+                          thread_len_next2));\
+        }\
       }\
       if (thread_len > 0) {\
-        ATOMIC_FUNC(reinterpret_cast<TO*>(out_buffer[pp_flag]),\
-                  reinterpret_cast<T*>(in_buffer[0][pp_flag]),\
-                  reinterpret_cast<T*>(in_buffer[1][pp_flag]),\
-                  thread_len);\
+        if (r_strides > 0) {\
+          ATOMIC_FUNC(reinterpret_cast<TO*>(out_buffer[pp_flag]),\
+                    reinterpret_cast<T*>(in_buffer[0][pp_flag]),\
+                    reinterpret_cast<T*>(in_buffer[1][pp_flag]),\
+                    thread_len);\
+        } else {\
+          ATOMIC_FUNC(reinterpret_cast<TO*>(out_buffer[pp_flag]),\
+                    reinterpret_cast<T*>(in_buffer[0][pp_flag]),\
+                    in_b_scalar[0],\
+                    thread_len);\
+        }\
         evs_out[pp_flag] = ctxs_out[pp_flag].trigger();\
       }\
       if (i != thread_off_leading) {\
@@ -251,7 +279,7 @@ BINARY_OP(uint32_t, uint32_t, bmaximum_u32, max)
 BINARY_OP(uint32_t, uint32_t, bminimum_u32, min)
 BINARY_OP(uint32_t, uint32_t, mod_u32, mod)
 
-// BINARY_OP(uint32_t, uint8_t, eq_u32, eq)
+BINARY_OP(uint32_t, uint8_t, eq_u32, eq)
 BINARY_OP(uint32_t, uint8_t, ne_u32, ne)
 BINARY_OP(uint32_t, uint8_t, ge_u32, ge)
 BINARY_OP(uint32_t, uint8_t, gt_u32, gt)
@@ -267,54 +295,54 @@ BINARY_OP(float, uint8_t, lt_f32, lt)
 BINARY_OP(float, uint8_t, le_f32, le)
 
 
-extern "C" __global__ void eq_u32( 
-    const size_t numel, 
-    const size_t num_dims, 
-    size_t *dims_and_strides, 
-    uint32_t *in_a, 
-    uint32_t *in_b, 
-    uint8_t *out) {
-    tops_dte_ctx_t ctx; 
-    tops::dte_scope s(ctx); 
-    int thread_id = GetThreadIdx();
-    int MAX_THREADS = GetThreadNum();
-    const int TILESIZE = 128 * 1024 / sizeof(uint32_t); 
-    __local__ __valigned__ uint32_t buffer1[TILESIZE]; 
-    __local__ __valigned__ uint32_t buffer2[TILESIZE]; 
-    __local__ __valigned__ uint8_t buffer3[TILESIZE]; 
+// extern "C" __global__ void eq_u32( 
+//     const size_t numel, 
+//     const size_t num_dims, 
+//     size_t *dims_and_strides, 
+//     uint32_t *in_a, 
+//     uint32_t *in_b, 
+//     uint8_t *out) {
+//     tops_dte_ctx_t ctx; 
+//     tops::dte_scope s(ctx); 
+//     int thread_id = GetThreadIdx();
+//     int MAX_THREADS = GetThreadNum();
+//     const int TILESIZE = 128 * 1024 / sizeof(uint32_t); 
+//     __local__ __valigned__ uint32_t buffer1[TILESIZE]; 
+//     __local__ __valigned__ uint32_t buffer2[TILESIZE]; 
+//     __local__ __valigned__ uint8_t buffer3[TILESIZE]; 
 
-    __local__ __valigned__ size_t dims_strides[128];
-    tops::memcpy(ctx, tops::mdspan(tops::Private, dims_strides, num_dims * 3), tops::mdspan(tops::Global, dims_and_strides, num_dims * 3)); 
-    size_t r_strides = 1;
-    for (int i=0; i<num_dims; i++) {
-      r_strides *= dims_strides[2 * num_dims + i];
-    }
+//     __local__ __valigned__ size_t dims_strides[128];
+//     tops::memcpy(ctx, tops::mdspan(tops::Private, dims_strides, num_dims * 3), tops::mdspan(tops::Global, dims_and_strides, num_dims * 3)); 
+//     size_t r_strides = 1;
+//     for (int i=0; i<num_dims; i++) {
+//       r_strides *= dims_strides[2 * num_dims + i];
+//     }
 
-    tops::mdspan buffera_l1(tops::Private, buffer1, TILESIZE); 
-    tops::mdspan bufferb_l1(tops::Private, buffer2, TILESIZE); 
-    if (r_strides == 0) {
-      tops::memcpy(ctx, bufferb_l1, tops::mdspan(tops::Global, in_b, 1)); 
-    }
+//     tops::mdspan buffera_l1(tops::Private, buffer1, TILESIZE); 
+//     tops::mdspan bufferb_l1(tops::Private, buffer2, TILESIZE); 
+//     if (r_strides == 0) {
+//       tops::memcpy(ctx, bufferb_l1, tops::mdspan(tops::Global, in_b, 1)); 
+//     }
 
-    int N = numel; 
-    int THREAD_STEP = 1; 
-    int thread_step = 1; 
-    GetThreadStep(N, thread_step, THREAD_STEP);
-    for (int i = 0; i < thread_step; i+=TILESIZE) { 
-      unsigned int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i; 
-      int offset = thread_id * THREAD_STEP; 
-      tops::memcpy(ctx, buffera_l1, tops::mdspan(tops::Global, in_a + offset, bufsize)); 
-      if (r_strides > 0) {
-        tops::memcpy(ctx, bufferb_l1, tops::mdspan(tops::Global, in_b + offset, bufsize)); 
-        eqx<uint8_t, uint32_t, uint32_t>(reinterpret_cast<uint8_t*>(buffer3), 
-          reinterpret_cast<uint32_t*>(buffer1), reinterpret_cast<uint32_t*>(buffer2), bufsize);
-      } else {
-          eqx_scalar<uint8_t, uint32_t, uint32_t>(reinterpret_cast<uint8_t*>(buffer3), 
-          reinterpret_cast<uint32_t*>(buffer1), buffer2[0], bufsize);
-      }
-      tops::mdspan out_hbm(tops::Global, out + offset, bufsize); 
-      tops::memcpy(ctx, out_hbm, tops::mdspan(tops::Private, buffer3, bufsize));
-    } 
-} 
+//     int N = numel; 
+//     int THREAD_STEP = 1; 
+//     int thread_step = 1; 
+//     GetThreadStep(N, thread_step, THREAD_STEP);
+//     for (int i = 0; i < thread_step; i+=TILESIZE) { 
+//       unsigned int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i; 
+//       int offset = thread_id * THREAD_STEP; 
+//       tops::memcpy(ctx, buffera_l1, tops::mdspan(tops::Global, in_a + offset, bufsize)); 
+//       if (r_strides > 0) {
+//         tops::memcpy(ctx, bufferb_l1, tops::mdspan(tops::Global, in_b + offset, bufsize)); 
+//         eqx<uint8_t, uint32_t, uint32_t>(reinterpret_cast<uint8_t*>(buffer3), 
+//           reinterpret_cast<uint32_t*>(buffer1), reinterpret_cast<uint32_t*>(buffer2), bufsize);
+//       } else {
+//           eqx_scalar<uint8_t, uint32_t, uint32_t>(reinterpret_cast<uint8_t*>(buffer3), 
+//           reinterpret_cast<uint32_t*>(buffer1), buffer2[0], bufsize);
+//       }
+//       tops::mdspan out_hbm(tops::Global, out + offset, bufsize); 
+//       tops::memcpy(ctx, out_hbm, tops::mdspan(tops::Private, buffer3, bufsize));
+//     } 
+// } 
 
 int main () {}

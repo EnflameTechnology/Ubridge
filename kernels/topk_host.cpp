@@ -13,16 +13,43 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+#include "third_party/topk_ktop1.h"
 #include "third_party/topk_bitonic.h"
+#include "third_party/topk_heap_sort.h"
 #include <tops.h>
 #include <tops/tops_runtime.h>
 #define TOPK_OP(T, RUST_NAME, DESC) \
 extern "C" void topk_##RUST_NAME(  \
-    T * in, T* out, u_int32_t * indices, void* workspace, int dim0, int dim1, int dim2, int axis, int k, void* stream_ \
+    T * in, T* out, u_int32_t * indices, int dim0, int dim1, int dim2, int k, void* stream_ \
 ) { \
     topsStream_t stream = (topsStream_t)(stream_);\
-    topk_kernel_bitonic<T, DESC><<<2, 12, SHARE_BUFFER_SIZE, stream>>>(in, out, indices, workspace, dim0, dim1, dim2, axis, k);\
+    const int AXIS = 2;\
+    char* workspace;\
+    int SHARED_SIZE = 65536 * 2 * 12 * (sizeof(float) * 2 + sizeof(int) * 2);\
+    int h = 1, tmp = k;\
+    while (tmp >>= 1) ++h;\
+    int n2k_1 = (1 << h) - 1;\
+    int numBlocks = 2;\
+    int dimBlocks = 12;\
+    size_t element = 1;\
+    if (k < 512) {\
+      element = n2k_1 * numBlocks * dimBlocks * dim0 * ALIGN_UP(dim1, 128);\
+    } else if (k <= 1024) {\
+      element = (n2k_1 + 1) * numBlocks * dimBlocks * dim0 * ALIGN_UP(dim1, 128);\
+    } else if (k <= 60000) {\
+      element = k * dim0 * ALIGN_UP(dim1, 128) + dim0 * dim1 * dim2 + 66 * numBlocks * dimBlocks;\
+    }\
+    size_t workspace_size = element * (sizeof(float) + sizeof(int32_t));\
+    workspace_size = ALIGN_UP(workspace_size, 512);\
+    topsMallocAsync(&workspace, workspace_size, stream, topsDeviceMallocDefault);\
+    if (k < 10) {\
+      topk_kernel_ktop1<T, DESC><<<2, 12, SHARED_SIZE, stream>>>(in, out, indices, workspace, dim0, dim1, dim2, AXIS, k, n2k_1);\
+    } else if (k < 512) {\
+      topk_kernel_heap_sort<T, DESC><<<2, 12, SHARED_SIZE, stream>>>(in, out, indices, workspace, dim0, dim1, dim2, AXIS, k, n2k_1);\
+    } else {\
+      topk_kernel_bitonic<T, DESC><<<2, 12, SHARED_SIZE, stream>>>(in, out, indices, workspace, dim0, dim1, dim2, AXIS, k, n2k_1);\
+    }\
+    topsFreeAsync(workspace, stream);\
 }\
 
 TOPK_OP(__fp16, f16, true)

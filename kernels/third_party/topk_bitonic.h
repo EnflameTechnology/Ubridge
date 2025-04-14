@@ -15,48 +15,10 @@ __host__ __device__ int next_power_of_2(int x) {
     return n;
 }
 
-template <bool MAX, typename T,
-          typename std::enable_if<std::numeric_limits<T>::has_infinity &&
-                                      std::numeric_limits<T>::is_signed,
-                                  bool>::type = true>
-__device__ T get_pad_value() {
-  if KERNEL_CONSTEXPR17 (MAX) {
-    return -std::numeric_limits<T>::infinity();
-  } else {
-    return std::numeric_limits<T>::infinity();
-  }
-}
-
-template <bool MAX, typename T,
-          typename std::enable_if<!std::numeric_limits<T>::has_infinity &&
-                                      std::numeric_limits<T>::is_bounded,
-                                  bool>::type = false>
-__device__ T get_pad_value() {
-  if KERNEL_CONSTEXPR17 (MAX) {
-    return std::numeric_limits<T>::lowest();
-  } else {
-    return std::numeric_limits<T>::max();
-  }
-}
-
-template <bool MAX, typename T,
-          typename std::enable_if<!(std::numeric_limits<T>::has_infinity &&
-                                   std::numeric_limits<T>::is_signed) &&
-                                 !((!std::numeric_limits<T>::has_infinity &&
-                                   std::numeric_limits<T>::is_bounded)),
-                                  bool>::type = false>
-__device__ T get_pad_value() {
-  if KERNEL_CONSTEXPR17 (MAX) {
-    return static_cast<T>(-std::numeric_limits<float>::infinity());
-  } else {
-    return static_cast<T>(std::numeric_limits<float>::infinity());
-  }
-}
-
 template <typename T, bool DESCENDING>
 __global__ __cooperative__  void topk_kernel_bitonic(T *input, T *output,
                                                     u_int32_t *index, void* workspace, 
-                                                    int dim0, int dim1, int dim2, int axis, int k) {
+                                                    int dim0, int dim1, int dim2, int axis, int k, int n2k_1) {
   // __local__ __valigned__ int dims[128]; 
 
   // tops::private_dte ctx; 

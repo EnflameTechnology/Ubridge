@@ -99,6 +99,13 @@ extern "C"  __global__ void fill_i32(int32_t *output, int total_size,
     return fill__Kernel<int32_t>(output, total_size, value, bpe);
 }
 
+
+extern "C"  __global__ void fill_u32(uint32_t *output, int total_size,
+                                      uint32_t value, int bpe){
+
+    return fill__Kernel<uint32_t>(output, total_size, value, bpe);
+}
+
 extern "C"  __global__ void fill_i16(int16_t *output, int total_size,
                                       int16_t value, int bpe){
 
