@@ -7,11 +7,14 @@
 #include <algorithm>
 #include <functional>
 #include <numeric>
+#include "krt/common.h"
+#include <krt/mmu.h>
 #include <krt/vector_infra.h>
 #include <tops/half.h>
 #include <tops/bfloat.h>
 using namespace std;
 using namespace tops;
+#define MAX_MAP_MEM_SIZE 256 * 1024 * 1024
 #define FUNC_ATTRIBUTE (noinline, no_mem_alias_in_vldst, no_mem_alias_in_tar, \
    loop_iterator_less_than_1024, enable_software_pipeliner, enable_bc_resolver)
 
@@ -381,6 +384,22 @@ __device__ T get_inf_value(bool is_largest) {
     return get_pad_value<false, T>();
   } else {
     return get_pad_value<true, T>();
+  }
+}
+
+KRT_API mapped_ptr map_mem_ex(generic_ptr addr, int num_bytes) {
+  if (num_bytes > MAX_MAP_MEM_SIZE) {
+    return map_mem_m(addr, num_bytes);
+  } else {
+    return map_mem(addr, num_bytes);
+  }
+}
+
+KRT_API void unmap_mem_ex(mapped_ptr addr, int num_bytes) {
+  if (num_bytes > MAX_MAP_MEM_SIZE) {
+    unmap_mem_m(addr, num_bytes);
+  } else {
+    unmap_mem(addr);
   }
 }
 

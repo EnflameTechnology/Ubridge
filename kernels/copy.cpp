@@ -40,7 +40,7 @@ using namespace std;
 using namespace tops;
 #define PING_PONG_SIZE 2
 #define TILE_SIZE AlignDown(((VDMEM_VALID_SIZE) / 32), 256)
-// #define GATHER_COPY
+#define GATHER_COPY
 const int COPY_TILESIZE = 256 * 1024;
 const int COPY_L1SIZE = VDMEM_VALID_SIZE - COPY_TILESIZE;
 
@@ -112,7 +112,7 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, con
       }
     } else {
       int in_map_size = AlignUp(in_size, NUMS_SPLIT) * sizeof(T);
-      src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
+      src_l3_addr = map_mem_ex(reinterpret_cast<generic_ptr>(in), in_map_size);
       src_cached = reinterpret_cast<T*>(src_l3_addr);
     }
 
@@ -129,8 +129,10 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, con
       tops::mdspan buffer_l1(tops::Private, buffer, bufsize);
       tops::deslice(ctx, out_hbm, buffer_l1, {offset});
     }
-    if (!cacheable_l1 && !cacheable_l2)
-      unmap_mem(src_l3_addr);
+    if (!cacheable_l1 && !cacheable_l2) {
+      int in_map_size = AlignUp(in_size, NUMS_SPLIT) * sizeof(T);
+      unmap_mem_ex(src_l3_addr, in_map_size);
+    }  
 }
 
 #ifdef GATHER_COPY
@@ -196,7 +198,7 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
       }
     } else {
       int in_map_size = AlignUp(in_size, NUMS_SPLIT) * sizeof(T);
-      src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(in), in_map_size);
+      src_l3_addr = map_mem_ex(reinterpret_cast<generic_ptr>(in), in_map_size);
       src_cached = reinterpret_cast<T*>(src_l3_addr);
     }
 
@@ -243,8 +245,10 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
         init_offset = -1;
       }
     }
-    if (!cacheable_l1 && !cacheable_l2)
-      unmap_mem(src_l3_addr);
+    if (!cacheable_l1 && !cacheable_l2) {
+      int in_map_size = AlignUp(in_size, NUMS_SPLIT) * sizeof(T);
+      unmap_mem_ex(src_l3_addr, in_map_size);
+    }
 }
 #endif
 

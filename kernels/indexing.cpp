@@ -166,10 +166,10 @@ __device__ void gather(
     } else {
       GetThreadStep(numel, thread_step, THREAD_STEP);
       int in_map_size = AlignUp(left_size * src_dim_size, L1_ALIGN_SIZE) * sizeof(T);
-      auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(inp), in_map_size);
+      auto src_l3_addr = map_mem_ex(reinterpret_cast<generic_ptr>(inp), in_map_size);
       T* src_hbm = reinterpret_cast<T*>(src_l3_addr);
       int out_map_size = AlignUp(numel, L1_ALIGN_SIZE) * sizeof(T);
-      auto src_l3_addr1 = map_mem(reinterpret_cast<generic_ptr>(out), out_map_size);
+      auto src_l3_addr1 = map_mem_ex(reinterpret_cast<generic_ptr>(out), out_map_size);
       T* out_hbm = reinterpret_cast<T*>(src_l3_addr1);
 
       for (int idx = 0; idx < thread_step; idx++) {
@@ -182,8 +182,8 @@ __device__ void gather(
           out_hbm[i] = src_hbm[src_i];
         }
       }
-      unmap_mem(src_l3_addr);
-      unmap_mem(src_l3_addr1);
+      unmap_mem_ex(src_l3_addr, in_map_size);
+      unmap_mem_ex(src_l3_addr1, out_map_size);
     }
 }
 
@@ -279,10 +279,10 @@ __device__ void index_add(
       }
     } else {
         int in_map_size = AlignUp(numel, L1_ALIGN_SIZE) * sizeof(T);
-        auto src_l3_addr = map_mem(reinterpret_cast<generic_ptr>(inp), in_map_size);
+        auto src_l3_addr = map_mem_ex(reinterpret_cast<generic_ptr>(inp), in_map_size);
         T* src_hbm = reinterpret_cast<T*>(src_l3_addr);
         int out_map_size = AlignUp(dst_dim_size * right_size, L1_ALIGN_SIZE) * sizeof(T);
-        auto out_l3_addr = map_mem(reinterpret_cast<generic_ptr>(out), out_map_size);
+        auto out_l3_addr = map_mem_ex(reinterpret_cast<generic_ptr>(out), out_map_size);
         T* out_hbm = reinterpret_cast<T*>(out_l3_addr);
         for (int idx_ = 0; idx_ < thread_step; idx_++) {
           int i = thread_id * THREAD_STEP + idx_;
@@ -298,8 +298,8 @@ __device__ void index_add(
               }
           }
         }
-        unmap_mem(src_l3_addr);
-        unmap_mem(out_l3_addr);
+        unmap_mem_ex(src_l3_addr, in_map_size);
+        unmap_mem_ex(out_l3_addr, out_map_size);
     }
 }
 
