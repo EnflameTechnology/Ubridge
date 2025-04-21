@@ -34,4 +34,31 @@ extern "C" {
         k: c_int,
         stream: *const c_void,
     );
+
+    
+    pub fn moe_f16(
+        y: *mut f16,
+        e_out: *mut f16,
+        w: *mut f32,
+        idx: *mut u32,
+        top: *mut u32,
+        N: c_int,
+        K: c_int,
+        M: c_int,
+        topk: c_int,
+        stream: *const c_void,
+    );
+
+    pub fn moe_bf16(
+        y: *mut bf16,
+        e_out: *mut bf16,
+        w: *mut f32,
+        idx: *mut u32,
+        top: *mut u32,
+        N: c_int,
+        K: c_int,
+        M: c_int,
+        topk: c_int,
+        stream: *const c_void,
+    );
 }

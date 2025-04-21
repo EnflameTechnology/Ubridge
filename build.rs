@@ -3,7 +3,7 @@ use reqwest::blocking::Client;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-const KERNELS: [&str; 18] = [
+const KERNELS: [&str; 19] = [
     "unary",
     "fill",
     "binary",
@@ -22,6 +22,7 @@ const KERNELS: [&str; 18] = [
     "attention",
     "sort",
     "topk_host",
+    "moe_host"
 ];
 
 fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
