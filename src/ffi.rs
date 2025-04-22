@@ -35,7 +35,6 @@ extern "C" {
         stream: *const c_void,
     );
 
-    
     pub fn moe_f16(
         y: *mut f16,
         e_out: *mut f16,

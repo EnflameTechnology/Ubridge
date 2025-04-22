@@ -22,7 +22,7 @@ const KERNELS: [&str; 19] = [
     "attention",
     "sort",
     "topk_host",
-    "moe_host"
+    "moe_host",
 ];
 
 fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {

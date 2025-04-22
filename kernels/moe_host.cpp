@@ -7,9 +7,21 @@
 // idx=[K]
 // top=[K]
 // e_out = [K, M]
-// w = [K, topk]
+// w = [N, topk]
 #define MAX_M_DIM 1024 * 8
 #define MAX_IDX_DIM 1024 * 4
+//case 1: batch = 1, seq_len = 7
+//prefiling
+//y [7, 5120], e_out [3, 5120], topk_weight [7, 6], idx [3], top [3]
+//y [7, 5120], e_out [1, 5120], topk_weight [7, 6], idx [1], top [1]
+//decoding
+//y [1, 5120], e_out [1, 5120], topk_weight [1, 6], idx [1], top [1]
+
+//case 2: batch==8, seq_len=28
+//prefiling
+//y [224, 5120], e_out [15, 5120], topk_weight [224, 6], idx [15], top [15]
+//decoding
+//y [8, 5120], e_out [8, 5120], topk_weight [8, 6], idx [8], top [8]
 
 template<typename T, typename ID_TYPE>
 __global__ void moe_kernel(T* y, T* e_out, float* w, ID_TYPE* idx, ID_TYPE* top, int N, int K, int M, int topk) {
@@ -48,7 +60,7 @@ __global__ void moe_kernel(T* y, T* e_out, float* w, ID_TYPE* idx, ID_TYPE* top,
           tops::memcpy(ctx, l1_e, hbm_e1);
           uint32_t top_idx = top_buffer[k];
           if (top_idx < topk) {
-            float w1 = w_buffer[k * topk + top_idx];
+            float w1 = w_buffer[idx_buffer[k] * topk + top_idx];
             mul<T, T, float>(reinterpret_cast<T*>(tmp_buffer), reinterpret_cast<T*>(e_buffer), w1, M);
             add(reinterpret_cast<T*>(e_buffer), reinterpret_cast<T*>(y_buffer), reinterpret_cast<T*>(tmp_buffer), M);
             tops::memcpy(ctx, hbm_y1, l1_e);

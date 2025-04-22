@@ -332,7 +332,9 @@ impl DeviceExecutor {
                             }
                         }
                         "fill" => {
-                            for dt in ["bf16", "f16", "f32", "f64", "i32", "u32", "i16", "i8", "bool"] {
+                            for dt in [
+                                "bf16", "f16", "f32", "f64", "i32", "u32", "i16", "i8", "bool",
+                            ] {
                                 let name = format!("{}_{}", module, dt);
                                 println!("Load function {}", name);
                                 let function = executor.get_function(module, &name);
