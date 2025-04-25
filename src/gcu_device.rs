@@ -398,6 +398,32 @@ impl GcuDevice {
         }
     }
 
+    pub fn htod_copy_buffer<T: DeviceCopy>(
+        self: &Arc<Self>,
+        ptr_host: *mut T,
+        len: usize,
+    ) -> DeviceResult<GcuSlice<T>> {
+        let mut dst = self.alloc::<T>(len)?;
+        let size = std::mem::size_of::<T>() * len;
+        if self.is_async {
+            unsafe {
+                driv::topsMemcpyHtoDAsync(
+                    dst.device_ptr(),
+                    ptr_host as *mut c_void,
+                    size as u64,
+                    self.stream_inner().expect("unable to obtain stream"),
+                )
+                .to_result()?;
+            }
+        } else {
+            unsafe {
+                driv::topsMemcpyHtoD(dst.device_ptr(), ptr_host as *mut c_void, size as u64)
+                    .to_result()?;
+            }
+        }
+        Ok(dst)
+    }
+
     /// Allocates new device memory and synchronously copies data from `src` into the new allocation.
     ///
     /// If you want an asynchronous copy, see [GcuDevice::htod_copy()].

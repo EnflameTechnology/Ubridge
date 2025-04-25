@@ -60,4 +60,28 @@ extern "C" {
         topk: c_int,
         stream: *const c_void,
     );
+
+    pub fn dequant_f16(
+        out: *mut f16,
+        rhs: *mut u8,
+        scale: *mut f16,
+        zeros: *mut f16,
+        K: c_int, 
+        N: c_int,
+        weight_transpose: c_int,
+        group_size: c_int,
+        stream: *const c_void,
+    );
+
+    pub fn dequant_bf16(
+        out: *mut bf16,
+        rhs: *mut u8,
+        scale: *mut bf16,
+        zeros: *mut bf16,
+        K: c_int,
+        N: c_int,
+        weight_transpose: c_int,
+        group_size: c_int,
+        stream: *const c_void,
+    );
 }
