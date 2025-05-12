@@ -62,8 +62,21 @@ pub struct DeviceExecutor {
 
 impl DeviceExecutor {
     pub fn init_kernels(&mut self, kernel_platform: &str) -> DeviceResult<()> {
-        let full_kernel_folder =
+        let mut full_kernel_folder =
             format!("{}/kernels/{}", env!("CARGO_MANIFEST_DIR"), kernel_platform).to_string();
+        if !std::path::Path::new(&full_kernel_folder).exists() {
+            tracing::warn!("precompiled gcu kernels not found in the orginal path {}!", full_kernel_folder);
+            if let Ok(p) = std::env::var("GCU_KERNEL_PATH") {
+                full_kernel_folder = p;
+            } else {
+                let exe_path = std::env::current_exe().unwrap();
+                let exe_dir = exe_path.parent().unwrap();
+                tracing::info!("Executable directory: {:?}", exe_dir);
+                full_kernel_folder = format!("{}/kernels/", exe_dir.display());
+            }
+        }
+        tracing::info!("Kernel directory: {:?}", full_kernel_folder);
+        
         let paths = fs::read_dir(&full_kernel_folder).unwrap();
         for path in paths {
             let p = path.unwrap().path();
@@ -77,7 +90,7 @@ impl DeviceExecutor {
                 #[cfg(feature = "tops_backend")]
                 let ptx = format!("{}/{}.topsfb", full_kernel_folder, kernel_name).to_string();
 
-                println!("{}", ptx);
+                tracing::debug!("{}", ptx);
                 let module = ModuleX {
                     0: Module::from_file(&ptx).unwrap(),
                 };
@@ -315,7 +328,7 @@ impl DeviceExecutor {
                             for dt in ["bf16", "f16", "f32"] {
                                 for func in &unary_functions {
                                     let name = format!("{}_{}", func, dt);
-                                    println!("Load function {}", name);
+                                    tracing::debug!("Load function {}", name);
                                     let function = executor.get_function(module, &name);
                                     executor.function_map.insert(name, function);
                                 }
@@ -325,7 +338,7 @@ impl DeviceExecutor {
                             for dt in ["bf16", "f16", "f32", "u32"] {
                                 for func in &binary_functions {
                                     let name = format!("{}_{}", func, dt);
-                                    println!("Load function {}", name);
+                                    tracing::debug!("Load function {}", name);
                                     let function = executor.get_function(module, &name);
                                     executor.function_map.insert(name, function.into());
                                 }
@@ -336,7 +349,7 @@ impl DeviceExecutor {
                                 "bf16", "f16", "f32", "f64", "i32", "u32", "i16", "i8", "bool",
                             ] {
                                 let name = format!("{}_{}", module, dt);
-                                println!("Load function {}", name);
+                                tracing::debug!("Load function {}", name);
                                 let function = executor.get_function(module, &name);
                                 executor.function_map.insert(name, function.into());
                             }
@@ -352,7 +365,7 @@ impl DeviceExecutor {
                                 "bf16_8bit",
                             ] {
                                 let name = format!("{}_{}", module, dt);
-                                println!("Load function {}", name);
+                                tracing::debug!("Load function {}", name);
                                 let function = executor.get_function(module, &name);
                                 executor.function_map.insert(name, function.into());
                             }
@@ -360,14 +373,14 @@ impl DeviceExecutor {
                         "affine" => {
                             for dt in ["bf16", "f16", "f32"] {
                                 let name = format!("{}_{}", module, dt);
-                                println!("Load function {}", name);
+                                tracing::debug!("Load function {}", name);
                                 let function = executor.get_function(module, &name);
                                 executor.function_map.insert(name, function.into());
                             }
                         }
                         "cast" => {
                             for func in &cast_functions {
-                                println!("Load function {}", func);
+                                tracing::debug!("Load function {}", func);
                                 let function = executor.get_function(module, &func.to_string());
                                 executor
                                     .function_map
@@ -376,7 +389,7 @@ impl DeviceExecutor {
                         }
                         "reduce" => {
                             for func in &reduce_functions {
-                                println!("Load function {}", func);
+                                tracing::debug!("Load function {}", func);
                                 let function = executor.get_function(module, &func.to_string());
                                 executor
                                     .function_map
@@ -385,7 +398,7 @@ impl DeviceExecutor {
                         }
                         "ternary" => {
                             for func in &where_functions {
-                                println!("Load function {}", func);
+                                tracing::debug!("Load function {}", func);
                                 let function = executor.get_function(module, &func.to_string());
                                 executor
                                     .function_map
@@ -394,7 +407,7 @@ impl DeviceExecutor {
                         }
                         "indexing" => {
                             for func in &index_functions {
-                                println!("Load function {}", func);
+                                tracing::debug!("Load function {}", func);
                                 let function = executor.get_function(module, &func.to_string());
                                 executor
                                     .function_map
@@ -404,7 +417,7 @@ impl DeviceExecutor {
                             for func in &gather_functions {
                                 for dt in ["bf16", "f16", "f32", "f64", "u8", "u32", "i64"] {
                                     let name = format!("{}_{}", func, dt);
-                                    println!("Load function {}", name);
+                                    tracing::debug!("Load function {}", name);
                                     let function = executor.get_function(module, &name);
                                     executor.function_map.insert(name, function.into());
                                 }
@@ -413,7 +426,7 @@ impl DeviceExecutor {
                             for func in &ia_functions {
                                 for dt in ["bf16", "f16", "f32", "u8", "u32"] {
                                     let name = format!("{}_{}", func, dt);
-                                    println!("Load function {}", name);
+                                    tracing::debug!("Load function {}", name);
                                     let function = executor.get_function(module, &name);
                                     executor.function_map.insert(name, function.into());
                                 }
@@ -421,7 +434,7 @@ impl DeviceExecutor {
                         }
                         "embedding" => {
                             for func in &embedding_functions {
-                                println!("Load function {}", func);
+                                tracing::debug!("Load function {}", func);
                                 let function = executor.get_function(module, &func.to_string());
                                 executor
                                     .function_map
@@ -430,7 +443,7 @@ impl DeviceExecutor {
                         }
                         "kvconcat" => {
                             for func in &kvconcat_functions {
-                                println!("Load function {}", func);
+                                tracing::debug!("Load function {}", func);
                                 let function = executor.get_function(module, &func.to_string());
                                 executor
                                     .function_map
@@ -439,7 +452,7 @@ impl DeviceExecutor {
                         }
                         "conv" => {
                             for func in &conv_functions {
-                                println!("Load function {}", func);
+                                tracing::debug!("Load function {}", func);
                                 let function = executor.get_function(module, &func.to_string());
                                 executor
                                     .function_map
@@ -448,7 +461,7 @@ impl DeviceExecutor {
                         }
                         "copy" => {
                             for func in &copy_functions {
-                                println!("Load function {}", func);
+                                tracing::debug!("Load function {}", func);
                                 let function = executor.get_function(module, &func.to_string());
                                 executor
                                     .function_map
@@ -457,7 +470,7 @@ impl DeviceExecutor {
                         }
                         "quant" => {
                             for func in &quant_functions {
-                                println!("Load function {}", func);
+                                tracing::debug!("Load function {}", func);
                                 let function = executor.get_function(module, &func.to_string());
                                 executor
                                     .function_map
@@ -466,7 +479,7 @@ impl DeviceExecutor {
                         }
                         "cache" => {
                             for func in &cache_functions {
-                                println!("Load function {}", func);
+                                tracing::debug!("Load function {}", func);
                                 let function = executor.get_function(module, &func.to_string());
                                 executor
                                     .function_map
@@ -475,7 +488,7 @@ impl DeviceExecutor {
                         }
                         "attention" => {
                             for func in &attention_functions {
-                                println!("Load function {}", func);
+                                tracing::debug!("Load function {}", func);
                                 let function = executor.get_function(module, &func.to_string());
                                 executor
                                     .function_map
@@ -486,7 +499,7 @@ impl DeviceExecutor {
                             for dt in ["bf16", "f16", "f32", "f64", "u8", "u32", "i64"] {
                                 for func in &sort_functions {
                                     let name = format!("{}_{}", func, dt);
-                                    println!("Load function {}", name);
+                                    tracing::debug!("Load function {}", name);
                                     let function = executor.get_function(module, &name);
                                     executor.function_map.insert(name, function.into());
                                 }
