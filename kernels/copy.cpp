@@ -254,7 +254,7 @@ __device__ void ucopy_multithread_gather(T* in, T* out, const size_t in_size, co
 
 //dims_and_strides: dst shape, dst stride, dst layout, origin shape
 template <typename T, int RANK>
-__device__ void transpose_kernel(T* in, T* out, const size_t in_size, const size_t out_size, size_t* dims_and_strides, char* raw_cache, T* buffer) {
+__device__ void transpose_kernel(T* in, T* out, const size_t in_size, const size_t out_size, size_t* dims_and_strides) {
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx); 
     int src_shape[RANK];
@@ -265,28 +265,14 @@ __device__ void transpose_kernel(T* in, T* out, const size_t in_size, const size
       dst_layout[j] = dims_and_strides[j + 2 * RANK];
       src_shape[j] = dims_and_strides[j + 3 * RANK];
     }
-    
-    bool cacheable_l1 = in_size * sizeof(T) * 2 < COPY_L1SIZE;
-
-    T* src_cached = reinterpret_cast<T*>(raw_cache);
-    if (cacheable_l1){
-      T* dst_cached = reinterpret_cast<T*>(buffer + in_size);
-      tops::memcpy(ctx, 
-        tops::mdspan(tops::Private, buffer, in_size),
-        tops::mdspan(tops::Global, in, in_size));
-      tops::transpose(ctx, tops::mdspan(tops::Private, dst_cached, dst_shape), tops::mdspan(tops::Private, buffer, src_shape), dst_layout);
-      tops::deslice(ctx, tops::mdspan(tops::Global, out, out_size), tops::mdspan(tops::Private, dst_cached, out_size), 0);
-
-    } else {
-      tops::mdspan src_mem(tops::Global, in, src_shape);
-      tops::mdspan dst_mem(tops::Global, out, dst_shape);
-      tops::transpose(ctx, dst_mem, src_mem, dst_layout); 
-    }
+    tops::mdspan src_mem(tops::Global, in, src_shape);
+    tops::mdspan dst_mem(tops::Global, out, dst_shape);
+    tops::transpose(ctx, dst_mem, src_mem, dst_layout); 
 }
 
 //dims_and_strides: dst shape, dst stride, dst layout, origin shape
 template <typename T, int RANK>
-__device__ void broadcast_kernel(T* in, T* out, int src_rank, const size_t in_size, const size_t out_size, size_t* dims_and_strides, char* raw_cache, T* buffer) {
+__device__ void broadcast_kernel(T* in, T* out, int src_rank, const size_t in_size, const size_t out_size, size_t* dims_and_strides) {
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx); 
     int dst_shape[RANK];
@@ -303,29 +289,11 @@ __device__ void broadcast_kernel(T* in, T* out, int src_rank, const size_t in_si
         src_shape[j] = dims_and_strides[3 * RANK + j - (RANK - src_rank)];
       }
     }
-    bool cacheable_l1 = (in_size + out_size) * sizeof(T) < COPY_L1SIZE;
-    bool cacheable_l2 = (in_size + out_size) * sizeof(T) < SHARE_BUFFER_SIZE;
 
-    T* src_cached = reinterpret_cast<T*>(raw_cache);
     if (in_size == 1) {
         tops::mdspan src_mem(tops::Global, in, 1);
         tops::mdspan dst_mem(tops::Global, out, out_size);
         tops::broadcast(ctx, dst_mem, src_mem);
-    } else if (cacheable_l1){
-      T* dst_cached = reinterpret_cast<T*>(buffer + in_size);
-      tops::memcpy(ctx, 
-        tops::mdspan(tops::Private, buffer, in_size),
-        tops::mdspan(tops::Global, in, in_size));
-      tops::broadcast(ctx, tops::mdspan(tops::Private, dst_cached, dst_shape), tops::mdspan(tops::Private, buffer, src_shape));
-      tops::deslice(ctx, tops::mdspan(tops::Global, out, out_size), tops::mdspan(tops::Private, dst_cached, out_size), 0);
-
-    } else if (cacheable_l2) {
-      T* dst_cached = reinterpret_cast<T*>(src_cached + in_size);
-      tops::memcpy(ctx, 
-        tops::mdspan(tops::Shared, src_cached, in_size),
-        tops::mdspan(tops::Global, in, in_size));
-      tops::broadcast(ctx, tops::mdspan(tops::Shared, dst_cached, dst_shape), tops::mdspan(tops::Shared, src_cached, src_shape));
-      tops::deslice(ctx, tops::mdspan(tops::Global, out, out_size), tops::mdspan(tops::Shared, dst_cached, out_size), 0);
     } else {
       tops::mdspan src_mem(tops::Global, in, src_shape);
       tops::mdspan dst_mem(tops::Global, out, dst_shape);
@@ -335,7 +303,7 @@ __device__ void broadcast_kernel(T* in, T* out, int src_rank, const size_t in_si
 
 //dims_and_strides: dst shape, dst stride, dst layout, origin shape
 template <typename T, int RANK>
-__device__ void narrow_kernel(T* in, T* out, int src_rank, const size_t in_size, const size_t out_size, size_t* dims_and_strides, char* raw_cache, T* buffer) {
+__device__ void narrow_kernel(T* in, T* out, int src_rank, const size_t in_size, const size_t out_size, size_t* dims_and_strides) {
     tops_dte_ctx_t ctx;
     tops::dte_scope s(ctx); 
     int dst_shape[RANK];
@@ -348,28 +316,9 @@ __device__ void narrow_kernel(T* in, T* out, int src_rank, const size_t in_size,
       offsets[j] = 0;
     }
 
-    bool cacheable_l1 = in_size * sizeof(T) < COPY_L1SIZE;
-    bool cacheable_l2 = in_size * sizeof(T) < SHARE_BUFFER_SIZE;
-    // PRINTHELPER(src_shape, RANK, "\nsrc_shape: ");
-    // PRINTHELPER(dst_shape, RANK, "\ndst_shape: ");
-
-    T* src_cached = reinterpret_cast<T*>(raw_cache);
-    if (cacheable_l1){
-      tops::memcpy(ctx, 
-        tops::mdspan(tops::Private, buffer, in_size),
-        tops::mdspan(tops::Global, in, in_size));
-      tops::slice(ctx, tops::mdspan(tops::Global, out, dst_shape), tops::mdspan(tops::Private, buffer, src_shape), offsets);
-
-    } else if (cacheable_l2) {
-      tops::memcpy(ctx, 
-        tops::mdspan(tops::Shared, src_cached, in_size),
-        tops::mdspan(tops::Global, in, in_size));
-      tops::slice(ctx, tops::mdspan(tops::Global, out, dst_shape), tops::mdspan(tops::Shared, src_cached, src_shape), offsets);
-    } else {
-      tops::mdspan src_mem(tops::Global, in, src_shape);
-      tops::mdspan dst_mem(tops::Global, out, dst_shape);
-      tops::slice(ctx, dst_mem, src_mem, offsets); 
-    }
+    tops::mdspan src_mem(tops::Global, in, src_shape);
+    tops::mdspan dst_mem(tops::Global, out, dst_shape);
+    tops::slice(ctx, dst_mem, src_mem, offsets); 
 }
 
 //dims_and_strides: dst shape, dst stride, dst layout, origin shape
@@ -384,8 +333,6 @@ extern "C" __global__ void FN_NAME( \
     TYPE *out, \
     const size_t op_type) \
 { \
-    extern __shared__ char raw_cache[]; \
-    __local__ __valigned__ TYPE l1_cache[COPY_TILESIZE/BPE + COPY_L1SIZE/BPE]; \
     bool cont = true; \
     __local__ __valigned__ size_t info[128]; \
     tops_dte_ctx_t ctx; \
@@ -398,37 +345,39 @@ extern "C" __global__ void FN_NAME( \
     if (op_type == 1 && in_size == out_size && num_dims < 5) { \
       if (GetThreadIdx() == 0) { \
         if (num_dims == 2)\
-          transpose_kernel<TYPE, 2>(in, out, in_size, out_size, info, raw_cache, l1_cache); \
+          transpose_kernel<TYPE, 2>(in, out, in_size, out_size, info); \
         else if (num_dims == 3)\
-          transpose_kernel<TYPE, 3>(in, out, in_size, out_size, info, raw_cache, l1_cache); \
+          transpose_kernel<TYPE, 3>(in, out, in_size, out_size, info); \
         else if (num_dims == 4)\
-          transpose_kernel<TYPE, 4>(in, out, in_size, out_size, info, raw_cache, l1_cache); \
+          transpose_kernel<TYPE, 4>(in, out, in_size, out_size, info); \
       }\
     } else if (op_type == 2 && in_size < out_size && origin_num_dims <= num_dims) { \
       if (GetThreadIdx() == 0) { \
         if (num_dims == 2)\
-            broadcast_kernel<TYPE, 2>(in, out, origin_num_dims, in_size, out_size, info, raw_cache, l1_cache); \
+            broadcast_kernel<TYPE, 2>(in, out, origin_num_dims, in_size, out_size, info); \
         else if (num_dims == 3)\
-            broadcast_kernel<TYPE, 3>(in, out, origin_num_dims, in_size, out_size, info, raw_cache, l1_cache); \
+            broadcast_kernel<TYPE, 3>(in, out, origin_num_dims, in_size, out_size, info); \
         else if (num_dims == 4)\
-            broadcast_kernel<TYPE, 4>(in, out, origin_num_dims, in_size, out_size, info, raw_cache, l1_cache); \
+            broadcast_kernel<TYPE, 4>(in, out, origin_num_dims, in_size, out_size, info); \
         else if (num_dims == 5)\
-            broadcast_kernel<TYPE, 5>(in, out, origin_num_dims, in_size, out_size, info, raw_cache, l1_cache); \
+            broadcast_kernel<TYPE, 5>(in, out, origin_num_dims, in_size, out_size, info); \
       }\
     } \
     else if (op_type == 4 && in_size > out_size) { \
       if (GetThreadIdx() == 0) { \
         if (num_dims == 2)\
-            narrow_kernel<TYPE, 2>(in, out, origin_num_dims, in_size, out_size, info, raw_cache, l1_cache); \
+            narrow_kernel<TYPE, 2>(in, out, origin_num_dims, in_size, out_size, info); \
         else if (num_dims == 3)\
-            narrow_kernel<TYPE, 3>(in, out, origin_num_dims, in_size, out_size, info, raw_cache, l1_cache); \
+            narrow_kernel<TYPE, 3>(in, out, origin_num_dims, in_size, out_size, info); \
         else if (num_dims == 4)\
-            narrow_kernel<TYPE, 4>(in, out, origin_num_dims, in_size, out_size, info, raw_cache, l1_cache); \
+            narrow_kernel<TYPE, 4>(in, out, origin_num_dims, in_size, out_size, info); \
         else if (num_dims == 5)\
-            narrow_kernel<TYPE, 5>(in, out, origin_num_dims, in_size, out_size, info, raw_cache, l1_cache); \
+            narrow_kernel<TYPE, 5>(in, out, origin_num_dims, in_size, out_size, info); \
       }\
     } \
     else { \
+      extern __shared__ char raw_cache[]; \
+      __local__ __valigned__ TYPE l1_cache[COPY_TILESIZE/BPE + COPY_L1SIZE/BPE]; \
       if (num_dims == 2)\
         KERNEL<TYPE, 2, BPE>(in, out, in_size, out_size, info, raw_cache, l1_cache); \
       else if (num_dims == 3)\

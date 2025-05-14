@@ -73,7 +73,7 @@ __global__ void moe_kernel(T* y, T* e_out, float* w, ID_TYPE* idx, ID_TYPE* top,
             mul<T, T, float>(reinterpret_cast<T*>(tmp_buffer), reinterpret_cast<T*>(e_buffer), w1, M);
             ev_y.wait();
             add(reinterpret_cast<T*>(e_buffer), reinterpret_cast<T*>(y_buffer), reinterpret_cast<T*>(tmp_buffer), M);
-            tops::memcpy_async(ctxs_o, hbm_y1, l1_e);
+            tops::memcpy(ctxs_o, hbm_y1, l1_e);
           } 
         } 
       }

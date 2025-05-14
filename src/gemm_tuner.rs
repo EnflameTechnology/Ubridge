@@ -499,7 +499,11 @@ impl AtenGemmTuner {
             }
         };
         const UNIT_SIP_N: i64 = 128;
-        let UNIT_SIP_K = if info.M > 32 { 64 } else { 128 };
+        let UNIT_SIP_K = if info.weight_type != DATATYPE::DataI4 {
+            if info.M > 32 { 64 } else { 128 }
+        } else {
+            if info.M > 32 { 128 } else { 256 }
+        };
         const BPE: i64 = 2;
         // let RBPE = if (info.weight_type == DATATYPE::DataBf16 || info.weight_type == DATATYPE::DataFp16) { 2 } else { 1 };
         let sip_cnt = 12; //todo!()
@@ -576,8 +580,11 @@ impl AtenGemmTuner {
             }
             set_split_option!(tune, false, false, true, false, false, false, false, false);
         }
+        if info.weight_type == DATATYPE::DataI4 && tune.sip_m > 128 && tune.sip_m % 128 != 0 {
+            tune.sip_m = align_down(tune.sip_m, 128); //corner case for 4bit matmul
+        }
         if tune.sip_m % 32 != 0 && tune.sip_m != 1 {
-            //sip_m does not support, change to default 1
+            //sip_m does not support, change to default
             tune.sip_m = 32;
         }
         // println!("TunerHGemmF16");
