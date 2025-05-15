@@ -84,4 +84,31 @@ extern "C" {
         group_size: c_int,
         stream: *const c_void,
     );
+
+    pub fn mask_f32 (
+        input: *mut f32,
+        v: f32,
+        output: *mut u32,
+        batch: i32,
+        dim_size: i32,
+        stream: *const c_void,
+    ) -> u32;
+
+    pub fn mask_i32 (
+        input: *mut i32,
+        v: i32,
+        output: *mut u32,
+        batch: i32,
+        dim_size: i32,
+        stream: *const c_void,
+    ) -> u32;
+
+    pub fn mask_u32 (
+        input: *mut u32,
+        v: u32,
+        output: *mut u32,
+        batch: i32,
+        dim_size: i32,
+        stream: *const c_void,
+    ) -> u32;
 }
