@@ -24,7 +24,7 @@ const KERNELS: [&str; 21] = [
     "topk_host",
     "moe_host",
     "dequant_host",
-    "mask_host"
+    "mask_host",
 ];
 
 fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {

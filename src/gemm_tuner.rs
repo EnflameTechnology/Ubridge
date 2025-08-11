@@ -500,9 +500,17 @@ impl AtenGemmTuner {
         };
         const UNIT_SIP_N: i64 = 128;
         let UNIT_SIP_K = if info.weight_type != DATATYPE::DataI4 {
-            if info.M > 32 { 64 } else { 128 }
+            if info.M > 32 {
+                64
+            } else {
+                128
+            }
         } else {
-            if info.M > 32 { 128 } else { 256 }
+            if info.M > 32 {
+                128
+            } else {
+                256
+            }
         };
         const BPE: i64 = 2;
         // let RBPE = if (info.weight_type == DATATYPE::DataBf16 || info.weight_type == DATATYPE::DataFp16) { 2 } else { 1 };

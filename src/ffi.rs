@@ -66,7 +66,7 @@ extern "C" {
         rhs: *mut u8,
         scale: *mut f16,
         zeros: *mut f16,
-        K: c_int, 
+        K: c_int,
         N: c_int,
         weight_transpose: c_int,
         group_size: c_int,
@@ -85,7 +85,7 @@ extern "C" {
         stream: *const c_void,
     );
 
-    pub fn mask_f32 (
+    pub fn mask_f32(
         input: *mut f32,
         v: f32,
         output: *mut u32,
@@ -94,7 +94,7 @@ extern "C" {
         stream: *const c_void,
     ) -> u32;
 
-    pub fn mask_i32 (
+    pub fn mask_i32(
         input: *mut i32,
         v: i32,
         output: *mut u32,
@@ -103,7 +103,7 @@ extern "C" {
         stream: *const c_void,
     ) -> u32;
 
-    pub fn mask_u32 (
+    pub fn mask_u32(
         input: *mut u32,
         v: u32,
         output: *mut u32,

@@ -65,7 +65,10 @@ impl DeviceExecutor {
         let mut full_kernel_folder =
             format!("{}/kernels/{}", env!("CARGO_MANIFEST_DIR"), kernel_platform).to_string();
         if !std::path::Path::new(&full_kernel_folder).exists() {
-            tracing::warn!("precompiled gcu kernels not found in the orginal path {}!", full_kernel_folder);
+            tracing::warn!(
+                "precompiled gcu kernels not found in the orginal path {}!",
+                full_kernel_folder
+            );
             if let Ok(p) = std::env::var("GCU_KERNEL_PATH") {
                 full_kernel_folder = p;
             } else {
@@ -76,7 +79,7 @@ impl DeviceExecutor {
             }
         }
         tracing::info!("Kernel directory: {:?}", full_kernel_folder);
-        
+
         let paths = fs::read_dir(&full_kernel_folder).unwrap();
         for path in paths {
             let p = path.unwrap().path();
