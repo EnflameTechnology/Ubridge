@@ -1,19 +1,14 @@
 <div align="center">
-<h2 align="center">UHAL Bridge (ubridge) - Bridge between computing frameworks and UHAL. </h2>
+<h2 align="center">UHAL Bridge (ubridge) - Bridge between ML frameworks and underlying computing interface. </h2>
 <br />
 <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg" /><br>
 <br>
-This Rust crate serve as the bridge between "computing frameworks", such as Chopper and Candle and "UHAL". <br> The computing instructions will be dispatched to the corresponding devices through: ubridge -> UHAL -> CUDA driver or Tops driver.
+This Rust crate serve as the bridge between "computing frameworks", such Candle and underlying computing interface (UHAL/UHHI). <br> The computing instructions will be dispatched to the corresponding devices through: ubridge -> UHAL/UHHI -> Runtime/Driver.
 </div>
 
 ## UPDATE KERNELS
 
-The gcu kernels written in TopsCC will be build automatically when compiling Ubridge or Candle-GCU project.
-
-You may also manually build them if there are any changes:
-```
-cd gcu_kernels && cargo build
-```
+The gcu kernels written in TopsCC were prebuilt under kernels/scorpio (for GCU S60), any changes of kernel source code (*.cpp) in kernels folder will trigger automatic build (topscc compilier required).
 
 ## Items
 device_tensor.rs: higher level abstraction of device tensor. 
@@ -34,30 +29,11 @@ main.rs: entry for samples (executed by **cargo run**).
 
 kernels: CUDA/GCU kernels.
 
-## The entire workflow （for Candle-GCU):
-Candle Models **->** 
-Candle-nn / Candle-core  **->** 
-GCU Backend **->** 
-UBridge (http://git.enflame.cn/guoqing.bao/ubridge) **->** 
-UHAL (http://git.enflame.cn/guoqing.bao/UHHI/) **->** 
-Concreate backend (CUDA/Tops) **->**
-Drivers (CUDA/Tops) **->**
-Nvidia GPU/Enflame GCU
-
-## The entire workflow （for Chopper）:
-Frontend (Pytorch, Tensorflow, Jax) scripts **->** 
-Chopper (_Compiler -> Chopper Runtime -> Raptors_) **->** 
-UBridge (http://git.enflame.cn/guoqing.bao/ubridge) **->** 
-UHAL (http://git.enflame.cn/guoqing.bao/UHHI/) **->** 
-Concreate backend (CUDA/Tops) **->**
-Drivers (CUDA/Tops) **->**
-Nvidia GPU/Enflame GCU
-
 ## Example of UHAL 
 #### Run example
 ``` shell
 cd ubridge
-cargo run --features scorpio
+cargo run --features gcu
 ```
 #### A 6-layer neural network forward pass on GPU/GCU
 
@@ -75,44 +51,40 @@ use uhal::module::ModuleTrait;
 use uhal::stream::{StreamFlags, StreamTrait};
 use uhal::DriverLibraryTrait;
 //Tops backend
-#[cfg(feature = "tops_backend")]
+#[cfg(feature = "gcu")]
 use tops::memory::CopyDestination;
-#[cfg(feature = "tops_backend")]
+#[cfg(feature = "gcu")]
 use tops::memory::TopsDeviceBuffer as DeviceBuffer;
-#[cfg(feature = "tops_backend")]
+#[cfg(feature = "gcu")]
 use tops::module::TopsModule as Module;
-#[cfg(feature = "tops_backend")]
+#[cfg(feature = "gcu")]
 use tops::stream::TopsStream as Stream;
-#[cfg(feature = "tops_backend")]
+#[cfg(feature = "gcu")]
 use tops::TopsApi as Api;
-#[cfg(feature = "tops_backend")]
+#[cfg(feature = "gcu")]
 use tops_backend as tops;
 
 //Cuda backend
-#[cfg(feature = "cuda_backend")]
+#[cfg(feature = "cuda")]
 use cuda::memory::CopyDestination;
-#[cfg(feature = "cuda_backend")]
+#[cfg(feature = "cuda")]
 use cuda::memory::CuDeviceBuffer as DeviceBuffer;
-#[cfg(feature = "cuda_backend")]
+#[cfg(feature = "cuda")]
 use cuda::module::CuModule as Module;
-#[cfg(feature = "cuda_backend")]
+#[cfg(feature = "cuda")]
 use cuda::stream::CuStream as Stream;
-#[cfg(feature = "cuda_backend")]
+#[cfg(feature = "cuda")]
 use cuda::CuApi as Api;
-#[cfg(feature = "cuda_backend")]
+#[cfg(feature = "cuda")]
 use cuda_backend as cuda;
 
 use crate::device_executor::DeviceExecutor;
 
 fn load_module<'a>(name: &str) -> DeviceResult<Module> {
-    #[cfg(not(feature = "scorpio"))]
-    #[cfg(feature = "tops_backend")]
-    let ptx = format!("{}/kernels/legacy/pavo/{}.topsfb", env!("CARGO_MANIFEST_DIR"), name).to_string();
-
-    #[cfg(feature = "scorpio")]
+    #[cfg(feature = "gcu")]
     let ptx = format!("{}/kernels/legacy/scorpio/{}.topsfb", env!("CARGO_MANIFEST_DIR"), name).to_string();
 
-    #[cfg(feature = "cuda_backend")]
+    #[cfg(feature = "cuda")]
     let ptx = format!("{}/kernels/gpu/{}.ptx", env!("CARGO_MANIFEST_DIR"), name).to_string();
 
     Module::from_file(&ptx)
@@ -264,13 +236,13 @@ pub fn network_test() -> DeviceResult<()> {
                         get_block_grid(layer.input_size.1, layer.input_size.0);
                     let A = match matA_ref {Some(a)=> {a}, _=> {panic!("error")}};
                     unsafe {
-                        #[cfg(feature = "tops_backend")]
+                        #[cfg(feature = "gcu")]
                         let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
                             A.as_device_ptr(),
                             param.as_device_ptr(),
                         ));
 
-                        #[cfg(feature = "cuda_backend")]
+                        #[cfg(feature = "cuda")]
                         let result = launch!(kernel<<<(grid_a as u32, grid_b as u32), (block_size as u32, block_size as u32), 0, stream>>>(
                             A.as_device_ptr(),
                             layer.input_size.0 as u32,
@@ -291,13 +263,13 @@ pub fn network_test() -> DeviceResult<()> {
             match load_module(layer.op) {
                 Ok(module) => {
                     let kernel = module.get_function(&layer.op)?;
-                    #[cfg(feature = "tops_backend")]
+                    #[cfg(feature = "gcu")]
                     let inputShapeA = DeviceBuffer::from_slice(&[
                         1i32,
                         layer.input_size.0 as i32,
                         layer.input_size.1 as i32,
                     ])?;
-                    #[cfg(feature = "tops_backend")]
+                    #[cfg(feature = "gcu")]
                     let inputShapeB = DeviceBuffer::from_slice(&[
                         1i32,
                         layer.input_size.0 as i32,
@@ -308,7 +280,7 @@ pub fn network_test() -> DeviceResult<()> {
                     let O = match out_ref {Some(a)=> {a}, _=> {panic!("error")}};
 
                     unsafe {
-                        #[cfg(feature = "tops_backend")]
+                        #[cfg(feature = "gcu")]
                         let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
                             A.as_device_ptr(),
                             B.as_device_ptr(),
@@ -317,7 +289,7 @@ pub fn network_test() -> DeviceResult<()> {
                             inputShapeB.as_device_ptr()
                         ));
 
-                        #[cfg(feature = "cuda_backend")]
+                        #[cfg(feature = "cuda")]
                         let result = launch!(kernel<<<(grid_a as u32, grid_b as u32), (block_size as u32, block_size as u32), 0, stream>>>(
                             A.as_device_ptr(),
                             B.as_device_ptr(),
@@ -353,20 +325,20 @@ pub fn network_test() -> DeviceResult<()> {
                     let A = match matA_ref {Some(a)=> {a}, _=> {panic!("error")}};
                     let B = match matB_ref {Some(a)=> {a}, _=> {panic!("error")}};
 
-                    #[cfg(feature = "tops_backend")]
+                    #[cfg(feature = "gcu")]
                     let inputShapeA = DeviceBuffer::from_slice(&[
                         layer.input_size.0 as i32,
                         layer.input_size.1 as i32,
                         1i32,
                         1i32,
                     ])?;
-                    #[cfg(feature = "tops_backend")]
+                    #[cfg(feature = "gcu")]
                     let inputShapeB = DeviceBuffer::from_slice(&vec![K as i32, K as i32, 1i32, 1i32])?;
-                    #[cfg(feature = "tops_backend")]
+                    #[cfg(feature = "gcu")]
                     let channelInfo = DeviceBuffer::from_slice(&vec![1i32, 1i32, 1i32, 1i32])?;
 
                     unsafe {
-                        #[cfg(feature = "tops_backend")]
+                        #[cfg(feature = "gcu")]
                         let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
                             A.as_device_ptr(),
                             B.as_device_ptr(),
@@ -376,7 +348,7 @@ pub fn network_test() -> DeviceResult<()> {
                             channelInfo.as_device_ptr()
                         ));
 
-                        #[cfg(feature = "cuda_backend")]
+                        #[cfg(feature = "cuda")]
                         let result = launch!(kernel<<<(1, 1, 1), (1, 1, 1), 0, stream>>>(
                             A.as_device_ptr(),
                             B.as_device_ptr(),
@@ -478,10 +450,3 @@ Results of forward pass******************
 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 
 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 0.00272 
 ```
-
-#### External dependencies
-**Computing on GCU**: 
-Enflame GCU Driver, GCU Runtime 2.0/3.0, Enflame T20 card_
-
-**Computing on GPU**: 
-_CUDA 11.3, Nvidia Driver, Nvidia GPU card_
