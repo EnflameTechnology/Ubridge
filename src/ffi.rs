@@ -111,4 +111,32 @@ extern "C" {
         dim_size: i32,
         stream: *const c_void,
     ) -> u32;
+
+    pub fn indexed_moe_f16(
+        input: *mut f16,
+        w: *mut f16,
+        out: *mut f16,
+        idx: *mut u32,
+        N: c_int,
+        K: c_int,
+        M: c_int,
+        batch: c_int,
+        topk: c_int,
+        num_experts: c_int, 
+        stream: *const c_void,
+    );
+
+    pub fn indexed_moe_bf16(
+        input: *mut bf16,
+        w: *mut bf16,
+        out: *mut bf16,
+        idx: *mut u32,
+        N: c_int,
+        K: c_int,
+        M: c_int,
+        batch: c_int,
+        topk: c_int,
+        num_experts: c_int, 
+        stream: *const c_void,
+    );
 }
