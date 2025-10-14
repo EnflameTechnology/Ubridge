@@ -195,8 +195,8 @@ __device__ void rope(T* query, T* key, CST* cos_sin, int cos_sin_length, int cos
       tops::mdspan hbm_key(tops::Global, key_sub0, k_stride);
       tops::memcpy(ctx, query_l1, hbm_query);
       tops::memcpy(ctx, key_l1, hbm_key);
-      auto cos_sin_cache = cos_sin_cur + idx * split_dim;
-      tops::mdspan hbm_cos_sin(tops::Global, cos_sin_cache, split_dim);
+      // auto cos_sin_cache = cos_sin_cur + idx * split_dim;
+      tops::mdspan hbm_cos_sin(tops::Global, cos_sin_cur, split_dim);
       tops::memcpy(ctx, cos_sin_l1, hbm_cos_sin);
       if (sizeof(T) < 4) {
         convert<float, T>(reinterpret_cast<float*>(bufQueryf32), reinterpret_cast<T*>(bufQuery), q_stride);
