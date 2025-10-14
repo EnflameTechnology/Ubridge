@@ -24,7 +24,7 @@
 using namespace tops;
 
 template <typename T>
-__device__ void reshape_and_cache_kernel(T* key, T* value, int* slot_mapping,
+__device__ void reshape_and_cache_kernel(T* key, T* value, int64_t* slot_mapping,
                                          T* key_cache, T* value_cache,
                                          int num_tokens, int num_heads,
                                          int head_size, int num_blocks,
@@ -42,7 +42,7 @@ __device__ void reshape_and_cache_kernel(T* key, T* value, int* slot_mapping,
   char* sip_slot_mapping_addr = sip_mem;
 
   // cast ptr
-  int* sip_slot_mapping_ptr = reinterpret_cast<int*>(sip_slot_mapping_addr);
+  int64_t* sip_slot_mapping_ptr = reinterpret_cast<int64_t*>(sip_slot_mapping_addr);
 
   int tokens_per_sip = CeilDiv(num_tokens, thread_num);
   int tokens_start = thread_id * tokens_per_sip;
@@ -113,7 +113,7 @@ extern "C" __global__ void reshape_and_cache_##TYPENAME( \
   T *value,            \
   T *key_cache,       \
   T *value_cache,      \
-  int32_t* slot_mapping,  \
+  int64_t* slot_mapping,  \
   int32_t num_tokens,\
   int32_t num_heads,\
   int32_t head_size,\

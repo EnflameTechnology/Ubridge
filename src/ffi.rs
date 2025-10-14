@@ -122,7 +122,7 @@ extern "C" {
         M: c_int,
         batch: c_int,
         topk: c_int,
-        num_experts: c_int, 
+        num_experts: c_int,
         stream: *const c_void,
     );
 
@@ -136,7 +136,7 @@ extern "C" {
         M: c_int,
         batch: c_int,
         topk: c_int,
-        num_experts: c_int, 
+        num_experts: c_int,
         stream: *const c_void,
     );
 }
