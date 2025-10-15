@@ -9,10 +9,10 @@ readme = "README.md"
 description = "Bridge between Chopper Runtime and UHAL."
 
 [dependencies]
-uhal = { path = "../UHHI/uhal", version = "0.1.0"}
-cuda_backend = { path = "../UHHI/cuda_backend", version = "0.1.0", optional = true}
-tops_backend = { path = "../UHHI/tops_backend", version = "0.1.0", optional = true}
-cust_core = { path = "../UHHI/common_features/cust_core", version = "0.1.0"}
+uhal = { git = "https://github.com/EnflameTechnology/UHHI.git", version = "0.1.0", rev = "06356e7"}
+cuda_backend = { git = "https://github.com/EnflameTechnology/UHHI.git", version = "0.1.0", rev = "06356e7", optional = true}
+tops_backend = { git = "https://github.com/EnflameTechnology/UHHI.git", version = "0.1.0", rev = "06356e7", optional = true}
+cust_core = { git = "https://github.com/EnflameTechnology/UHHI.git", version = "0.1.0", rev = "06356e7"}
 lazy_static = {version = "1.4.0"}
 float_eq = { version = "0.7.0"}
 num-traits = { version = "0.2.16"}
