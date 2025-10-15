@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use reqwest::blocking::Client;
 use std::path::PathBuf;
 use std::str::FromStr;
+const BC_FILE_NAME: &str = "acore.bc";
 
 const KERNELS: [&str; 21] = [
     "unary",
@@ -50,18 +51,12 @@ fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
 }
 
 fn check_atomic_op(path: PathBuf) -> Result<()> {
-    let lib_file = format!(
-        "topsacore_{:}-{:}.tar.gz",
-        std::env::var("ATOMIC_TAG")?,
-        std::env::var("ATOMIC_VERSION")?
-    );
     let url = format!(
-        "{:}/{:}/{:}",
+        "{:}/{}",
         std::env::var("ATOMIC_URL")?,
-        std::env::var("ATOMIC_VERSION")?,
-        lib_file
+        BC_FILE_NAME,
     );
-    let filename = path.join("atomic/".to_string() + &lib_file);
+    let filename = path.join("atomic/".to_string() + BC_FILE_NAME);
 
     if !filename.exists() {
         let _ = std::fs::create_dir(path.join("atomic/"));
