@@ -214,7 +214,7 @@ impl GcuDevice {
             unsafe {
                 driv::topsMallocAsync(
                     &mut ptr as *mut *mut c_void,
-                    Self::align_up(size, 4096) as u64,
+                    Self::align_up(size, 4096),
                     self.stream_inner().expect("unable to obtain stream"),
                     0,
                 )
@@ -226,7 +226,7 @@ impl GcuDevice {
             unsafe {
                 driv::topsMalloc(
                     &mut ptr as *mut *mut c_void,
-                    Self::align_up(size, 4096) as u64,
+                    Self::align_up(size, 4096),
                 )
                 .to_result()?;
             }
@@ -255,7 +255,7 @@ impl GcuDevice {
                 driv::topsMemsetD8Async(
                     slice.device_ptr(),
                     0,
-                    (std::mem::size_of::<T>() * len) as u64,
+                    (std::mem::size_of::<T>() * len),
                     self.stream_inner().expect("unable to obtain stream"),
                 )
                 .to_result()?;
@@ -265,7 +265,7 @@ impl GcuDevice {
                 driv::topsMemsetD8(
                     slice.device_ptr(),
                     0,
-                    (std::mem::size_of::<T>() * len) as u64,
+                    (std::mem::size_of::<T>() * len),
                 )
                 .to_result()?;
             }
@@ -315,7 +315,7 @@ impl GcuDevice {
                 driv::topsMemcpyDtoDAsync(
                     dst.device_ptr(),
                     src.device_ptr(),
-                    (src.len() * std::mem::size_of::<T>()) as u64,
+                    (src.len() * std::mem::size_of::<T>()),
                     self.stream_inner().expect("unable to obtain stream"),
                 )
                 .to_result()
@@ -325,7 +325,7 @@ impl GcuDevice {
                 driv::topsMemcpyDtoD(
                     dst.device_ptr(),
                     src.device_ptr(),
-                    (src.len() * std::mem::size_of::<T>()) as u64,
+                    (src.len() * std::mem::size_of::<T>()),
                 )
                 .to_result()
             }
@@ -353,7 +353,7 @@ impl GcuDevice {
         src: &[T],
         stream: driv::topsStream_t,
     ) -> DeviceResult<()> {
-        let size = std::mem::size_of_val(src) as u64;
+        let size = std::mem::size_of_val(src);
         let ptr = src.as_ptr() as *mut _;
         driv::topsHostRegister(ptr, size, 0).to_result()?;
         driv::topsMemcpyHtoDAsync(dst, ptr, size, stream).to_result()
@@ -375,7 +375,7 @@ impl GcuDevice {
         let size = std::mem::size_of::<T>() * src.len();
         let mut ptr_host = std::ptr::null_mut();
         unsafe {
-            driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size as u64, 0).to_result()?;
+            driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size, 0).to_result()?;
             std::ptr::copy(src.as_ptr() as *mut c_void, ptr_host, size);
         }
         if self.is_async {
@@ -384,14 +384,14 @@ impl GcuDevice {
                 driv::topsMemcpyHtoDAsync(
                     dst.device_ptr(),
                     ptr_host,
-                    size as u64,
+                    size,
                     self.stream_inner().expect("unable to obtain stream"),
                 )
                 .to_result()
             }
         } else {
             unsafe {
-                driv::topsMemcpyHtoD(dst.device_ptr(), ptr_host as *mut c_void, size as u64)
+                driv::topsMemcpyHtoD(dst.device_ptr(), ptr_host as *mut c_void, size)
                     .to_result()?;
                 driv::topsHostFree(ptr_host).to_result()
             }
@@ -410,14 +410,14 @@ impl GcuDevice {
                 driv::topsMemcpyHtoDAsync(
                     dst.device_ptr(),
                     ptr_host as *mut c_void,
-                    size as u64,
+                    size,
                     self.stream_inner().expect("unable to obtain stream"),
                 )
                 .to_result()?;
             }
         } else {
             unsafe {
-                driv::topsMemcpyHtoD(dst.device_ptr(), ptr_host as *mut c_void, size as u64)
+                driv::topsMemcpyHtoD(dst.device_ptr(), ptr_host as *mut c_void, size)
                     .to_result()?;
             }
         }
@@ -437,15 +437,15 @@ impl GcuDevice {
         let mut ptr: *mut c_void = std::ptr::null_mut();
         unsafe {
             let mut ptr_host = std::ptr::null_mut();
-            driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size as u64, 0).to_result()?;
+            driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size, 0).to_result()?;
             std::ptr::copy(src.as_ptr() as *mut c_void, ptr_host, size);
             driv::topsMalloc(
                 &mut ptr as *mut *mut c_void,
-                Self::align_up(size, 4096) as u64,
+                Self::align_up(size, 4096),
             )
             .to_result()?;
 
-            driv::topsMemcpyHtoD(ptr, ptr_host as *mut c_void, size as u64).to_result()?;
+            driv::topsMemcpyHtoD(ptr, ptr_host as *mut c_void, size).to_result()?;
             driv::topsHostFree(ptr_host).to_result()?
         }
 
@@ -486,9 +486,9 @@ impl GcuDevice {
 
         unsafe {
             let mut ptr_host = std::ptr::null_mut();
-            driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size as u64, 0).to_result()?;
+            driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size, 0).to_result()?;
             std::ptr::copy(val.as_ptr() as *mut c_void, ptr_host, size);
-            driv::topsMemcpyHtoD(dst.device_ptr(), ptr_host as *mut c_void, size as u64)
+            driv::topsMemcpyHtoD(dst.device_ptr(), ptr_host as *mut c_void, size)
                 .to_result()?;
             driv::topsHostFree(ptr_host).to_result()
         }
@@ -535,7 +535,7 @@ impl GcuDevice {
                 driv::topsMemcpyDtoHAsync(
                     val.as_mut_ptr() as *mut c_void,
                     src.device_ptr(),
-                    std::mem::size_of_val(val) as u64,
+                    std::mem::size_of_val(val),
                     self.stream_inner().expect("unable to obtain stream"),
                 )
                 .to_result()?;
@@ -545,7 +545,7 @@ impl GcuDevice {
                 driv::topsMemcpyDtoH(
                     val.as_mut_ptr() as *mut c_void,
                     src.device_ptr(),
-                    std::mem::size_of_val(val) as u64,
+                    std::mem::size_of_val(val),
                 )
                 .to_result()?;
             }

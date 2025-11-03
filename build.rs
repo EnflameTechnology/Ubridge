@@ -51,11 +51,7 @@ fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
 }
 
 fn check_atomic_op(path: PathBuf) -> Result<()> {
-    let url = format!(
-        "{:}/{}",
-        std::env::var("ATOMIC_URL")?,
-        BC_FILE_NAME,
-    );
+    let url = format!("{:}/{}", std::env::var("ATOMIC_URL")?, BC_FILE_NAME,);
     let filename = path.join("atomic/".to_string() + BC_FILE_NAME);
 
     if !filename.exists() {
