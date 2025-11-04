@@ -75,16 +75,7 @@ pub unsafe fn reduce(
     stream: tops::driv::topsStream_t,
 ) -> Result<EcclStatus, EcclError> {
     lib()
-        .ecclReduce(
-            sendbuff,
-            recvbuff,
-            count as u64,
-            datatype,
-            op,
-            root,
-            comm,
-            stream,
-        )
+        .ecclReduce(sendbuff, recvbuff, count, datatype, op, root, comm, stream)
         .result()
 }
 
@@ -98,15 +89,7 @@ pub unsafe fn broadcast(
     stream: tops::driv::topsStream_t,
 ) -> Result<EcclStatus, EcclError> {
     lib()
-        .ecclBroadcast(
-            sendbuff,
-            recvbuff,
-            count as u64,
-            datatype,
-            root,
-            comm,
-            stream,
-        )
+        .ecclBroadcast(sendbuff, recvbuff, count, datatype, root, comm, stream)
         .result()
 }
 
@@ -120,7 +103,7 @@ pub unsafe fn all_reduce(
     stream: tops::driv::topsStream_t,
 ) -> Result<EcclStatus, EcclError> {
     lib()
-        .ecclAllReduce(sendbuff, recvbuff, count as u64, datatype, op, comm, stream)
+        .ecclAllReduce(sendbuff, recvbuff, count, datatype, op, comm, stream)
         .result()
 }
 
@@ -134,15 +117,7 @@ pub unsafe fn reduce_scatter(
     stream: tops::driv::topsStream_t,
 ) -> Result<EcclStatus, EcclError> {
     lib()
-        .ecclReduceScatter(
-            sendbuff,
-            recvbuff,
-            recvcount as u64,
-            datatype,
-            op,
-            comm,
-            stream,
-        )
+        .ecclReduceScatter(sendbuff, recvbuff, recvcount, datatype, op, comm, stream)
         .result()
 }
 
@@ -155,7 +130,7 @@ pub unsafe fn all_gather(
     stream: tops::driv::topsStream_t,
 ) -> Result<EcclStatus, EcclError> {
     lib()
-        .ecclAllGather(sendbuff, recvbuff, sendcount as u64, datatype, comm, stream)
+        .ecclAllGather(sendbuff, recvbuff, sendcount, datatype, comm, stream)
         .result()
 }
 
@@ -168,7 +143,7 @@ pub unsafe fn send(
     stream: tops::driv::topsStream_t,
 ) -> Result<EcclStatus, EcclError> {
     lib()
-        .ecclSend(sendbuff, count as u64, datatype, peer, comm, stream)
+        .ecclSend(sendbuff, count, datatype, peer, comm, stream)
         .result()
 }
 
@@ -181,7 +156,7 @@ pub unsafe fn recv(
     stream: tops::driv::topsStream_t,
 ) -> Result<EcclStatus, EcclError> {
     lib()
-        .ecclRecv(recvbuff, count as u64, datatype, peer, comm, stream)
+        .ecclRecv(recvbuff, count, datatype, peer, comm, stream)
         .result()
 }
 

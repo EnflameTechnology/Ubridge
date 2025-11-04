@@ -224,11 +224,8 @@ impl GcuDevice {
         } else {
             let mut ptr: *mut c_void = std::ptr::null_mut();
             unsafe {
-                driv::topsMalloc(
-                    &mut ptr as *mut *mut c_void,
-                    Self::align_up(size, 4096),
-                )
-                .to_result()?;
+                driv::topsMalloc(&mut ptr as *mut *mut c_void, Self::align_up(size, 4096))
+                    .to_result()?;
             }
             ptr as driv::topsDeviceptr_t
         };
@@ -262,12 +259,8 @@ impl GcuDevice {
             }
         } else {
             unsafe {
-                driv::topsMemsetD8(
-                    slice.device_ptr(),
-                    0,
-                    (std::mem::size_of::<T>() * len),
-                )
-                .to_result()?;
+                driv::topsMemsetD8(slice.device_ptr(), 0, (std::mem::size_of::<T>() * len))
+                    .to_result()?;
             }
         };
 
@@ -439,11 +432,8 @@ impl GcuDevice {
             let mut ptr_host = std::ptr::null_mut();
             driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size, 0).to_result()?;
             std::ptr::copy(src.as_ptr() as *mut c_void, ptr_host, size);
-            driv::topsMalloc(
-                &mut ptr as *mut *mut c_void,
-                Self::align_up(size, 4096),
-            )
-            .to_result()?;
+            driv::topsMalloc(&mut ptr as *mut *mut c_void, Self::align_up(size, 4096))
+                .to_result()?;
 
             driv::topsMemcpyHtoD(ptr, ptr_host as *mut c_void, size).to_result()?;
             driv::topsHostFree(ptr_host).to_result()?
@@ -488,8 +478,7 @@ impl GcuDevice {
             let mut ptr_host = std::ptr::null_mut();
             driv::topsHostMalloc(&mut ptr_host as *mut *mut c_void, size, 0).to_result()?;
             std::ptr::copy(val.as_ptr() as *mut c_void, ptr_host, size);
-            driv::topsMemcpyHtoD(dst.device_ptr(), ptr_host as *mut c_void, size)
-                .to_result()?;
+            driv::topsMemcpyHtoD(dst.device_ptr(), ptr_host as *mut c_void, size).to_result()?;
             driv::topsHostFree(ptr_host).to_result()
         }
     }
