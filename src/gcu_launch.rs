@@ -283,13 +283,13 @@ impl GcuFunction {
                         y: cfg.block_dim.1,
                         z: cfg.block_dim.2,
                     },
-                    dynamicSmemBytes: cfg.shared_mem_bytes as driv::size_t,
+                    dynamicSmemBytes: cfg.shared_mem_bytes as usize,
                     gridDim: dim3 {
                         x: cfg.grid_dim.0,
                         y: cfg.grid_dim.1,
                         z: cfg.grid_dim.2,
                     },
-                    localSmemBytes: 0 as driv::size_t,
+                    localSmemBytes: 0,
                     numAttrs: 1,
                     stream,
                 };
