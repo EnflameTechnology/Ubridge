@@ -200,6 +200,15 @@ impl GcuDevice {
     pub fn align_up(size: usize, aligned: usize) -> usize {
         ((size + aligned - 1) / aligned) * aligned
     }
+
+    pub fn capture_status(stream: topsStream_t) -> DeviceResult<driv::topsStreamCaptureStatus> {
+        let mut status = driv::topsStreamCaptureStatus::topsStreamCaptureStatusNone;
+        unsafe {
+            driv::topsStreamIsCapturing(stream, &mut status).to_result()?;
+        }
+        Ok(status)
+    }
+
     /// Allocates device memory and increments the reference counter of [GcuDevice].
     ///
     /// # Safety
@@ -211,16 +220,39 @@ impl GcuDevice {
         }
         let device_ptr = if self.is_async {
             let mut ptr: *mut c_void = std::ptr::null_mut();
-            unsafe {
-                driv::topsMallocAsync(
-                    &mut ptr as *mut *mut c_void,
-                    Self::align_up(size, 4096),
-                    self.stream_inner().expect("unable to obtain stream"),
-                    0,
-                )
-                .to_result()?;
+            if cfg!(feature = "graph")
+                && Self::capture_status(self.stream_inner().expect("unable to obtain stream"))
+                    == Ok(driv::topsStreamCaptureStatus::topsStreamCaptureStatusActive)
+            {
+                use driv::topsMemPool_t;
+                use std::mem::MaybeUninit;
+                let mut pool: topsMemPool_t = std::ptr::null_mut();
+                unsafe {
+                    driv::topsDeviceGetDefaultMemPool(&mut pool, self.id as i32).to_result()?;
+                }
+                let mut dev_ptr = MaybeUninit::uninit();
+                unsafe {
+                    driv::topsMallocFromPoolAsync(
+                        dev_ptr.as_mut_ptr(),
+                        Self::align_up(size, 4096),
+                        pool,
+                        self.stream_inner().expect("unable to obtain stream"),
+                    )
+                    .to_result()?;
+                    dev_ptr.assume_init() as driv::topsDeviceptr_t
+                }
+            } else {
+                unsafe {
+                    driv::topsMallocAsync(
+                        &mut ptr as *mut *mut c_void,
+                        Self::align_up(size, 4096),
+                        self.stream_inner().expect("unable to obtain stream"),
+                        0,
+                    )
+                    .to_result()?;
+                }
+                ptr as driv::topsDeviceptr_t
             }
-            ptr as driv::topsDeviceptr_t
         } else {
             let mut ptr: *mut c_void = std::ptr::null_mut();
             unsafe {
@@ -252,14 +284,14 @@ impl GcuDevice {
                 driv::topsMemsetD8Async(
                     slice.device_ptr(),
                     0,
-                    (std::mem::size_of::<T>() * len),
+                    std::mem::size_of::<T>() * len,
                     self.stream_inner().expect("unable to obtain stream"),
                 )
                 .to_result()?;
             }
         } else {
             unsafe {
-                driv::topsMemsetD8(slice.device_ptr(), 0, (std::mem::size_of::<T>() * len))
+                driv::topsMemsetD8(slice.device_ptr(), 0, std::mem::size_of::<T>() * len)
                     .to_result()?;
             }
         };
@@ -272,19 +304,24 @@ impl GcuDevice {
     /// # Safety
     /// 1. `T` is marked as [ValidAsZeroBits], so the device memory is valid to use
     /// 2. Self is [`Arc<Self>`], and this method increments the rc for self
-    // pub fn memset_zeros<T: DeviceCopy>(
-    //     self: &Arc<Self>,
-    //     dst: &mut Dst,
-    // ) -> DeviceResult<()> {
-    //     self.bind_to_thread()?;
-    //     if self.is_async {
-    //         unsafe {
-    //             result::memset_d8_async(*dst.device_ptr_mut(), 0, dst.num_bytes(), self.stream)
-    //         }
-    //     } else {
-    //         unsafe { result::memset_d8_sync(*dst.device_ptr_mut(), 0, dst.num_bytes()) }
-    //     }
-    // }
+    pub fn memset_zeros<T: DeviceCopy, Dst: DevicePtr<T>>(
+        self: &Arc<Self>,
+        dst: &mut Dst,
+    ) -> DeviceResult<()> {
+        if self.is_async {
+            unsafe {
+                driv::topsMemsetD8Async(
+                    dst.device_ptr(),
+                    0,
+                    dst.num_bytes(),
+                    self.stream_inner().expect("unable to obtain stream"),
+                )
+                .to_result()
+            }
+        } else {
+            unsafe { driv::topsMemsetD8(dst.device_ptr(), 0, dst.num_bytes()).to_result() }
+        }
+    }
 
     /// Device to device copy (safe version of [result::memcpy_dtod_async]).
     ///
@@ -308,7 +345,7 @@ impl GcuDevice {
                 driv::topsMemcpyDtoDAsync(
                     dst.device_ptr(),
                     src.device_ptr(),
-                    (src.len() * std::mem::size_of::<T>()),
+                    src.len() * std::mem::size_of::<T>(),
                     self.stream_inner().expect("unable to obtain stream"),
                 )
                 .to_result()
@@ -318,7 +355,7 @@ impl GcuDevice {
                 driv::topsMemcpyDtoD(
                     dst.device_ptr(),
                     src.device_ptr(),
-                    (src.len() * std::mem::size_of::<T>()),
+                    src.len() * std::mem::size_of::<T>(),
                 )
                 .to_result()
             }
@@ -373,7 +410,15 @@ impl GcuDevice {
         }
         if self.is_async {
             unsafe {
-                dst.host_buf_ptr = Some(ptr_host);
+                dst.host_buf_ptr = if cfg!(feature = "graph")
+                    && Self::capture_status(self.stream_inner().expect("unable to obtain stream"))
+                        == Ok(driv::topsStreamCaptureStatus::topsStreamCaptureStatusActive)
+                {
+                    None // do not drop during graph capture and replay
+                } else {
+                    Some(ptr_host)
+                };
+
                 driv::topsMemcpyHtoDAsync(
                     dst.device_ptr(),
                     ptr_host,

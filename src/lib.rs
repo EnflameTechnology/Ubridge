@@ -40,7 +40,8 @@ pub mod prelude {
     pub use crate::gcu_slice::*;
     pub use crate::gemm_tuner::*;
     pub use crate::tests::*;
-
+    #[cfg(feature = "tops_backend")]
+    pub use tops_backend as tops;
     #[cfg(feature = "tops_backend")]
     pub use tops_backend::memory::CopyDestination;
     #[cfg(feature = "tops_backend")]

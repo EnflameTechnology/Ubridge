@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_long, c_void};
+use core::ffi::{c_int, c_void};
 use half::{bf16, f16};
 
 extern "C" {

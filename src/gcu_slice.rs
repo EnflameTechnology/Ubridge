@@ -74,12 +74,22 @@ impl<T: DeviceCopy> Drop for GcuSlice<T> {
                 let ptr = std::mem::replace(&mut self.buffer, std::ptr::null_mut());
                 unsafe {
                     if self.async_free {
-                        driv::topsFreeAsync(
-                            ptr,
-                            self.device
-                                .stream_inner()
-                                .expect("unable to obtain stream!"),
-                        );
+                        if cfg!(feature = "graph")
+                            && GcuDevice::capture_status(
+                                self.device
+                                    .stream_inner()
+                                    .expect("unable to obtain stream!"),
+                            ) == Ok(driv::topsStreamCaptureStatus::topsStreamCaptureStatusActive)
+                        {
+                            // println!("skip free during graph capture!");
+                        } else {
+                            driv::topsFreeAsync(
+                                ptr,
+                                self.device
+                                    .stream_inner()
+                                    .expect("unable to obtain stream!"),
+                            );
+                        }
                     } else {
                         driv::topsFree(ptr);
                     }
