@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 const BC_FILE_NAME: &str = "acore.bc";
 
-const KERNELS: [&str; 21] = [
+const KERNELS: [&str; 24] = [
     "unary",
     "fill",
     "binary",
@@ -26,6 +26,9 @@ const KERNELS: [&str; 21] = [
     "moe_host",
     "dequant_host",
     "mask_host",
+    "moe_align_host",
+    "fused_moe_host",
+    "topk_softmax_host",
 ];
 
 fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
@@ -140,6 +143,7 @@ fn main() -> Result<()> {
                     .arg(format!("-arch=gcu{compute_cap}"))
                     .arg("-O3")
                     .arg("-c")
+                    .arg("-std=c++17")
                     .arg("-fPIC")
                     .arg("-ltops")
                     .arg("-Xclang")
@@ -192,6 +196,7 @@ fn main() -> Result<()> {
                     .arg(kernel_file)
                     .arg(format!("-arch=gcu{compute_cap}"))
                     .arg("-O3")
+                    .arg("-std=c++17")
                     .arg("-fPIC")
                     .arg("-ltops")
                     .arg("-Xclang")

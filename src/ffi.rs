@@ -139,4 +139,93 @@ extern "C" {
         num_experts: c_int,
         stream: *const c_void,
     );
+
+    pub fn moe_align_block_size(
+        sorted_ids: *mut i32,
+        experts_ids: *mut i32,
+        num_tokens_post_pad: *mut i32,
+        topk_ids: *const i32,
+        real_token_num: *const i32,
+        expert_map: *const i32,
+        num_experts: c_int,
+        block_size: c_int,
+        token_num: c_int,
+        topk: c_int,
+        stream: *const c_void,
+    );
+
+    pub fn invoke_fused_moe_f16(
+        c: *mut f16,
+        a: *mut f16,
+        b: *mut f16,
+        bias: *mut f16,
+        topk_weights: *mut f32,
+        sorted_ids: *mut i32,
+        experts_ids: *mut i32,
+        num_tokens_post_pad: *mut i32,
+        m: c_int,
+        k: c_int,
+        n: c_int,
+        e: c_int,
+        topk_ids_size: c_int,
+        top_k: c_int,
+        block_size: c_int,
+        mul_routed_weight: c_int,
+        bias_flag: c_int,
+        stream: *const c_void,
+    );
+
+    pub fn invoke_fused_moe_bf16(
+        c: *mut bf16,
+        a: *mut bf16,
+        b: *mut bf16,
+        bias: *mut bf16,
+        topk_weights: *mut f32,
+        sorted_ids: *mut i32,
+        experts_ids: *mut i32,
+        num_tokens_post_pad: *mut i32,
+        m: c_int,
+        k: c_int,
+        n: c_int,
+        e: c_int,
+        topk_ids_size: c_int,
+        top_k: c_int,
+        block_size: c_int,
+        mul_routed_weight: c_int,
+        bias_flag: c_int,
+        stream: *const c_void,
+    );
+
+    pub fn topk_softmax_f32(
+        input: *mut f32,
+        output: *mut f32,
+        index: *mut i32,
+        num_tokens: c_int,
+        num_experts: c_int,
+        topk: c_int,
+        norm_topk_prob: c_int,
+        stream: *const c_void,
+    );
+
+    pub fn topk_softmax_f16(
+        input: *mut f16,
+        output: *mut f16,
+        index: *mut i32,
+        num_tokens: c_int,
+        num_experts: c_int,
+        topk: c_int,
+        norm_topk_prob: c_int,
+        stream: *const c_void,
+    );
+
+    pub fn topk_softmax_bf16(
+        input: *mut bf16,
+        output: *mut bf16,
+        index: *mut i32,
+        num_tokens: c_int,
+        num_experts: c_int,
+        topk: c_int,
+        norm_topk_prob: c_int,
+        stream: *const c_void,
+    );
 }
