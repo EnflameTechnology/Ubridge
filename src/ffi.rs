@@ -1,6 +1,41 @@
 use core::ffi::{c_int, c_void};
 use half::{bf16, f16};
 
+#[repr(C)]
+pub struct SelectiveScanParas {
+    pub b: i64,
+    pub h: i64,
+    pub h_align: i64,
+    pub l: i64,
+    pub d: i64,
+    pub l2_mem_used: i64,
+    pub subk_size: i64,
+    pub l1_mem_used: i64,
+    pub data_type: c_int,
+    pub bpe: c_int,
+    pub has_bias: bool,
+    pub has_softplus: bool,
+    pub has_pre_state: bool,
+    pub return_last_state: bool,
+}
+
+#[repr(C)]
+pub struct CausalConv1dParams {
+    pub dim: c_int,
+    pub batch: c_int,
+    pub num_cache_lines: c_int,
+    pub kernel_width: c_int,
+    pub state_len: c_int,
+    pub stride_x_token: c_int,
+    pub stride_w_dim: c_int,
+    pub stride_istate_seq: c_int,
+    pub stride_istate_token: c_int,
+    pub pad_slot_id: c_int,
+    pub has_bias: c_int,
+    pub silu_activation: c_int,
+    pub block_n: c_int,
+}
+
 extern "C" {
     pub fn topk_f32(
         input: *mut f32,
@@ -226,6 +261,51 @@ extern "C" {
         num_experts: c_int,
         topk: c_int,
         norm_topk_prob: c_int,
+        stream: *const c_void,
+    );
+
+    pub fn causal_conv1d_fwd_f32(
+        x_ptr: *mut f32,
+        w_ptr: *mut f32,
+        bias_ptr: *mut f32,
+        conv_states_ptr: *mut f32,
+        cache_indices_ptr: *mut i32,
+        has_initial_states_ptr: *mut i8,
+        query_start_loc_ptr: *mut i32,
+        o_ptr: *mut f32,
+        params: *mut CausalConv1dParams,
+        num_blocks: u32,
+        dim_blocks: u32,
+        stream: *const c_void,
+    );
+
+    pub fn causal_conv1d_fwd_f16(
+        x_ptr: *mut f16,
+        w_ptr: *mut f16,
+        bias_ptr: *mut f16,
+        conv_states_ptr: *mut f16,
+        cache_indices_ptr: *mut i32,
+        has_initial_states_ptr: *mut i8,
+        query_start_loc_ptr: *mut i32,
+        o_ptr: *mut f16,
+        params: *mut CausalConv1dParams,
+        num_blocks: u32,
+        dim_blocks: u32,
+        stream: *const c_void,
+    );
+
+    pub fn causal_conv1d_fwd_bf16(
+        x_ptr: *mut bf16,
+        w_ptr: *mut bf16,
+        bias_ptr: *mut bf16,
+        conv_states_ptr: *mut bf16,
+        cache_indices_ptr: *mut i32,
+        has_initial_states_ptr: *mut i8,
+        query_start_loc_ptr: *mut i32,
+        o_ptr: *mut bf16,
+        params: *mut CausalConv1dParams,
+        num_blocks: u32,
+        dim_blocks: u32,
         stream: *const c_void,
     );
 }
