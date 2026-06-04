@@ -44,6 +44,7 @@ fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
     command_tar.arg("-C");
     command_tar.arg(&path);
 
+    std::fs::create_dir_all(path)?;
     let output = command_tar
         .spawn()
         .context(format!("failed spawning tar"))?
