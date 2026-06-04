@@ -34,4 +34,5 @@ gcu = ["tops_backend"]
 eccl = ["tops_backend/eccl"]
 scorpio = ["tops_backend"]
 graph = []
+aten = []
 

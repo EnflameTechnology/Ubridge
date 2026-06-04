@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 const BC_FILE_NAME: &str = "acore.bc";
 
-const KERNELS: [&str; 25] = [
+const KERNELS: [&str; 30] = [
     "unary",
     "fill",
     "binary",
@@ -30,6 +30,11 @@ const KERNELS: [&str; 25] = [
     "fused_moe_host",
     "topk_softmax_host",
     "causal_conv1d_host",
+    "gdn_gating_host",
+    "gdn_l2norm_host",
+    "gdn_rmsnorm_host",
+    "gdn_recurrence_host",
+    "gdn_scatter_host",
 ];
 
 fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
@@ -273,6 +278,89 @@ fn main() -> Result<()> {
             Ok(())
         })
         .collect::<Result<()>>()?;
+
+    // Build topsaten C++ wrappers (regular C++ compiled with g++, linked
+    // against libtopsaten.so).
+    // MoE wrapper is always built; ops wrapper only with "aten" feature.
+    {
+        let topsaten_include =
+            std::env::var("TOPSATEN_HOME").unwrap_or_else(|_| "/usr".to_string());
+        let topsaten_include_path = format!("{}/include/gcu", topsaten_include);
+
+        let mut wrappers: Vec<(&str, &str)> =
+            vec![("topsaten_moe_wrapper", "libtopsaten_moe_wrapper")];
+        #[cfg(feature = "aten")]
+        wrappers.push(("topsaten_ops_wrapper", "libtopsaten_ops_wrapper"));
+
+        for (src_name, lib_name) in wrappers {
+            let wrapper_src = absolute_kernel_dir.join(format!("{}.cpp", src_name));
+            let wrapper_obj = build_dir.join(format!("{}.o", src_name));
+            let wrapper_lib = build_dir.join(format!("{}.a", lib_name));
+            println!("cargo:rerun-if-changed=kernels/{}.cpp", src_name);
+
+            let should_compile = if wrapper_lib.exists() {
+                let in_mod = wrapper_src.metadata().unwrap().modified().unwrap();
+                let out_mod = wrapper_lib.metadata().unwrap().modified().unwrap();
+                in_mod.duration_since(out_mod).is_ok()
+            } else {
+                true
+            };
+
+            if should_compile {
+                let mut cmd = std::process::Command::new("g++");
+                cmd.arg("-c")
+                    .arg("-std=c++17")
+                    .arg("-O2")
+                    .arg("-fPIC")
+                    .arg("-DNDEBUG")
+                    .arg(format!("-I{}", topsaten_include_path))
+                    .arg("-I/opt/tops/include")
+                    .arg("-o")
+                    .arg(wrapper_obj.to_str().unwrap())
+                    .arg(wrapper_src.to_str().unwrap());
+
+                let output = cmd
+                    .spawn()
+                    .context(format!("failed spawning g++ for {}", src_name))?
+                    .wait_with_output()?;
+                if !output.status.success() {
+                    anyhow::bail!(
+                        "g++ error compiling {}:\n# stdout\n{}\n# stderr\n{}",
+                        src_name,
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+
+                let mut ar_cmd = std::process::Command::new("ar");
+                ar_cmd
+                    .arg("-crv")
+                    .arg(wrapper_lib.to_str().unwrap())
+                    .arg(wrapper_obj.to_str().unwrap());
+
+                let ar_output = ar_cmd
+                    .spawn()
+                    .context(format!("failed spawning ar for {}", src_name))?
+                    .wait_with_output()?;
+                if !ar_output.status.success() {
+                    anyhow::bail!(
+                        "ar error creating {}.a:\n# stderr\n{}",
+                        lib_name,
+                        String::from_utf8_lossy(&ar_output.stderr)
+                    );
+                }
+            }
+
+            println!("cargo:rustc-link-search={}", build_dir.display());
+            println!("cargo:rustc-link-lib=static={}", &lib_name[3..]); // strip "lib" prefix
+        }
+
+        let topsaten_lib_dir =
+            std::env::var("TOPSATEN_HOME").unwrap_or_else(|_| "/usr".to_string());
+        println!("cargo:rustc-link-search=native={}/lib", topsaten_lib_dir);
+        println!("cargo:rustc-link-lib=dylib=topsaten");
+        println!("cargo:rustc-link-lib=dylib=stdc++");
+    }
 
     Ok(())
 }
