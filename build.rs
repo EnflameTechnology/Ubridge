@@ -59,9 +59,13 @@ fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn check_atomic_op(path: PathBuf) -> Result<()> {
+fn check_atomic_op(path: PathBuf, kernel_dir: PathBuf) -> Result<()> {
     let url = format!("{:}/{}", std::env::var("ATOMIC_URL")?, BC_FILE_NAME,);
-    let filename = path.join("atomic/".to_string() + BC_FILE_NAME);
+    let filename = if kernel_dir.join(BC_FILE_NAME).exists() {
+        kernel_dir.join(BC_FILE_NAME)
+    } else {
+        path.join("atomic/".to_string() + BC_FILE_NAME)
+    };
 
     if !filename.exists() {
         let _ = std::fs::create_dir(path.join("atomic/"));
@@ -140,7 +144,7 @@ fn main() -> Result<()> {
             if should_compile {
                 if first_atomic_check {
                     first_atomic_check = false;
-                    check_atomic_op(absolute_kernel_dir.clone())?;
+                    check_atomic_op(absolute_kernel_dir.clone(), kernel_out_dir.clone())?;
                 }
                 let mut command = std::process::Command::new(compiler);
                 if is_host_kernel {
