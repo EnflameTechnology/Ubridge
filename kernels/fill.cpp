@@ -48,11 +48,13 @@ __device__ __forceinline__ void init_tid_off_arr(int dim_size, int *tid_off_arr,
 }
 
 template <typename T>
-__device__ __forceinline__ void fill__Kernel(T *output, int total_size, T value, int bpe) {
+__device__ __forceinline__ void fill__Kernel(T *output, int total_size, T value) {
   int thread_num = GetThreadNum();
   int thread_id = GetThreadIdx();
   tops_dte_ctx_t ctx;
   tops::dte_scope s(ctx);
+
+  if (total_size <= 0) return;
 
   int nBlocks = (total_size + tile_size - 1) / tile_size;
   int tid_off_arr[24] = {0};
@@ -61,8 +63,7 @@ __device__ __forceinline__ void fill__Kernel(T *output, int total_size, T value,
   int off_end = tid_off_arr[thread_id];
 
   for (int i = off_start; i < off_end; i++) {
-    int dsize = i != tid_off_arr[thread_num - 2] ? tile_size
-                                                 : total_size - i * tile_size;
+    int dsize = (i == nBlocks - 1) ? (total_size - i * tile_size) : tile_size;
     tops::mdspan output_hbm(tops::Global, output + i * tile_size, dsize);
     tops::memset(ctx, output_hbm, value);
   }
@@ -70,76 +71,76 @@ __device__ __forceinline__ void fill__Kernel(T *output, int total_size, T value,
 
 
 extern "C"  __global__ void fill_f32(float *output, int total_size,
-                                      float value, int bpe){
+                                      float value){
 
-    return fill__Kernel<float>(output, total_size, value, bpe);
+    return fill__Kernel<float>(output, total_size, value);
 }
 
 extern "C"  __global__ void fill_f16(tops::half *output, int total_size,
-                                      tops::half value, int bpe){
+                                      tops::half value){
 
-    return fill__Kernel<tops::half>(output, total_size, value, bpe);
+    return fill__Kernel<tops::half>(output, total_size, value);
 }
 
 extern "C"  __global__ void fill_bf16(tops::bfloat *output, int total_size,
-                                      tops::bfloat value, int bpe){
+                                      tops::bfloat value){
 
-    return fill__Kernel<tops::bfloat>(output, total_size, value, bpe);
+    return fill__Kernel<tops::bfloat>(output, total_size, value);
 }
 
 extern "C"  __global__ void fill_f64(double *output, int total_size,
-                                      double value, int bpe){
+                                      double value){
 
-    return fill__Kernel<double>(output, total_size, value, bpe);
+    return fill__Kernel<double>(output, total_size, value);
 }
 
 extern "C"  __global__ void fill_i32(int32_t *output, int total_size,
-                                      int32_t value, int bpe){
+                                      int32_t value){
 
-    return fill__Kernel<int32_t>(output, total_size, value, bpe);
+    return fill__Kernel<int32_t>(output, total_size, value);
 }
 
 
 extern "C"  __global__ void fill_u32(uint32_t *output, int total_size,
-                                      uint32_t value, int bpe){
+                                      uint32_t value){
 
-    return fill__Kernel<uint32_t>(output, total_size, value, bpe);
+    return fill__Kernel<uint32_t>(output, total_size, value);
 }
 
 extern "C"  __global__ void fill_i16(int16_t *output, int total_size,
-                                      int16_t value, int bpe){
+                                      int16_t value){
 
-    return fill__Kernel<int16_t>(output, total_size, value, bpe);
+    return fill__Kernel<int16_t>(output, total_size, value);
 }
 
-extern "C"  __global__ void fill_bool(bool *output, int total_size, bool value,
-                                      int bpe){
+extern "C"  __global__ void fill_bool(bool *output, int total_size,
+                                      bool value){
 
-    return fill__Kernel<bool>(output, total_size, value, bpe);
+    return fill__Kernel<bool>(output, total_size, value);
 }
 
 extern "C"  __global__ void fill_i8(int8_t *output, int total_size,
-                                      int8_t value, int bpe){
+                                      int8_t value){
 
-    return fill__Kernel<int8_t>(output, total_size, value, bpe);
+    return fill__Kernel<int8_t>(output, total_size, value);
 }
 
 extern "C"  __global__ void fill_u8(uint8_t *output, int total_size,
-                                      uint8_t value, int bpe){
+                                      uint8_t value){
 
-    return fill__Kernel<uint8_t>(output, total_size, value, bpe);
+    return fill__Kernel<uint8_t>(output, total_size, value);
 }
 
 extern "C"  __global__ void fill_u16(uint16_t *output, int total_size,
-                                      uint16_t value, int bpe){
+                                      uint16_t value){
 
-    return fill__Kernel<uint16_t>(output, total_size, value, bpe);
+    return fill__Kernel<uint16_t>(output, total_size, value);
 }
 
 extern "C"  __global__ void fill_i64(int64_t *output, int total_size,
-                                      int64_t value, int bpe){
+                                      int64_t value){
 
-    return fill__Kernel<int64_t>(output, total_size, value, bpe);
+    return fill__Kernel<int64_t>(output, total_size, value);
 }
 
 int main() {}

@@ -252,7 +252,7 @@ __global__ void causal_conv1d_fwd_kernel(
     T* __restrict__ w_ptr,
     T* __restrict__ bias_ptr,
     T* __restrict__ conv_states_ptr,
-    int32_t* __restrict__ cache_indices_ptr,
+    int64_t* __restrict__ cache_indices_ptr,
     int8_t* __restrict__ has_initial_states_ptr,
     int32_t* __restrict__ query_start_loc_ptr,
     T* __restrict__ o_ptr,
@@ -290,7 +290,7 @@ __global__ void causal_conv1d_fwd_kernel(
   constexpr int TILE_T = 256;
   constexpr int PP = 2;
 
-  __local__ __valigned__ int32_t l_ci[MAX_BATCH];
+  __local__ __valigned__ int64_t l_ci[MAX_BATCH];
   __local__ __valigned__ int32_t l_qsl[MAX_BATCH + 1];
   __local__ __valigned__ int8_t l_his[MAX_BATCH];
 
@@ -348,8 +348,8 @@ __global__ void causal_conv1d_fwd_kernel(
     __builtin_assume(actual_n > 0);
     __builtin_assume(actual_n <= LOCAL_BLOCK_N);
 
-    const int32_t cidx = l_ci[seq_idx];
-    if (cidx == pad_slot_id) continue;
+    const int64_t cidx = l_ci[seq_idx];
+    if (cidx == (int64_t)pad_slot_id) continue;
 
     const int32_t seq_start = l_qsl[seq_idx];
     const int seqlen = l_qsl[seq_idx + 1] - seq_start;
@@ -373,7 +373,7 @@ __global__ void causal_conv1d_fwd_kernel(
       dte_zero<T>(ctx_scalar, col_slots + k * LOCAL_BLOCK_N, LOCAL_BLOCK_N);
     if (has_init) {
       T* cs_2d = conv_states_ptr +
-                 static_cast<int64_t>(cidx) * stride_istate_seq;
+                 cidx * stride_istate_seq;
       for (int k = 0; k < state_len; k++) {
         T* g_row = cs_2d + static_cast<int64_t>(k) * stride_istate_token +
                    feat_start;
@@ -550,7 +550,7 @@ __global__ void causal_conv1d_fwd_kernel(
 
     // Write back conv_states
     T* cs_out_2d = conv_states_ptr +
-                   static_cast<int64_t>(cidx) * stride_istate_seq;
+                   cidx * stride_istate_seq;
 
     if (state_len <= seqlen) {
       for (int k = 0; k < state_len; k++) {
@@ -569,7 +569,7 @@ __global__ void causal_conv1d_fwd_kernel(
     } else {
       if (has_init) {
         T* cs_in_2d = conv_states_ptr +
-                      static_cast<int64_t>(cidx) * stride_istate_seq;
+                      cidx * stride_istate_seq;
         for (int k = 0; k < state_len; k++) {
           if (k < state_len - seqlen) {
             T* cs_src = cs_in_2d +
@@ -611,18 +611,18 @@ __global__ void causal_conv1d_fwd_kernel(
 }
 
 template __global__ void causal_conv1d_fwd_kernel<float>(
-    float*, float*, float*, float*, int32_t*, int8_t*, int32_t*, float*,
+    float*, float*, float*, float*, int64_t*, int8_t*, int32_t*, float*,
     CausalConv1dParams);
 template __global__ void causal_conv1d_fwd_kernel<tops::half>(
-    tops::half*, tops::half*, tops::half*, tops::half*, int32_t*, int8_t*,
+    tops::half*, tops::half*, tops::half*, tops::half*, int64_t*, int8_t*,
     int32_t*, tops::half*, CausalConv1dParams);
 template __global__ void causal_conv1d_fwd_kernel<tops::bfloat>(
-    tops::bfloat*, tops::bfloat*, tops::bfloat*, tops::bfloat*, int32_t*,
+    tops::bfloat*, tops::bfloat*, tops::bfloat*, tops::bfloat*, int64_t*,
     int8_t*, int32_t*, tops::bfloat*, CausalConv1dParams);
 
 extern "C" void causal_conv1d_fwd_f32(
     float* x_ptr, float* w_ptr, float* bias_ptr, float* conv_states_ptr,
-    int32_t* cache_indices_ptr, int8_t* has_initial_states_ptr,
+    int64_t* cache_indices_ptr, int8_t* has_initial_states_ptr,
     int32_t* query_start_loc_ptr, float* o_ptr, CausalConv1dParams* params,
     unsigned int num_blocks, unsigned int dim_blocks, void* stream_) {
   topsStream_t stream = reinterpret_cast<topsStream_t>(stream_);
@@ -634,7 +634,7 @@ extern "C" void causal_conv1d_fwd_f32(
 
 extern "C" void causal_conv1d_fwd_f16(
     __fp16* x_ptr, __fp16* w_ptr, __fp16* bias_ptr, __fp16* conv_states_ptr,
-    int32_t* cache_indices_ptr, int8_t* has_initial_states_ptr,
+    int64_t* cache_indices_ptr, int8_t* has_initial_states_ptr,
     int32_t* query_start_loc_ptr, __fp16* o_ptr, CausalConv1dParams* params,
     unsigned int num_blocks, unsigned int dim_blocks, void* stream_) {
   topsStream_t stream = reinterpret_cast<topsStream_t>(stream_);
@@ -650,7 +650,7 @@ extern "C" void causal_conv1d_fwd_f16(
 
 extern "C" void causal_conv1d_fwd_bf16(
     __bf16* x_ptr, __bf16* w_ptr, __bf16* bias_ptr, __bf16* conv_states_ptr,
-    int32_t* cache_indices_ptr, int8_t* has_initial_states_ptr,
+    int64_t* cache_indices_ptr, int8_t* has_initial_states_ptr,
     int32_t* query_start_loc_ptr, __bf16* o_ptr, CausalConv1dParams* params,
     unsigned int num_blocks, unsigned int dim_blocks, void* stream_) {
   topsStream_t stream = reinterpret_cast<topsStream_t>(stream_);

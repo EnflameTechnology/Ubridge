@@ -190,4 +190,114 @@ CAST_OP(u_int32_t, u_int16_t, cast_u32_u16)
 CAST_OP(u_int32_t, float, cast_u32_f32)
 CAST_OP(u_int32_t, __fp16, cast_u32_f16)
 CAST_OP(u_int32_t, __bf16, cast_u32_bf16)
+
+// i64 cast kernels (truncation)
+extern "C" __global__ void cast_i64_u32(
+    const size_t numel,
+    int64_t *inp,
+    u_int32_t *out)
+{
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx);
+    int thread_id = GetThreadIdx();
+    int MAX_THREADS = GetThreadNum();
+
+    constexpr int TILE = AlignDown(((VDMEM_VALID_SIZE) / 16), 256);
+    __local__ __valigned__ int64_t buffer_in[TILE];
+    __local__ __valigned__ u_int32_t buffer_out[TILE];
+
+    int N = numel;
+    int THREAD_STEP = 1;
+    int thread_step = 1;
+    GetThreadStep(N, thread_step, THREAD_STEP);
+
+    for (int i = 0; i < thread_step; i += TILE) {
+        int bufsize = (i + TILE < thread_step) ? TILE : thread_step - i;
+        int offset = thread_id * THREAD_STEP + i;
+        tops::memcpy(ctx,
+            tops::mdspan(tops::Private, buffer_in, bufsize),
+            tops::mdspan(tops::Global, inp + offset, bufsize));
+
+        for (int j = 0; j < bufsize; j++) {
+            buffer_out[j] = static_cast<u_int32_t>(buffer_in[j]);
+        }
+
+        tops::memcpy(ctx,
+            tops::mdspan(tops::Global, out + offset, bufsize),
+            tops::mdspan(tops::Private, buffer_out, bufsize));
+    }
+}
+
+extern "C" __global__ void cast_i64_i32(
+    const size_t numel,
+    int64_t *inp,
+    int32_t *out)
+{
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx);
+    int thread_id = GetThreadIdx();
+    int MAX_THREADS = GetThreadNum();
+
+    constexpr int TILE = AlignDown(((VDMEM_VALID_SIZE) / 16), 256);
+    __local__ __valigned__ int64_t buffer_in[TILE];
+    __local__ __valigned__ int32_t buffer_out[TILE];
+
+    int N = numel;
+    int THREAD_STEP = 1;
+    int thread_step = 1;
+    GetThreadStep(N, thread_step, THREAD_STEP);
+
+    for (int i = 0; i < thread_step; i += TILE) {
+        int bufsize = (i + TILE < thread_step) ? TILE : thread_step - i;
+        int offset = thread_id * THREAD_STEP + i;
+        tops::memcpy(ctx,
+            tops::mdspan(tops::Private, buffer_in, bufsize),
+            tops::mdspan(tops::Global, inp + offset, bufsize));
+
+        for (int j = 0; j < bufsize; j++) {
+            buffer_out[j] = static_cast<int32_t>(buffer_in[j]);
+        }
+
+        tops::memcpy(ctx,
+            tops::mdspan(tops::Global, out + offset, bufsize),
+            tops::mdspan(tops::Private, buffer_out, bufsize));
+    }
+}
+
+extern "C" __global__ void cast_i64_f32(
+    const size_t numel,
+    int64_t *inp,
+    float *out)
+{
+    tops_dte_ctx_t ctx;
+    tops::dte_scope s(ctx);
+    int thread_id = GetThreadIdx();
+    int MAX_THREADS = GetThreadNum();
+
+    constexpr int TILE = AlignDown(((VDMEM_VALID_SIZE) / 16), 256);
+    __local__ __valigned__ int64_t buffer_in[TILE];
+    __local__ __valigned__ float buffer_out[TILE];
+
+    int N = numel;
+    int THREAD_STEP = 1;
+    int thread_step = 1;
+    GetThreadStep(N, thread_step, THREAD_STEP);
+
+    for (int i = 0; i < thread_step; i += TILE) {
+        int bufsize = (i + TILE < thread_step) ? TILE : thread_step - i;
+        int offset = thread_id * THREAD_STEP + i;
+        tops::memcpy(ctx,
+            tops::mdspan(tops::Private, buffer_in, bufsize),
+            tops::mdspan(tops::Global, inp + offset, bufsize));
+
+        for (int j = 0; j < bufsize; j++) {
+            buffer_out[j] = static_cast<float>(buffer_in[j]);
+        }
+
+        tops::memcpy(ctx,
+            tops::mdspan(tops::Global, out + offset, bufsize),
+            tops::mdspan(tops::Private, buffer_out, bufsize));
+    }
+}
+
 int main() {}
