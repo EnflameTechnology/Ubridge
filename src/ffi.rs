@@ -324,10 +324,10 @@ extern "C" {
         stream: *const c_void,
     );
     pub fn gdn_fused_gating_f16(
-        a_log: *const f16,
+        a_log: *const f32,
         a: *const f16,
         b: *const f16,
-        dt_bias: *const f16,
+        dt_bias: *const f32,
         g: *mut f16,
         beta: *mut f16,
         total: c_int,
@@ -337,10 +337,10 @@ extern "C" {
         stream: *const c_void,
     );
     pub fn gdn_fused_gating_bf16(
-        a_log: *const bf16,
+        a_log: *const f32,
         a: *const bf16,
         b: *const bf16,
-        dt_bias: *const bf16,
+        dt_bias: *const f32,
         g: *mut bf16,
         beta: *mut bf16,
         total: c_int,
@@ -402,8 +402,8 @@ extern "C" {
     pub fn gdn_gated_rmsnorm_f16(
         x: *const f16,
         z: *const f16,
-        gamma: *const f16,
-        bias: *const f16,
+        gamma: *const f32,
+        bias: *const f32,
         out: *mut f16,
         rows: c_int,
         value_dim: c_int,
@@ -418,8 +418,8 @@ extern "C" {
     pub fn gdn_gated_rmsnorm_bf16(
         x: *const bf16,
         z: *const bf16,
-        gamma: *const bf16,
-        bias: *const bf16,
+        gamma: *const f32,
+        bias: *const f32,
         out: *mut bf16,
         rows: c_int,
         value_dim: c_int,

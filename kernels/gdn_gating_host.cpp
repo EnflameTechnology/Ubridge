@@ -40,10 +40,10 @@ template <> struct accvector<__fp16>       { using VT = __vector2 float; };
 
 template <typename T>
 __global__ void fused_gdn_gating_kernel(
-    const T* __restrict__ a_log,
+    const float* __restrict__ a_log,
     const T* __restrict__ a,
     const T* __restrict__ b,
-    const T* __restrict__ dt_bias,
+    const float* __restrict__ dt_bias,
     T* __restrict__ g_out,
     T* __restrict__ beta_out,
     int total_elements,
@@ -55,24 +55,24 @@ __global__ void fused_gdn_gating_kernel(
   constexpr int MAX_HEADS = 256;
   __local__ __valigned__ T l_a[TILE];
   __local__ __valigned__ T l_b[TILE];
-  __local__ __valigned__ T l_alog[TILE];
-  __local__ __valigned__ T l_dt[TILE];
+  __local__ __valigned__ float l_alog[TILE];
+  __local__ __valigned__ float l_dt[TILE];
   __local__ __valigned__ T l_g[TILE];
   __local__ __valigned__ T l_beta[TILE];
 
-  __local__ __valigned__ T l_head_alog[MAX_HEADS];
-  __local__ __valigned__ T l_head_dt[MAX_HEADS];
+  __local__ __valigned__ float l_head_alog[MAX_HEADS];
+  __local__ __valigned__ float l_head_dt[MAX_HEADS];
 
   tops::private_dte ctx;
   ctx.init();
 
   {
     int nh = num_heads < MAX_HEADS ? num_heads : MAX_HEADS;
-    tops::mdspan g_alog_h(tops::Global, const_cast<T*>(a_log), nh);
+    tops::mdspan g_alog_h(tops::Global, const_cast<float*>(a_log), nh);
     tops::mdspan l_alog_h(tops::Private, l_head_alog, nh);
     tops::memcpy(ctx, l_alog_h, g_alog_h);
 
-    tops::mdspan g_dt_h(tops::Global, const_cast<T*>(dt_bias), nh);
+    tops::mdspan g_dt_h(tops::Global, const_cast<float*>(dt_bias), nh);
     tops::mdspan l_dt_h(tops::Private, l_head_dt, nh);
     tops::memcpy(ctx, l_dt_h, g_dt_h);
 
@@ -133,30 +133,26 @@ __global__ void fused_gdn_gating_kernel(
     } else {
       using VT    = typename tcle::altivector<U, VE>::VT;
       using VT_F  = typename cc_kernel::accvector<U>::VT;
-      constexpr int VE_F = TCLE_SINGLE_VEC_BYTES / sizeof(float);
-      using VT_F32 = typename tcle::altivector<float, VE_F>::VT;
 
       tcle::leaptr<VT> pa    = tcle::simple_leaptr<VT>(reinterpret_cast<U*>(l_a));
-      tcle::leaptr<VT> pdt   = tcle::simple_leaptr<VT>(reinterpret_cast<U*>(l_dt));
-      tcle::leaptr<VT> palog = tcle::simple_leaptr<VT>(reinterpret_cast<U*>(l_alog));
+      tcle::leaptr<VT_F> pdt   = tcle::simple_leaptr<VT_F>(l_dt);
+      tcle::leaptr<VT_F> palog = tcle::simple_leaptr<VT_F>(l_alog);
       tcle::leaptr<VT> pb    = tcle::simple_leaptr<VT>(reinterpret_cast<U*>(l_b));
       tcle::leaptr<VT> pg    = tcle::simple_leaptr<VT>(reinterpret_cast<U*>(l_g));
       tcle::leaptr<VT> pbeta = tcle::simple_leaptr<VT>(reinterpret_cast<U*>(l_beta));
 
       for (int i = 0; i < count; i += VE) {
         VT va    = pa.load();
-        VT vdt   = pdt.load();
-        VT valog = palog.load();
+        VT_F vdt   = pdt.load();
+        VT_F valog = palog.load();
         VT vb    = pb.load();
 
         VT_F va_f    = tcle::cvt<VT_F>(va);
-        VT_F vdt_f   = tcle::cvt<VT_F>(vdt);
-        VT_F valog_f = tcle::cvt<VT_F>(valog);
         VT_F vb_f    = tcle::cvt<VT_F>(vb);
 
-        VT_F x = va_f + vdt_f;
+        VT_F x = va_f + vdt;
         VT_F sp = tcle::ln(tcle::exp(x) + VT_F{1.0f});
-        VT_F vg_f = -(tcle::exp(valog_f)) * sp;
+        VT_F vg_f = -(tcle::exp(valog)) * sp;
         VT_F vbeta_f = tcle::sigmoid(vb_f);
 
         pg.store(tcle::cvt<VT>(vg_f));
@@ -180,10 +176,10 @@ template __global__ void fused_gdn_gating_kernel<float>(
     const float*, const float*, const float*, const float*,
     float*, float*, int, int);
 template __global__ void fused_gdn_gating_kernel<tops::half>(
-    const tops::half*, const tops::half*, const tops::half*, const tops::half*,
+    const float*, const tops::half*, const tops::half*, const float*,
     tops::half*, tops::half*, int, int);
 template __global__ void fused_gdn_gating_kernel<tops::bfloat>(
-    const tops::bfloat*, const tops::bfloat*, const tops::bfloat*, const tops::bfloat*,
+    const float*, const tops::bfloat*, const tops::bfloat*, const float*,
     tops::bfloat*, tops::bfloat*, int, int);
 
 extern "C" void gdn_fused_gating_f32(
@@ -197,32 +193,32 @@ extern "C" void gdn_fused_gating_f32(
 }
 
 extern "C" void gdn_fused_gating_f16(
-    const __fp16* a_log, const __fp16* a, const __fp16* b, const __fp16* dt_bias,
+    const float* a_log, const __fp16* a, const __fp16* b, const float* dt_bias,
     __fp16* g, __fp16* beta, int total, int num_heads,
     unsigned int num_blocks, unsigned int dim_blocks, void* stream_) {
   topsStream_t stream = reinterpret_cast<topsStream_t>(stream_);
   fused_gdn_gating_kernel<tops::half><<<dim3(num_blocks, 1, 1),
       dim3(dim_blocks, 1, 1), 0, stream>>>(
-      reinterpret_cast<const tops::half*>(a_log),
+      a_log,
       reinterpret_cast<const tops::half*>(a),
       reinterpret_cast<const tops::half*>(b),
-      reinterpret_cast<const tops::half*>(dt_bias),
+      dt_bias,
       reinterpret_cast<tops::half*>(g),
       reinterpret_cast<tops::half*>(beta),
       total, num_heads);
 }
 
 extern "C" void gdn_fused_gating_bf16(
-    const __bf16* a_log, const __bf16* a, const __bf16* b, const __bf16* dt_bias,
+    const float* a_log, const __bf16* a, const __bf16* b, const float* dt_bias,
     __bf16* g, __bf16* beta, int total, int num_heads,
     unsigned int num_blocks, unsigned int dim_blocks, void* stream_) {
   topsStream_t stream = reinterpret_cast<topsStream_t>(stream_);
   fused_gdn_gating_kernel<tops::bfloat><<<dim3(num_blocks, 1, 1),
       dim3(dim_blocks, 1, 1), 0, stream>>>(
-      reinterpret_cast<const tops::bfloat*>(a_log),
+      a_log,
       reinterpret_cast<const tops::bfloat*>(a),
       reinterpret_cast<const tops::bfloat*>(b),
-      reinterpret_cast<const tops::bfloat*>(dt_bias),
+      dt_bias,
       reinterpret_cast<tops::bfloat*>(g),
       reinterpret_cast<tops::bfloat*>(beta),
       total, num_heads);

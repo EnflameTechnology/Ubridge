@@ -41,8 +41,8 @@ template <typename T>
 __global__ void gated_rmsnorm_silu_mul_kernel(
     const T* __restrict__ x,
     const T* __restrict__ z,
-    const T* __restrict__ gamma,
-    const T* __restrict__ bias,
+    const float* __restrict__ gamma,
+    const float* __restrict__ bias,
     T* __restrict__ out,
     int rows,
     int value_dim,
@@ -58,8 +58,8 @@ __global__ void gated_rmsnorm_silu_mul_kernel(
   constexpr int TILE = 256;
   __local__ __valigned__ T l_x[TILE];
   __local__ __valigned__ T l_z[TILE];
-  __local__ __valigned__ T l_gamma[TILE];
-  __local__ __valigned__ T l_bias[TILE];
+  __local__ __valigned__ float l_gamma[TILE];
+  __local__ __valigned__ float l_bias[TILE];
   __local__ __valigned__ T l_out[TILE];
   __local__ __valigned__ float l_f32[TILE];
 
@@ -138,12 +138,12 @@ __global__ void gated_rmsnorm_silu_mul_kernel(
       tops::memcpy(ctx, lz, gz);
 
       const int wb_offset = per_group_weights ? offset : (group * group_size + offset);
-      tops::mdspan gg(tops::Global, const_cast<T*>(gamma) + wb_offset, count);
+      tops::mdspan gg(tops::Global, const_cast<float*>(gamma) + wb_offset, count);
       tops::mdspan lg(tops::Private, l_gamma, count);
       tops::memcpy(ctx, lg, gg);
 
       if (has_bias) {
-        tops::mdspan gb(tops::Global, const_cast<T*>(bias) + wb_offset, count);
+        tops::mdspan gb(tops::Global, const_cast<float*>(bias) + wb_offset, count);
         tops::mdspan lb(tops::Private, l_bias, count);
         tops::memcpy(ctx, lb, gb);
       }
@@ -188,21 +188,21 @@ __global__ void gated_rmsnorm_silu_mul_kernel(
         VT_F v_inv_rms = VT_F{inv_rms};
         tcle::leaptr<VT> px = tcle::simple_leaptr<VT>(reinterpret_cast<U*>(l_x));
         tcle::leaptr<VT> pz = tcle::simple_leaptr<VT>(reinterpret_cast<U*>(l_z));
-        tcle::leaptr<VT> pw = tcle::simple_leaptr<VT>(reinterpret_cast<U*>(l_gamma));
+        tcle::leaptr<VT_F> pw = tcle::simple_leaptr<VT_F>(l_gamma);
         tcle::leaptr<VT> po = tcle::simple_leaptr<VT>(reinterpret_cast<U*>(l_out));
         if (has_bias) {
-          tcle::leaptr<VT> pb = tcle::simple_leaptr<VT>(reinterpret_cast<U*>(l_bias));
+          tcle::leaptr<VT_F> pb = tcle::simple_leaptr<VT_F>(l_bias);
           for (int i = 0; i < TILE; i += VE) {
             VT vx = px.load(); VT vz = pz.load();
-            VT vw = pw.load(); VT vb = pb.load();
-            VT_F normed = tcle::cvt<VT_F>(vx) * v_inv_rms * tcle::cvt<VT_F>(vw) + tcle::cvt<VT_F>(vb);
+            VT_F vw = pw.load(); VT_F vb = pb.load();
+            VT_F normed = tcle::cvt<VT_F>(vx) * v_inv_rms * vw + vb;
             VT_F gate = tcle::cvt<VT_F>(vz) * tcle::sigmoid(tcle::cvt<VT_F>(vz));
             po.store(tcle::cvt<VT>(normed * gate));
           }
         } else {
           for (int i = 0; i < TILE; i += VE) {
-            VT vx = px.load(); VT vz = pz.load(); VT vw = pw.load();
-            VT_F normed = tcle::cvt<VT_F>(vx) * v_inv_rms * tcle::cvt<VT_F>(vw);
+            VT vx = px.load(); VT vz = pz.load(); VT_F vw = pw.load();
+            VT_F normed = tcle::cvt<VT_F>(vx) * v_inv_rms * vw;
             VT_F gate = tcle::cvt<VT_F>(vz) * tcle::sigmoid(tcle::cvt<VT_F>(vz));
             po.store(tcle::cvt<VT>(normed * gate));
           }
@@ -221,10 +221,10 @@ template __global__ void gated_rmsnorm_silu_mul_kernel<float>(
     const float*, const float*, const float*, const float*, float*,
     int, int, int, float, int, int);
 template __global__ void gated_rmsnorm_silu_mul_kernel<tops::half>(
-    const tops::half*, const tops::half*, const tops::half*, const tops::half*, tops::half*,
+    const tops::half*, const tops::half*, const float*, const float*, tops::half*,
     int, int, int, float, int, int);
 template __global__ void gated_rmsnorm_silu_mul_kernel<tops::bfloat>(
-    const tops::bfloat*, const tops::bfloat*, const tops::bfloat*, const tops::bfloat*, tops::bfloat*,
+    const tops::bfloat*, const tops::bfloat*, const float*, const float*, tops::bfloat*,
     int, int, int, float, int, int);
 
 extern "C" void gdn_gated_rmsnorm_f32(
@@ -240,7 +240,7 @@ extern "C" void gdn_gated_rmsnorm_f32(
 }
 
 extern "C" void gdn_gated_rmsnorm_f16(
-    const __fp16* x, const __fp16* z, const __fp16* gamma, const __fp16* bias,
+    const __fp16* x, const __fp16* z, const float* gamma, const float* bias,
     __fp16* out, int rows, int value_dim, int group_size, float eps,
     int per_group_weights, int has_bias,
     unsigned int num_blocks, unsigned int dim_blocks, void* stream_) {
@@ -249,14 +249,14 @@ extern "C" void gdn_gated_rmsnorm_f16(
       dim3(dim_blocks, 1, 1), 0, stream>>>(
       reinterpret_cast<const tops::half*>(x),
       reinterpret_cast<const tops::half*>(z),
-      reinterpret_cast<const tops::half*>(gamma),
-      reinterpret_cast<const tops::half*>(bias),
+      gamma,
+      bias,
       reinterpret_cast<tops::half*>(out),
       rows, value_dim, group_size, eps, per_group_weights, has_bias);
 }
 
 extern "C" void gdn_gated_rmsnorm_bf16(
-    const __bf16* x, const __bf16* z, const __bf16* gamma, const __bf16* bias,
+    const __bf16* x, const __bf16* z, const float* gamma, const float* bias,
     __bf16* out, int rows, int value_dim, int group_size, float eps,
     int per_group_weights, int has_bias,
     unsigned int num_blocks, unsigned int dim_blocks, void* stream_) {
@@ -265,8 +265,8 @@ extern "C" void gdn_gated_rmsnorm_bf16(
       dim3(dim_blocks, 1, 1), 0, stream>>>(
       reinterpret_cast<const tops::bfloat*>(x),
       reinterpret_cast<const tops::bfloat*>(z),
-      reinterpret_cast<const tops::bfloat*>(gamma),
-      reinterpret_cast<const tops::bfloat*>(bias),
+      gamma,
+      bias,
       reinterpret_cast<tops::bfloat*>(out),
       rows, value_dim, group_size, eps, per_group_weights, has_bias);
 }
