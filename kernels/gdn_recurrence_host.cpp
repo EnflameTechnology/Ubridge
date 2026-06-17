@@ -120,8 +120,20 @@ __global__ void gdn_recurrence_kernel(
           }
         }
 
-        float decay = g_bh[t];
-        float beta_t = beta_bh[t];
+        __local__ __valigned__ float l_gb[2];
+        {
+          tops::mdspan g_gb(tops::Global, const_cast<float*>(g_bh) + t, 1);
+          tops::mdspan l_gb_s(tops::Private, l_gb, 1);
+          tops::memcpy(ctx, l_gb_s, g_gb);
+        }
+        {
+          tops::mdspan g_bt(tops::Global, const_cast<float*>(beta_bh) + t, 1);
+          tops::mdspan l_bt_s(tops::Private, l_gb + 1, 1);
+          tops::memcpy(ctx, l_bt_s, g_bt);
+        }
+        tcle::fence<FenceType::L1_SDMEM>();
+        float decay = l_gb[0];
+        float beta_t = l_gb[1];
 
         T v_elem;
         {
@@ -163,7 +175,13 @@ __global__ void gdn_recurrence_kernel(
           y_t += l_state[j] * q_f32[j];
         }
 
-        out_bh[t * v_dim + v_idx] = y_t;
+        {
+          __local__ __valigned__ float l_yt[1];
+          l_yt[0] = y_t;
+          tops::mdspan g_yt(tops::Global, out_bh + t * v_dim + v_idx, 1);
+          tops::mdspan l_yt_s(tops::Private, l_yt, 1);
+          tops::memcpy(ctx, g_yt, l_yt_s);
+        }
       }
 
       {
@@ -221,8 +239,21 @@ __global__ void gdn_decode_slots_kernel(
     int64_t slot = l_slots[0];
     if (slot < 0) continue;
 
-    float decay = static_cast<float>(g[bh_idx]);
-    float beta_t = static_cast<float>(beta[bh_idx]);
+    __local__ __valigned__ T l_g_val[1];
+    __local__ __valigned__ T l_beta_val[1];
+    {
+      tops::mdspan g_gv(tops::Global, const_cast<T*>(g) + bh_idx, 1);
+      tops::mdspan l_gv(tops::Private, l_g_val, 1);
+      tops::memcpy(ctx, l_gv, g_gv);
+    }
+    {
+      tops::mdspan g_bv(tops::Global, const_cast<T*>(beta) + bh_idx, 1);
+      tops::mdspan l_bv(tops::Private, l_beta_val, 1);
+      tops::memcpy(ctx, l_bv, g_bv);
+    }
+    tcle::fence<FenceType::L1_SDMEM>();
+    float decay = static_cast<float>(l_g_val[0]);
+    float beta_t = static_cast<float>(l_beta_val[0]);
 
     {
       tops::mdspan g_k(tops::Global, const_cast<T*>(k) + bh_idx * k_dim, k_dim);
@@ -259,7 +290,14 @@ __global__ void gdn_decode_slots_kernel(
       }
       tcle::fence<FenceType::L1_SDMEM>();
 
-      float v_t = static_cast<float>(v[bh_idx * v_dim + v_idx]);
+      __local__ __valigned__ T l_v_elem[1];
+      {
+        tops::mdspan g_ve(tops::Global, const_cast<T*>(v) + bh_idx * v_dim + v_idx, 1);
+        tops::mdspan l_ve(tops::Private, l_v_elem, 1);
+        tops::memcpy(ctx, l_ve, g_ve);
+      }
+      tcle::fence<FenceType::L1_SDMEM>();
+      float v_t = static_cast<float>(l_v_elem[0]);
 
       float kv_mem = 0.0f;
       for (int j = 0; j < k_dim; j++) {
@@ -281,7 +319,13 @@ __global__ void gdn_decode_slots_kernel(
         tops::memcpy(ctx, g_s, l_s);
       }
 
-      out[bh_idx * v_dim + v_idx] = static_cast<T>(y);
+      {
+        __local__ __valigned__ T l_out_val[1];
+        l_out_val[0] = static_cast<T>(y);
+        tops::mdspan g_ov(tops::Global, out + bh_idx * v_dim + v_idx, 1);
+        tops::mdspan l_ov(tops::Private, l_out_val, 1);
+        tops::memcpy(ctx, g_ov, l_ov);
+      }
     }
   }
 }
@@ -377,9 +421,28 @@ __global__ void gdn_recurrence_varlen_kernel(
             k_f32[j] = static_cast<float>(reinterpret_cast<T*>(l_k)[j]);
         }
 
-        float decay = static_cast<float>(g[token_idx * token_stride_g + head_idx]);
-        float beta_t = static_cast<float>(beta[token_idx * token_stride_g + head_idx]);
-        float v_t = static_cast<float>(v[token_idx * token_stride_v + head_idx * v_dim + v_idx]);
+        __local__ __valigned__ T l_g_scalar[1];
+        __local__ __valigned__ T l_beta_scalar[1];
+        __local__ __valigned__ T l_v_scalar[1];
+        {
+          tops::mdspan g_gs(tops::Global, const_cast<T*>(g) + token_idx * token_stride_g + head_idx, 1);
+          tops::mdspan l_gs(tops::Private, l_g_scalar, 1);
+          tops::memcpy(ctx, l_gs, g_gs);
+        }
+        {
+          tops::mdspan g_bs(tops::Global, const_cast<T*>(beta) + token_idx * token_stride_g + head_idx, 1);
+          tops::mdspan l_bs(tops::Private, l_beta_scalar, 1);
+          tops::memcpy(ctx, l_bs, g_bs);
+        }
+        {
+          tops::mdspan g_vs(tops::Global, const_cast<T*>(v) + token_idx * token_stride_v + head_idx * v_dim + v_idx, 1);
+          tops::mdspan l_vs(tops::Private, l_v_scalar, 1);
+          tops::memcpy(ctx, l_vs, g_vs);
+        }
+        tcle::fence<FenceType::L1_SDMEM>();
+        float decay = static_cast<float>(l_g_scalar[0]);
+        float beta_t = static_cast<float>(l_beta_scalar[0]);
+        float v_t = static_cast<float>(l_v_scalar[0]);
 
         float kv_mem = 0.0f;
         for (int j = 0; j < k_dim; j++) {
@@ -412,7 +475,13 @@ __global__ void gdn_recurrence_varlen_kernel(
           y_t += l_state[j] * q_f32[j];
         }
 
-        out[token_idx * token_stride_v + head_idx * v_dim + v_idx] = static_cast<T>(y_t);
+        {
+          __local__ __valigned__ T l_out_scalar[1];
+          l_out_scalar[0] = static_cast<T>(y_t);
+          tops::mdspan g_os(tops::Global, out + token_idx * token_stride_v + head_idx * v_dim + v_idx, 1);
+          tops::mdspan l_os(tops::Private, l_out_scalar, 1);
+          tops::memcpy(ctx, g_os, l_os);
+        }
       }
 
       {

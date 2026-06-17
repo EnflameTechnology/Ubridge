@@ -52,21 +52,33 @@ __global__ void fused_gdn_gating_kernel(
   const int thread_id  = GetThreadIdx();
 
   constexpr int TILE = 256;
+  constexpr int MAX_HEADS = 256;
   __local__ __valigned__ T l_a[TILE];
   __local__ __valigned__ T l_b[TILE];
   __local__ __valigned__ T l_alog[TILE];
   __local__ __valigned__ T l_dt[TILE];
   __local__ __valigned__ T l_g[TILE];
   __local__ __valigned__ T l_beta[TILE];
-  __local__ __valigned__ float l_f32_a[TILE];
-  __local__ __valigned__ float l_f32_b[TILE];
-  __local__ __valigned__ float l_f32_alog[TILE];
-  __local__ __valigned__ float l_f32_dt[TILE];
-  __local__ __valigned__ float l_f32_g[TILE];
-  __local__ __valigned__ float l_f32_beta[TILE];
+
+  __local__ __valigned__ T l_head_alog[MAX_HEADS];
+  __local__ __valigned__ T l_head_dt[MAX_HEADS];
 
   tops::private_dte ctx;
   ctx.init();
+
+  {
+    int nh = num_heads < MAX_HEADS ? num_heads : MAX_HEADS;
+    tops::mdspan g_alog_h(tops::Global, const_cast<T*>(a_log), nh);
+    tops::mdspan l_alog_h(tops::Private, l_head_alog, nh);
+    tops::memcpy(ctx, l_alog_h, g_alog_h);
+
+    tops::mdspan g_dt_h(tops::Global, const_cast<T*>(dt_bias), nh);
+    tops::mdspan l_dt_h(tops::Private, l_head_dt, nh);
+    tops::memcpy(ctx, l_dt_h, g_dt_h);
+
+    tcle::fence<FenceType::L1_SDMEM>();
+    tcle::fence<FenceType::L1_VDMEM>();
+  }
 
   const int tiles_per_thread = CeilDiv(total_elements, TILE * thread_num);
 
@@ -85,8 +97,8 @@ __global__ void fused_gdn_gating_kernel(
 
     for (int i = 0; i < count; i++) {
       int h_idx = (base + i) % num_heads;
-      l_alog[i] = a_log[h_idx];
-      l_dt[i]   = dt_bias[h_idx];
+      l_alog[i] = l_head_alog[h_idx];
+      l_dt[i]   = l_head_dt[h_idx];
     }
 
     tcle::fence<FenceType::L1_SDMEM>();

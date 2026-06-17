@@ -350,6 +350,7 @@ impl DeviceExecutor {
                         "fill" => {
                             for dt in [
                                 "bf16", "f16", "f32", "f64", "i32", "u32", "i16", "i8", "bool",
+                                "u8", "u16", "i64",
                             ] {
                                 let name = format!("{}_{}", module, dt);
                                 tracing::debug!("Load function {}", name);

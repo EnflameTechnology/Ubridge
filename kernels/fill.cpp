@@ -124,22 +124,22 @@ extern "C"  __global__ void fill_i8(int8_t *output, int total_size,
     return fill__Kernel<int8_t>(output, total_size, value, bpe);
 }
 
-// __global__ void fill_u32(uint32_t *output, int total_size,
-//                                       uint32_t value, int bpe){
+extern "C"  __global__ void fill_u8(uint8_t *output, int total_size,
+                                      uint8_t value, int bpe){
 
-//     return fill__Kernel<uint32_t>(output, total_size, value, bpe);
-// }
+    return fill__Kernel<uint8_t>(output, total_size, value, bpe);
+}
 
-// __global__ void fill_u8(uint8_t *output, int total_size,
-//                                       uint8_t value, int bpe){
+extern "C"  __global__ void fill_u16(uint16_t *output, int total_size,
+                                      uint16_t value, int bpe){
 
-//     return fill__Kernel<uint8_t>(output, total_size, value, bpe);
-// }
+    return fill__Kernel<uint16_t>(output, total_size, value, bpe);
+}
 
-// __global__ void fill_u16(uint16_t *output, int total_size,
-//                                       uint16_t value, int bpe){
+extern "C"  __global__ void fill_i64(int64_t *output, int total_size,
+                                      int64_t value, int bpe){
 
-//     return fill__Kernel<uint16_t>(output, total_size, value, bpe);
-// }
+    return fill__Kernel<int64_t>(output, total_size, value, bpe);
+}
 
 int main() {}
