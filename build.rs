@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 const BC_FILE_NAME: &str = "acore.bc";
 
-const KERNELS: [&str; 30] = [
+const KERNELS: [&str; 32] = [
     "unary",
     "fill",
     "binary",
@@ -29,12 +29,14 @@ const KERNELS: [&str; 30] = [
     "moe_align_host",
     "fused_moe_host",
     "topk_softmax_host",
-    "causal_conv1d_host",
+    "gdn_ffi_bridge_host",
     "gdn_gating_host",
     "gdn_l2norm_host",
     "gdn_rmsnorm_host",
     "gdn_recurrence_host",
-    "gdn_scatter_host",
+    "gdn_recurrence_varlen_host",
+    "gdn_decode_slots_host",
+    "causal_conv1d_host",
 ];
 
 fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
@@ -166,10 +168,35 @@ fn main() -> Result<()> {
                     .arg("-D__ACORE_OP__")
                     .arg("-fno-omit-frame-pointer")
                     .arg("-DNDEBUG")
-                    .arg(format!("-I{:}", absolute_kernel_dir.join("atomic/include").to_str().unwrap()))
-                    .arg(format!("-I{:}", absolute_kernel_dir.join("atomic/include/common").to_str().unwrap()))
-                    .arg(format!("--tops-device-lib-path={:}", absolute_kernel_dir.join("atomic/lib").to_str().unwrap()))
-                    .arg("--tops-device-lib=libacoreop.bc");
+                    .arg(format!("-I{:}", absolute_kernel_dir.to_str().unwrap()));
+
+                    let is_choreo_kernel = (fname.starts_with("gdn_gating")
+                        || fname.starts_with("gdn_l2norm")
+                        || fname.starts_with("gdn_rmsnorm")
+                        || fname.starts_with("gdn_recurrence")
+                        || fname.starts_with("gdn_decode")
+                        || fname.starts_with("causal_conv1d"))
+                        && !fname.starts_with("gdn_ffi");
+
+                    let choreo_extern = std::env::var("CHOREO_EXTERN")
+                        .unwrap_or_else(|_| {
+                            let home = std::env::var("HOME").unwrap_or("/home/fem".into());
+                            format!("{}/dev/choreo/extern", home)
+                        });
+
+                    if is_choreo_kernel {
+                        command
+                            .arg("-DTOPSCC_PRIVATE_DTE_AUTO_INIT")
+                            .arg(format!("-I{:}", choreo_extern.clone() + "/include"))
+                            .arg(format!("--tops-device-lib-path={:}", choreo_extern.clone() + "/lib"))
+                            .arg("--tops-device-lib=libacoreop.bc");
+                    } else {
+                        command
+                            .arg(format!("-I{:}", absolute_kernel_dir.join("atomic/include").to_str().unwrap()))
+                            .arg(format!("-I{:}", absolute_kernel_dir.join("atomic/include/common").to_str().unwrap()))
+                            .arg(format!("--tops-device-lib-path={:}", absolute_kernel_dir.join("atomic/lib").to_str().unwrap()))
+                            .arg("--tops-device-lib=libacoreop.bc");
+                    }
 
                     let output = command
                         .spawn()
@@ -366,6 +393,8 @@ fn main() -> Result<()> {
         println!("cargo:rustc-link-lib=dylib=topsaten");
         println!("cargo:rustc-link-lib=dylib=stdc++");
     }
+
+    // GDN Choreo kernels are compiled inline (no external libgdn_all.a needed)
 
     Ok(())
 }

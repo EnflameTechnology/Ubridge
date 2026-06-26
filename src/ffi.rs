@@ -1,41 +1,6 @@
 use core::ffi::{c_int, c_void};
 use half::{bf16, f16};
 
-#[repr(C)]
-pub struct SelectiveScanParas {
-    pub b: i64,
-    pub h: i64,
-    pub h_align: i64,
-    pub l: i64,
-    pub d: i64,
-    pub l2_mem_used: i64,
-    pub subk_size: i64,
-    pub l1_mem_used: i64,
-    pub data_type: c_int,
-    pub bpe: c_int,
-    pub has_bias: bool,
-    pub has_softplus: bool,
-    pub has_pre_state: bool,
-    pub return_last_state: bool,
-}
-
-#[repr(C)]
-pub struct CausalConv1dParams {
-    pub dim: c_int,
-    pub batch: c_int,
-    pub num_cache_lines: c_int,
-    pub kernel_width: c_int,
-    pub state_len: c_int,
-    pub stride_x_token: c_int,
-    pub stride_w_dim: c_int,
-    pub stride_istate_seq: c_int,
-    pub stride_istate_token: c_int,
-    pub pad_slot_id: c_int,
-    pub has_bias: c_int,
-    pub silu_activation: c_int,
-    pub block_n: c_int,
-}
-
 extern "C" {
     pub fn topk_f32(
         input: *mut f32,
@@ -264,171 +229,21 @@ extern "C" {
         stream: *const c_void,
     );
 
-    pub fn causal_conv1d_fwd_f32(
-        x_ptr: *mut f32,
-        w_ptr: *mut f32,
-        bias_ptr: *mut f32,
-        conv_states_ptr: *mut f32,
-        cache_indices_ptr: *mut i64,
-        has_initial_states_ptr: *mut i8,
-        query_start_loc_ptr: *mut i32,
-        o_ptr: *mut f32,
-        params: *mut CausalConv1dParams,
-        num_blocks: u32,
-        dim_blocks: u32,
-        stream: *const c_void,
-    );
-
-    pub fn causal_conv1d_fwd_f16(
-        x_ptr: *mut f16,
-        w_ptr: *mut f16,
-        bias_ptr: *mut f16,
-        conv_states_ptr: *mut f16,
-        cache_indices_ptr: *mut i64,
-        has_initial_states_ptr: *mut i8,
-        query_start_loc_ptr: *mut i32,
-        o_ptr: *mut f16,
-        params: *mut CausalConv1dParams,
-        num_blocks: u32,
-        dim_blocks: u32,
-        stream: *const c_void,
-    );
-
-    pub fn causal_conv1d_fwd_bf16(
-        x_ptr: *mut bf16,
-        w_ptr: *mut bf16,
-        bias_ptr: *mut bf16,
-        conv_states_ptr: *mut bf16,
-        cache_indices_ptr: *mut i64,
-        has_initial_states_ptr: *mut i8,
-        query_start_loc_ptr: *mut i32,
-        o_ptr: *mut bf16,
-        params: *mut CausalConv1dParams,
-        num_blocks: u32,
-        dim_blocks: u32,
-        stream: *const c_void,
-    );
-
-    // ─── GDN fused gating ───
-    pub fn gdn_fused_gating_f32(
-        a_log: *const f32,
-        a: *const f32,
-        b: *const f32,
-        dt_bias: *const f32,
-        g: *mut f32,
-        beta: *mut f32,
-        total: c_int,
-        num_heads: c_int,
-        num_blocks: u32,
-        dim_blocks: u32,
-        stream: *const c_void,
-    );
-    pub fn gdn_fused_gating_f16(
-        a_log: *const f32,
-        a: *const f16,
-        b: *const f16,
-        dt_bias: *const f32,
-        g: *mut f16,
-        beta: *mut f16,
-        total: c_int,
-        num_heads: c_int,
-        num_blocks: u32,
-        dim_blocks: u32,
-        stream: *const c_void,
-    );
-    pub fn gdn_fused_gating_bf16(
-        a_log: *const f32,
-        a: *const bf16,
-        b: *const bf16,
-        dt_bias: *const f32,
-        g: *mut bf16,
-        beta: *mut bf16,
-        total: c_int,
-        num_heads: c_int,
-        num_blocks: u32,
-        dim_blocks: u32,
-        stream: *const c_void,
-    );
-
-    // ─── GDN L2 norm ───
-    pub fn gdn_l2_norm_f32(
-        input: *const f32,
-        output: *mut f32,
-        rows: c_int,
-        dim: c_int,
-        eps: f32,
-        num_blocks: u32,
-        dim_blocks: u32,
-        stream: *const c_void,
-    );
-    pub fn gdn_l2_norm_f16(
-        input: *const f16,
-        output: *mut f16,
-        rows: c_int,
-        dim: c_int,
-        eps: f32,
-        num_blocks: u32,
-        dim_blocks: u32,
-        stream: *const c_void,
-    );
-    pub fn gdn_l2_norm_bf16(
-        input: *const bf16,
-        output: *mut bf16,
-        rows: c_int,
-        dim: c_int,
-        eps: f32,
-        num_blocks: u32,
-        dim_blocks: u32,
-        stream: *const c_void,
-    );
-
-    // ─── GDN gated RMSNorm + SiLU + mul ───
-    pub fn gdn_gated_rmsnorm_f32(
-        x: *const f32,
-        z: *const f32,
-        gamma: *const f32,
-        bias: *const f32,
-        out: *mut f32,
-        rows: c_int,
-        value_dim: c_int,
-        group_size: c_int,
-        eps: f32,
-        per_group_weights: c_int,
-        has_bias: c_int,
-        num_blocks: u32,
-        dim_blocks: u32,
-        stream: *const c_void,
-    );
-    pub fn gdn_gated_rmsnorm_f16(
-        x: *const f16,
-        z: *const f16,
-        gamma: *const f32,
-        bias: *const f32,
-        out: *mut f16,
-        rows: c_int,
-        value_dim: c_int,
-        group_size: c_int,
-        eps: f32,
-        per_group_weights: c_int,
-        has_bias: c_int,
-        num_blocks: u32,
-        dim_blocks: u32,
-        stream: *const c_void,
-    );
-    pub fn gdn_gated_rmsnorm_bf16(
+    // ─── Choreo production causal_conv1d (unified prefill + decode) ───
+    pub fn causal_conv1d_fwd_choreo_bf16(
         x: *const bf16,
-        z: *const bf16,
-        gamma: *const f32,
-        bias: *const f32,
+        weight: *const bf16,
+        bias: *const bf16,
+        conv_state: *mut bf16,
+        cache_idx: *const i64,
+        qsl: *const u32,
         out: *mut bf16,
-        rows: c_int,
-        value_dim: c_int,
-        group_size: c_int,
-        eps: f32,
-        per_group_weights: c_int,
-        has_bias: c_int,
-        num_blocks: u32,
-        dim_blocks: u32,
+        total_tokens: c_int,
+        d_conv: c_int,
+        batch: c_int,
+        kernel_size: c_int,
+        silu_activation: c_int,
+        max_slots: c_int,
         stream: *const c_void,
     );
 
@@ -496,6 +311,7 @@ extern "C" {
         heads: c_int,
         k_dim: c_int,
         v_dim: c_int,
+        max_slots: c_int,
         num_blocks: u32,
         dim_blocks: u32,
         stream: *const c_void,
@@ -513,6 +329,7 @@ extern "C" {
         heads: c_int,
         k_dim: c_int,
         v_dim: c_int,
+        max_slots: c_int,
         num_blocks: u32,
         dim_blocks: u32,
         stream: *const c_void,
@@ -521,15 +338,16 @@ extern "C" {
         q: *const bf16,
         k: *const bf16,
         v: *const bf16,
-        g: *const bf16,
-        beta: *const bf16,
+        g: *const f32,
+        beta: *const f32,
         state: *mut f32,
         slots: *const i64,
-        out: *mut bf16,
+        out: *mut f32,
         batch: c_int,
         heads: c_int,
         k_dim: c_int,
         v_dim: c_int,
+        max_slots: c_int,
         num_blocks: u32,
         dim_blocks: u32,
         stream: *const c_void,
@@ -546,10 +364,12 @@ extern "C" {
         slots: *const i64,
         out: *mut f32,
         cu_seqlens: *const u32,
+        total_tokens: c_int,
         batch: c_int,
         num_heads: c_int,
         k_dim: c_int,
         v_dim: c_int,
+        max_slots: c_int,
         num_blocks: u32,
         dim_blocks: u32,
         stream: *const c_void,
@@ -564,10 +384,12 @@ extern "C" {
         slots: *const i64,
         out: *mut f16,
         cu_seqlens: *const u32,
+        total_tokens: c_int,
         batch: c_int,
         num_heads: c_int,
         k_dim: c_int,
         v_dim: c_int,
+        max_slots: c_int,
         num_blocks: u32,
         dim_blocks: u32,
         stream: *const c_void,
@@ -582,16 +404,129 @@ extern "C" {
         slots: *const i64,
         out: *mut bf16,
         cu_seqlens: *const u32,
+        total_tokens: c_int,
         batch: c_int,
         num_heads: c_int,
         k_dim: c_int,
         v_dim: c_int,
+        max_slots: c_int,
         num_blocks: u32,
         dim_blocks: u32,
         stream: *const c_void,
     );
 
-    // ─── GDN mamba scatter rows ───
+    // ─── GDN fused gating (to be ported to Choreo) ───
+    pub fn gdn_fused_gating_f32(
+        a_log: *const f32,
+        a: *const f32,
+        b: *const f32,
+        dt_bias: *const f32,
+        g: *mut f32,
+        beta: *mut f32,
+        total: c_int,
+        num_heads: c_int,
+        num_blocks: u32,
+        dim_blocks: u32,
+        stream: *const c_void,
+    );
+    pub fn gdn_fused_gating_f16(
+        a_log: *const f32,
+        a: *const f16,
+        b: *const f16,
+        dt_bias: *const f32,
+        g: *mut f16,
+        beta: *mut f16,
+        total: c_int,
+        num_heads: c_int,
+        num_blocks: u32,
+        dim_blocks: u32,
+        stream: *const c_void,
+    );
+    pub fn gdn_fused_gating_bf16(
+        a_log: *const f32,
+        a: *const bf16,
+        b: *const bf16,
+        dt_bias: *const f32,
+        g: *mut bf16,
+        beta: *mut bf16,
+        total: c_int,
+        num_heads: c_int,
+        stream: *const c_void,
+    );
+
+    // ─── GDN L2 norm (to be ported to Choreo) ───
+    pub fn gdn_l2_norm_f32(
+        input: *const f32,
+        output: *mut f32,
+        rows: c_int,
+        dim: c_int,
+        eps: f32,
+        num_blocks: u32,
+        dim_blocks: u32,
+        stream: *const c_void,
+    );
+    pub fn gdn_l2_norm_f16(
+        input: *const f16,
+        output: *mut f16,
+        rows: c_int,
+        dim: c_int,
+        eps: f32,
+        num_blocks: u32,
+        dim_blocks: u32,
+        stream: *const c_void,
+    );
+    pub fn gdn_l2_norm_bf16(
+        input: *const bf16,
+        output: *mut bf16,
+        rows: c_int,
+        dim: c_int,
+        stream: *const c_void,
+    );
+
+    // ─── GDN gated RMSNorm + SiLU + mul (to be ported to Choreo) ───
+    pub fn gdn_gated_rmsnorm_f32(
+        x: *const f32,
+        z: *const f32,
+        gamma: *const f32,
+        bias: *const f32,
+        out: *mut f32,
+        rows: c_int,
+        value_dim: c_int,
+        group_size: c_int,
+        eps: f32,
+        per_group_weights: c_int,
+        has_bias: c_int,
+        num_blocks: u32,
+        dim_blocks: u32,
+        stream: *const c_void,
+    );
+    pub fn gdn_gated_rmsnorm_f16(
+        x: *const f16,
+        z: *const f16,
+        gamma: *const f32,
+        bias: *const f32,
+        out: *mut f16,
+        rows: c_int,
+        value_dim: c_int,
+        group_size: c_int,
+        eps: f32,
+        per_group_weights: c_int,
+        has_bias: c_int,
+        num_blocks: u32,
+        dim_blocks: u32,
+        stream: *const c_void,
+    );
+    pub fn gdn_gated_rmsnorm_bf16(
+        x: *const bf16,
+        z: *const bf16,
+        gamma: *const f32,
+        out: *mut bf16,
+        rows: c_int,
+        dim: c_int,
+        stream: *const c_void,
+    );
+
+    // ─── GDN mamba scatter rows (to be ported to Choreo) ───
     pub fn gdn_mamba_scatter_f32(
         src: *const f32,
         dst: *mut f32,
