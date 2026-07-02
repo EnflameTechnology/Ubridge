@@ -57,7 +57,7 @@ impl GcuLaunchConfig {
     }
 
     pub fn set_shared_memory(&mut self, size_in_bytes: u32) {
-        const SHARED_MEM_SIZE: u32 = 48 * 1024 * 1024;
+        const SHARED_MEM_SIZE: u32 = 60 * 1024 * 1024;
         let shared_mem_bytes = ((size_in_bytes + 4095) / 4096) * 4096 + 4096;
         self.shared_mem_bytes = if shared_mem_bytes > SHARED_MEM_SIZE {
             SHARED_MEM_SIZE

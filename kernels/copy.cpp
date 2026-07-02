@@ -96,7 +96,9 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, con
     bool cacheable_l2 = in_size > MAX_THREADS && in_size * sizeof(T) < SHARE_BUFFER_SIZE;
 
     T* src_cached = reinterpret_cast<T*>(raw_cache);
+    __shared__ mapped_ptr shared_l3_addr;
     mapped_ptr src_l3_addr;
+    bool use_mmap = false;
     if (cacheable_l1){
       src_cached = reinterpret_cast<T*>(buffer + TILESIZE);
       ctx.config_memcpy(
@@ -111,12 +113,19 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, con
         cache_ctx.trigger_and_wait();
       }
     } else {
-      int in_map_size = AlignUp(in_size, NUMS_SPLIT) * sizeof(T);
-      src_l3_addr = map_mem_ex(reinterpret_cast<generic_ptr>(in), in_map_size);
-      src_cached = reinterpret_cast<T*>(src_l3_addr);
+      use_mmap = true;
+      size_t in_map_size = AlignUp(in_size, NUMS_SPLIT) * sizeof(T);
+      if (GetThreadIdxInBlock() == 0) {
+        shared_l3_addr = map_mem_ex(reinterpret_cast<generic_ptr>(in), (int)in_map_size);
+      }
     }
 
     __syncthreads();
+
+    if (use_mmap) {
+      src_l3_addr = shared_l3_addr;
+      src_cached = reinterpret_cast<T*>(src_l3_addr);
+    }
 
     for (int i = 0; i < thread_step; i+=TILESIZE) {
       int bufsize = (i + TILESIZE < thread_step) ? TILESIZE : thread_step - i;
@@ -129,10 +138,13 @@ __device__ void ucopy_multithread_cache(T* in, T* out, const size_t in_size, con
       tops::mdspan buffer_l1(tops::Private, buffer, bufsize);
       tops::deslice(ctx, out_hbm, buffer_l1, {offset});
     }
-    if (!cacheable_l1 && !cacheable_l2) {
-      int in_map_size = AlignUp(in_size, NUMS_SPLIT) * sizeof(T);
-      unmap_mem_ex(src_l3_addr, in_map_size);
-    }  
+    if (use_mmap) {
+      __syncthreads();
+      if (GetThreadIdxInBlock() == 0) {
+        size_t in_map_size = AlignUp(in_size, NUMS_SPLIT) * sizeof(T);
+        unmap_mem_ex(src_l3_addr, (int)in_map_size);
+      }
+    }
 }
 
 #ifdef GATHER_COPY

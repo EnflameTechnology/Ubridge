@@ -14,7 +14,7 @@
 #include <tops/bfloat.h>
 using namespace std;
 using namespace tops;
-#define MAX_MAP_MEM_SIZE 256 * 1024 * 1024
+#define MAX_MAP_MEM_SIZE (252 * 1024 * 1024)
 #define FUNC_ATTRIBUTE (noinline, no_mem_alias_in_vldst, no_mem_alias_in_tar, \
    loop_iterator_less_than_1024, enable_software_pipeliner, enable_bc_resolver)
 

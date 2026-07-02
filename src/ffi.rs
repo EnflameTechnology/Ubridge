@@ -726,4 +726,14 @@ extern "C" {
         dtype_code: c_int,
         stream: *const c_void,
     ) -> c_int;
+
+    pub fn topsaten_sum(
+        output: *mut c_void,
+        input: *const c_void,
+        reduce_dim: c_int,
+        num_dims: c_int,
+        input_dims: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
 }

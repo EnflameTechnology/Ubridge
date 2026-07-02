@@ -456,4 +456,67 @@ int topsaten_sort(
     return static_cast<int>(st);
 }
 
+// =========================================================================
+// Reduce Sum
+// =========================================================================
+
+/**
+ * Reduce sum over a single dimension.
+ *
+ * input:  contiguous tensor of rank 1..5
+ * output: input with dim `reduce_dim` removed (keepdims=false)
+ * reduce_dim: dimension to reduce (0-based)
+ * num_dims: rank of input
+ * input_dims: array of num_dims int64 values (input shape)
+ * dtype_code: 4=f16, 5=bf16, 8=f32
+ */
+int topsaten_sum(
+    void *output_ptr, void *input_ptr,
+    int32_t reduce_dim, int32_t num_dims,
+    int64_t *input_dims,
+    int32_t dtype_code, void *stream_) {
+    ensure_ops_init();
+
+    topsStream_t stream = reinterpret_cast<topsStream_t>(stream_);
+    topsatenDataType_t dtype = dtype_from_code(dtype_code);
+
+    // Build input tensor
+    int64_t in_strides[8];
+    in_strides[num_dims - 1] = 1;
+    for (int i = num_dims - 2; i >= 0; --i)
+        in_strides[i] = in_strides[i + 1] * input_dims[i + 1];
+    topsatenSize_t in_dim_size(input_dims, num_dims);
+    topsatenSize_t in_stride_size(in_strides, num_dims);
+    topsatenTensor t_input(in_dim_size, in_stride_size, dtype,
+                           static_cast<topsatenDeviceMemHandle_t>(input_ptr));
+
+    // Build output tensor (input shape with reduce_dim removed)
+    int64_t out_dims[8];
+    int out_rank = 0;
+    for (int i = 0; i < num_dims; ++i) {
+        if (i != reduce_dim)
+            out_dims[out_rank++] = input_dims[i];
+    }
+    if (out_rank == 0) {
+        out_dims[0] = 1;
+        out_rank = 1;
+    }
+    int64_t out_strides[8];
+    out_strides[out_rank - 1] = 1;
+    for (int i = out_rank - 2; i >= 0; --i)
+        out_strides[i] = out_strides[i + 1] * out_dims[i + 1];
+    topsatenSize_t out_dim_size(out_dims, out_rank);
+    topsatenSize_t out_stride_size(out_strides, out_rank);
+    topsatenTensor t_output(out_dim_size, out_stride_size, dtype,
+                            static_cast<topsatenDeviceMemHandle_t>(output_ptr));
+
+    int64_t dim_arr[1] = { static_cast<int64_t>(reduce_dim) };
+    topsatenSize_t dimensions(dim_arr, 1);
+
+    topsatenStatus_t st = topsaten::topsatenSum(
+        t_output, t_input, dimensions, false, dtype, stream);
+
+    return static_cast<int>(st);
+}
+
 } // extern "C"
