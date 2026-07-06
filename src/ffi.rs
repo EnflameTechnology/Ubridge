@@ -736,4 +736,292 @@ extern "C" {
         dtype_code: c_int,
         stream: *const c_void,
     ) -> c_int;
+
+    pub fn ubridge_memcpy_d2d(
+        dst: *mut c_void,
+        src: *const c_void,
+        bytes: usize,
+        stream: *const c_void,
+    ) -> c_int;
+
+    pub fn topsaten_rotary_embedding(
+        query: *mut c_void,
+        key: *mut c_void,
+        positions: *const c_void,
+        cos_sin_cache: *const c_void,
+        num_tokens: c_int,
+        q_num_heads: c_int,
+        k_num_heads: c_int,
+        head_size: c_int,
+        rot_dim: c_int,
+        max_position: c_int,
+        is_neox: c_int,
+        qk_dtype_code: c_int,
+        cache_dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+
+    // ─── Unary ops ───
+    pub fn topsaten_exp(
+        out: *mut c_void,
+        inp: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_log(
+        out: *mut c_void,
+        inp: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_sin(
+        out: *mut c_void,
+        inp: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_cos(
+        out: *mut c_void,
+        inp: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_tanh_op(
+        out: *mut c_void,
+        inp: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_silu(
+        out: *mut c_void,
+        inp: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_gelu(
+        out: *mut c_void,
+        inp: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_rsqrt(
+        out: *mut c_void,
+        inp: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_sqrt(
+        out: *mut c_void,
+        inp: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_neg(
+        out: *mut c_void,
+        inp: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_abs(
+        out: *mut c_void,
+        inp: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_sigmoid(
+        out: *mut c_void,
+        inp: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_reciprocal(
+        out: *mut c_void,
+        inp: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+
+    // ─── Binary ops ───
+    pub fn topsaten_add(
+        out: *mut c_void,
+        lhs: *const c_void,
+        rhs: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_sub(
+        out: *mut c_void,
+        lhs: *const c_void,
+        rhs: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_mul(
+        out: *mut c_void,
+        lhs: *const c_void,
+        rhs: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+    pub fn topsaten_div(
+        out: *mut c_void,
+        lhs: *const c_void,
+        rhs: *const c_void,
+        num_el: i64,
+        ndim: c_int,
+        shape: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+
+    // ─── Efficient Attention ───
+    pub fn topsaten_efficient_attention(
+        out: *mut c_void,
+        q: *const c_void,
+        k: *const c_void,
+        v: *const c_void,
+        bias: *const c_void,
+        batch: c_int,
+        q_seq: c_int,
+        kv_seq: c_int,
+        num_heads: c_int,
+        num_kv_heads: c_int,
+        head_size: c_int,
+        scale: f32,
+        is_causal: c_int,
+        has_bias: c_int,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+
+    // ─── Flash Attention (topsfa) ───
+    pub fn topsfa_flash_attn_fwd(
+        out: *mut c_void,
+        softmax_lse: *mut c_void,
+        q: *const c_void,
+        k: *const c_void,
+        v: *const c_void,
+        alibi_slopes: *const c_void,
+        batch: c_int,
+        seqlen_q: c_int,
+        seqlen_k: c_int,
+        num_heads: c_int,
+        num_heads_k: c_int,
+        head_size: c_int,
+        softmax_scale: f32,
+        softcap: f32,
+        is_causal: c_int,
+        window_size_left: c_int,
+        window_size_right: c_int,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+
+    pub fn topsfa_flash_attn_varlen_fwd(
+        out: *mut c_void,
+        softmax_lse: *mut c_void,
+        q: *const c_void,
+        k: *const c_void,
+        v: *const c_void,
+        cu_seqlens_q: *const c_void,
+        cu_seqlens_k: *const c_void,
+        block_table: *const c_void,
+        alibi_slopes: *const c_void,
+        total_q: c_int,
+        total_k: c_int,
+        batch: c_int,
+        num_heads: c_int,
+        num_heads_k: c_int,
+        head_size: c_int,
+        max_seqlen_q: c_int,
+        max_seqlen_k: c_int,
+        softmax_scale: f32,
+        softcap: f32,
+        is_causal: c_int,
+        window_size_left: c_int,
+        window_size_right: c_int,
+        has_block_table: c_int,
+        block_table_batch: c_int,
+        block_table_max_blocks: c_int,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+
+    pub fn topsfa_flash_attn_fwd_kvcache(
+        out: *mut c_void,
+        softmax_lse: *mut c_void,
+        q: *const c_void,
+        kcache: *const c_void,
+        vcache: *const c_void,
+        seqlens_k: *const c_void,
+        block_table: *const c_void,
+        alibi_slopes: *const c_void,
+        batch: c_int,
+        seqlen_q: c_int,
+        num_heads: c_int,
+        num_heads_k: c_int,
+        head_size: c_int,
+        seqlen_k: c_int,
+        page_block_size: c_int,
+        num_blocks: c_int,
+        max_num_blocks_per_seq: c_int,
+        softmax_scale: f32,
+        softcap: f32,
+        is_causal: c_int,
+        window_size_left: c_int,
+        window_size_right: c_int,
+        is_rotary_interleaved: c_int,
+        num_splits: c_int,
+        has_block_table: c_int,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
 }
