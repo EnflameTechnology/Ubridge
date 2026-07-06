@@ -1,6 +1,12 @@
 use core::ffi::{c_int, c_void};
 use half::{bf16, f16};
-
+use tops_backend::driv;
+#[repr(C)]
+pub struct dim3 {
+    pub x: u32,
+    pub y: u32,
+    pub z: u32,
+}
 extern "C" {
     pub fn topk_f32(
         input: *mut f32,
@@ -563,7 +569,28 @@ extern "C" {
         dim_blocks: u32,
         stream: *const c_void,
     );
-
+    
+    pub fn reshape_and_cache_flash_host(
+        dimBlocks: dim3,
+        dimThreads: dim3,
+        key: *const c_void,          // [num_tokens, num_heads, head_size]
+        value: *const c_void,        // [num_tokens, num_heads, head_size]
+        slot_mapping: *const c_void, // [num_tokens]
+        key_cache: *const c_void,    // [num_blocks, block_size, num_heads, head_size]
+        value_cache: *const c_void,  // [num_blocks, block_size, num_heads, head_size]
+        dataType: i32,
+        num_tokens: c_int,
+        num_heads: c_int,
+        head_size: c_int,
+        num_blocks: c_int,
+        block_size: c_int,
+        key_stride: c_int,
+        value_stride: c_int,
+        block_stride: c_int,
+        page_stride: c_int,
+        head_stride: c_int,
+        stream: driv::topsStream_t,
+    );
 }
 
 #[cfg(feature = "aten")]

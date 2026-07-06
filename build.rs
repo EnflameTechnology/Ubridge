@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 const BC_FILE_NAME: &str = "acore.bc";
 
-const KERNELS: [&str; 32] = [
+const KERNELS: [&str; 33] = [
     "unary",
     "fill",
     "binary",
@@ -37,6 +37,7 @@ const KERNELS: [&str; 32] = [
     "gdn_recurrence_varlen_host",
     "gdn_decode_slots_host",
     "causal_conv1d_host",
+    "cache_host",
 ];
 
 fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
