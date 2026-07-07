@@ -146,27 +146,8 @@ __global__ void reshape_and_cache_flash_kernel(
   }
 }
 
-template __global__ void reshape_and_cache_flash_kernel<float>(
-    float* key, float* value, int64_t* slot_mapping, float* key_cache,
-    float* value_cache, int num_tokens, int num_heads, int head_size,
-    int num_blocks, int block_size, int key_stride0, int value_stride0,
-    int block_stride);
-
-template __global__ void reshape_and_cache_flash_kernel<tops::half>(
-    tops::half* key, tops::half* value, int64_t* slot_mapping,
-    tops::half* key_cache, tops::half* value_cache, int num_tokens,
-    int num_heads, int head_size, int num_blocks, int block_size,
-    int key_stride0, int value_stride0, int block_stride);
-
-template __global__
-void reshape_and_cache_flash_kernel<tops::bfloat>(
-    tops::bfloat* key, tops::bfloat* value, int64_t* slot_mapping,
-    tops::bfloat* key_cache, tops::bfloat* value_cache, int num_tokens,
-    int num_heads, int head_size, int num_blocks, int block_size,
-    int key_stride0, int value_stride0, int block_stride);
-
 #define CALL_RESHAPE_AND_CACHE_FLASH_KERNEL(data_type)                        \
-  reshape_and_cache_flash_kernel<<<numBlocks, dimBlocks, 0, stream>>>( \
+  reshape_and_cache_flash_kernel<data_type><<<numBlocks, dimBlocks, 0, stream>>>( \
       reinterpret_cast<data_type*>(dev_key),                                  \
       reinterpret_cast<data_type*>(dev_value),                                \
       reinterpret_cast<int64_t*>(dev_slot_mapping),                           \
@@ -175,7 +156,7 @@ void reshape_and_cache_flash_kernel<tops::bfloat>(
       head_size, num_blocks, block_size, key_stride0, value_stride0,          \
       block_stride);
 
-extern "C" topsError_t reshape_and_cache_flash_host(
+extern "C" void reshape_and_cache_flash_host(
     dim3 numBlocks, dim3 dimBlocks, void* dev_key, void* dev_value,
     void* dev_slot_mapping, void* dev_key_cache, void* dev_value_cache,
     int dataType, int num_tokens, int num_heads, int head_size, int num_blocks,
