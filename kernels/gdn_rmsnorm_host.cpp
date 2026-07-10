@@ -98,23 +98,7 @@ __global__ void __choreo_device_gdn_gated_rmsnorm_bf16(choreo::bf16 * X, choreo:
 void gdn_gated_rmsnorm_bf16(const choreo::spanned_view<choreo::bf16, 2> & X, const choreo::spanned_view<choreo::bf16, 2> & Z, const choreo::spanned_view<choreo::f32, 1> & Gamma, const choreo::spanned_view<choreo::bf16, 2> & Out, choreo::stream_t _s) {
   auto &DIM = X.shape()[1];
   auto &ROWS = X.shape()[0];
-  choreo::runtime_check(X.shape()[1] == Z.shape()[1], "The shapes of the 1st parameter (dim: 1) and the 2nd parameter (dim: 1) are inconsistent.");
-  choreo::runtime_check(Z.shape()[1] == Gamma.shape()[0], "The shapes of the 2nd parameter (dim: 1) and the 3rd parameter (dim: 0) are inconsistent.");
-  choreo::runtime_check(Gamma.shape()[0] == Out.shape()[1], "The shapes of the 3rd parameter (dim: 0) and the 4th parameter (dim: 1) are inconsistent.");
-  choreo::runtime_check(X.shape()[0] == Z.shape()[0], "The shapes of the 1st parameter (dim: 0) and the 2nd parameter (dim: 0) are inconsistent.");
-  choreo::runtime_check(Z.shape()[0] == Out.shape()[0], "The shapes of the 2nd parameter (dim: 0) and the 4th parameter (dim: 0) are inconsistent.");
 
-  choreo::runtime_check((static_cast<long long>(DIM) * 4LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 71.14");
-  choreo::runtime_check((static_cast<long long>(DIM) * 4LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 71.14");
-  choreo::runtime_check((static_cast<long long>(DIM) * 2LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 80.22");
-  choreo::runtime_check((static_cast<long long>(DIM) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_gated_rmsnorm_bf16::DIM < 16777216., 80.37");
-  choreo::runtime_check((static_cast<long long>(DIM) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_gated_rmsnorm_bf16::DIM < 16777216., 80.69");
-  choreo::runtime_check((static_cast<long long>(DIM) * 2LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 81.22");
-  choreo::runtime_check((static_cast<long long>(DIM) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_gated_rmsnorm_bf16::DIM < 16777216., 81.37");
-  choreo::runtime_check((static_cast<long long>(DIM) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_gated_rmsnorm_bf16::DIM < 16777216., 81.69");
-  choreo::runtime_check((static_cast<long long>(DIM) * 2LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 86.17");
-  choreo::runtime_check((static_cast<long long>(DIM) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_gated_rmsnorm_bf16::DIM < 16777216., 86.26");
-  choreo::runtime_check((static_cast<long long>(DIM) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_gated_rmsnorm_bf16::DIM < 16777216., 86.33");
   HeapSimulator::Chunks __co__local_chunks;
   __co__local_chunks.push_back({static_cast<size_t>((DIM * 4)), {{5,20}}, "_gdn_gated_rmsnorm_bf16_paraby_0_paraby_1_l_gamma_f32"});
   __co__local_chunks.push_back({static_cast<size_t>((DIM * 2)), {{8,20}}, "_gdn_gated_rmsnorm_bf16_paraby_0_paraby_1_l_x"});
@@ -122,7 +106,6 @@ void gdn_gated_rmsnorm_bf16(const choreo::spanned_view<choreo::bf16, 2> & X, con
   HeapSimulator __co_local_heap_simulator;
   HeapSimulator::Result __co__local_result = __co_local_heap_simulator.Allocate(__co__local_chunks, 512);
   unsigned __co__local_spm_size = __co__local_result.heap_size;
-  choreo::runtime_check(__co__local_spm_size <= (size_t)1572352, "In the memory reuse of dynamic shapes, the size of the initial local spm should not exceed the memory usage limit 1572352 bytes.");
   unsigned long __co__local_chunk_offsets[3];
   size_t __co__local_chunks_idx = 0;
   for (const auto& [buffer_id, offset] : __co__local_result.chunk_offsets)

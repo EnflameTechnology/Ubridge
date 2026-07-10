@@ -33,58 +33,74 @@ __co_device__ void l2norm_vec_inplace(void* buf_v, float eps) {
     *(vb*)buf = tcle::cvt<vb>(result);
 }
 
-__global__ void __choreo_device_gdn_l2_norm_bf16(choreo::bf16 * Input, choreo::bf16 * Output, unsigned DIM, unsigned ROWS, unsigned long mr_offset_gdn_l2_norm_bf16_paraby_0_paraby_1_l_in) {
-  choreo::choreo_sdte __choreo_dte_pool__[1];
-  for (int __i = 0; __i < 1; ++__i) __choreo_dte_pool__[__i].init();
-  { // parallel-by
+__global__ void __choreo_device_gdn_l2_norm_bf16(choreo::bf16 * Input, choreo::bf16 * Output, unsigned DIM, unsigned ROWS, unsigned long mr_offset_gdn_l2_norm_bf16_paraby_0_paraby_1_in_chunk) {
+  choreo::choreo_sdte __choreo_dte_pool__[2];
+  for (int __i = 0; __i < 2; ++__i) __choreo_dte_pool__[__i].init();
+  { // parallel-by: 51.18
   __local__ __valigned__ unsigned char anon_0[1572352];
   int sip_id = __tops_tid_x() * 2 + __tops_bid_x();
   int rows_per_sip = ((ROWS + 23) / 24);
-  choreo::bfloat16* l_in = (choreo::bfloat16*)(anon_0 + mr_offset_gdn_l2_norm_bf16_paraby_0_paraby_1_l_in);
+  choreo::bfloat16* in_chunk = (choreo::bfloat16*)(anon_0 + mr_offset_gdn_l2_norm_bf16_paraby_0_paraby_1_in_chunk);
+  int chunks_per_sip = ((rows_per_sip + 31) / 32);
+  // with-in: 59.9
   {
-    int __iv_row_idx__elem__0 = 0;
-    for (__iv_row_idx__elem__0 = 0; __iv_row_idx__elem__0 < rows_per_sip; ++__iv_row_idx__elem__0) {
-      int row = (rows_per_sip * sip_id) + __iv_row_idx__elem__0;
-      if ((row < ROWS)) {
-        choreo::future l(__choreo_dte_pool__[0], "l", 58, 21, l_in);
+    int __iv_chunk_idx__elem__0 = 0;
+    // foreach: 59.9
+    for (__iv_chunk_idx__elem__0 = 0; __iv_chunk_idx__elem__0 < chunks_per_sip; ++__iv_chunk_idx__elem__0) {
+      int base_row = (rows_per_sip * sip_id) + __iv_chunk_idx__elem__0 * 32;
+      int chunk_rows = rows_per_sip - __iv_chunk_idx__elem__0 * 32;
+      // if-else: 62.13
+      if ((chunk_rows > 32)) {
+        chunk_rows = 32;
+      } // end if-else: 62.13
+      // inthreads: 64.13
+      if ((base_row < ROWS)) {
+        // if-else: 65.17
+        if ((base_row + chunk_rows > ROWS)) {
+          chunk_rows = (ROWS - base_row);
+        } // end if-else: 65.17
+        choreo::future l(__choreo_dte_pool__[0], "l", 67, 21, in_chunk);
         tops::mdspan __mds0_Input(tops::Global, (choreo::bfloat16*)Input, ROWS, DIM);
-        tops::mdspan __mds1_l_in(tops::Private, (choreo::bfloat16*)l_in, 1, DIM);
-        int __slice_offset0__Input_2_l_in[] = {(int)(row), 0};
-        tops::event l__event__ = tops::slice_async(*l.get_ctx(), __mds1_l_in, __mds0_Input, __slice_offset0__Input_2_l_in);
+        tops::mdspan __mds1_in_chunk(tops::Private, (choreo::bfloat16*)in_chunk, 32, DIM);
+        int __slice_offset0__Input_2_in_chunk[] = {(int)(base_row), 0};
+        int __deslice_offset0__in_chunk_2_Input[] = {0, 0};
+        unsigned int __slice_shape1__Input_2_in_chunk[] = {static_cast<unsigned int>(chunk_rows), static_cast<unsigned int>(DIM)};
+        tops::event l__event__ = tops::slice_deslice_async(*l.get_ctx(), __mds1_in_chunk, __mds0_Input, __slice_offset0__Input_2_in_chunk, __slice_shape1__Input_2_in_chunk, __deslice_offset0__in_chunk_2_Input);
         l.set_event(l__event__);
         l.wait();
-        l2norm_vec_inplace((choreo::bf16*)l_in, 0.000001f);
-        choreo::future __choreo_anon_fut__0(__choreo_dte_pool__[0], "", 63, 17);
-        tops::mdspan __mds2_l_in(tops::Private, (choreo::bfloat16*)l_in, 1, DIM);
+        // with-in: 70.17
+        {
+          int __iv_r__elem__0 = 0;
+          // foreach: 70.17
+          for (__iv_r__elem__0 = 0; __iv_r__elem__0 < chunk_rows; ++__iv_r__elem__0) {
+            l2norm_vec_inplace((choreo::bf16*)in_chunk + (DIM * __iv_r__elem__0), 0.000001f);
+          } // r__elem__0
+          __iv_r__elem__0 = 0;
+        }
+        choreo::future __choreo_anon_fut__0(__choreo_dte_pool__[1], "", 76, 17, Output);
+        tops::mdspan __mds2_in_chunk(tops::Private, (choreo::bfloat16*)in_chunk, 32, DIM);
         tops::mdspan __mds3_Output(tops::Global, (choreo::bfloat16*)Output, ROWS, DIM);
-        int __deslice_offset0__Output_2_l_in[] = {(int)(row), 0};
-        tops::deslice(*__choreo_anon_fut__0.get_ctx(), __mds3_Output, __mds2_l_in, __deslice_offset0__Output_2_l_in);
+        int __slice_offset1__in_chunk_2_Output[] = {0, 0};
+        int __deslice_offset1__Output_2_in_chunk[] = {(int)(base_row), 0};
+        unsigned int __slice_shape2__in_chunk_2_Output[] = {static_cast<unsigned int>(chunk_rows), static_cast<unsigned int>(DIM)};
+        tops::slice_deslice(*__choreo_anon_fut__0.get_ctx(), __mds3_Output, __mds2_in_chunk, __slice_offset1__in_chunk_2_Output, __slice_shape2__in_chunk_2_Output, __deslice_offset1__Output_2_in_chunk);
       }
-      __syncthreads();
-    }
-    __iv_row_idx__elem__0 = 0;
+      __syncthreads(); // end inthreads
+    } // chunk_idx__elem__0
+    __iv_chunk_idx__elem__0 = 0;
   }
-  }
+  } // end parallel-by
 }
 
 void gdn_l2_norm_bf16(const choreo::spanned_view<choreo::bf16, 2> & Input, const choreo::spanned_view<choreo::bf16, 2> & Output, choreo::stream_t _s) {
   auto &DIM = Input.shape()[1];
   auto &ROWS = Input.shape()[0];
-  choreo::runtime_check(Input.shape()[1] == Output.shape()[1], "The shapes of the 1st parameter (dim: 1) and the 2nd parameter (dim: 1) are inconsistent.");
-  choreo::runtime_check(Input.shape()[0] == Output.shape()[0], "The shapes of the 1st parameter (dim: 0) and the 2nd parameter (dim: 0) are inconsistent.");
 
-  choreo::runtime_check((static_cast<long long>(DIM) * 2LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 58.21");
-  choreo::runtime_check((static_cast<long long>(DIM) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_l2_norm_bf16::DIM < 16777216., 58.36");
-  choreo::runtime_check((static_cast<long long>(DIM) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_l2_norm_bf16::DIM < 16777216., 58.72");
-  choreo::runtime_check((static_cast<long long>(DIM) * 2LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 63.17");
-  choreo::runtime_check((static_cast<long long>(DIM) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_l2_norm_bf16::DIM < 16777216., 63.26");
-  choreo::runtime_check((static_cast<long long>(DIM) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_l2_norm_bf16::DIM < 16777216., 63.34");
   HeapSimulator::Chunks __co__local_chunks;
   __co__local_chunks.push_back({static_cast<size_t>((DIM * 2)), {{5,15}}, "_gdn_l2_norm_bf16_paraby_0_paraby_1_l_in"});
   HeapSimulator __co_local_heap_simulator;
   HeapSimulator::Result __co__local_result = __co_local_heap_simulator.Allocate(__co__local_chunks, 512);
   unsigned __co__local_spm_size = __co__local_result.heap_size;
-  choreo::runtime_check(__co__local_spm_size <= (size_t)1572352, "In the memory reuse of dynamic shapes, the size of the initial local spm should not exceed the memory usage limit 1572352 bytes.");
   unsigned long __co__local_chunk_offsets[1];
   size_t __co__local_chunks_idx = 0;
   for (const auto& [buffer_id, offset] : __co__local_result.chunk_offsets)

@@ -116,31 +116,7 @@ __global__ void __choreo_device_gdn_fused_gating_bf16(float * A_log, choreo::bf1
 void gdn_fused_gating_bf16(const choreo::spanned_view<choreo::f32, 1> & A_log, const choreo::spanned_view<choreo::bf16, 2> & A, const choreo::spanned_view<choreo::bf16, 2> & B, const choreo::spanned_view<choreo::f32, 1> & Dt_bias, const choreo::spanned_view<choreo::bf16, 2> & G, const choreo::spanned_view<choreo::bf16, 2> & Beta, choreo::stream_t _s) {
   auto &NUM_HEADS = A_log.shape()[0];
   auto &TOTAL = A.shape()[0];
-  choreo::runtime_check(A_log.shape()[0] == A.shape()[1], "The shapes of the 1st parameter (dim: 0) and the 2nd parameter (dim: 1) are inconsistent.");
-  choreo::runtime_check(A.shape()[1] == B.shape()[1], "The shapes of the 2nd parameter (dim: 1) and the 3rd parameter (dim: 1) are inconsistent.");
-  choreo::runtime_check(B.shape()[1] == Dt_bias.shape()[0], "The shapes of the 3rd parameter (dim: 1) and the 4th parameter (dim: 0) are inconsistent.");
-  choreo::runtime_check(Dt_bias.shape()[0] == G.shape()[1], "The shapes of the 4th parameter (dim: 0) and the 5th parameter (dim: 1) are inconsistent.");
-  choreo::runtime_check(G.shape()[1] == Beta.shape()[1], "The shapes of the 5th parameter (dim: 1) and the 6th parameter (dim: 1) are inconsistent.");
-  choreo::runtime_check(A.shape()[0] == B.shape()[0], "The shapes of the 2nd parameter (dim: 0) and the 3rd parameter (dim: 0) are inconsistent.");
-  choreo::runtime_check(B.shape()[0] == G.shape()[0], "The shapes of the 3rd parameter (dim: 0) and the 5th parameter (dim: 0) are inconsistent.");
-  choreo::runtime_check(G.shape()[0] == Beta.shape()[0], "The shapes of the 5th parameter (dim: 0) and the 6th parameter (dim: 0) are inconsistent.");
 
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) * 4LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 78.14");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) * 4LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 78.14");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) * 4LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 79.14");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) * 4LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 79.14");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) * 2LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 95.23");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_fused_gating_bf16::NUM_HEADS < 16777216., 95.38");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_fused_gating_bf16::NUM_HEADS < 16777216., 95.76");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) * 2LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 96.23");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_fused_gating_bf16::NUM_HEADS < 16777216., 96.38");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_fused_gating_bf16::NUM_HEADS < 16777216., 96.76");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) * 2LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 101.17");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_fused_gating_bf16::NUM_HEADS < 16777216., 101.26");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_fused_gating_bf16::NUM_HEADS < 16777216., 101.33");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) * 2LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 102.17");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_fused_gating_bf16::NUM_HEADS < 16777216., 102.26");
-  choreo::runtime_check((static_cast<long long>(NUM_HEADS) < 16777216LL), "On GCU300, must satisfy: the 2nd dim ::gdn_fused_gating_bf16::NUM_HEADS < 16777216., 102.36");
   HeapSimulator::Chunks __co__local_chunks;
   __co__local_chunks.push_back({static_cast<size_t>((NUM_HEADS * 2)), {{14,29}}, "_gdn_fused_gating_bf16_paraby_0_paraby_1_l_a"});
   __co__local_chunks.push_back({static_cast<size_t>((NUM_HEADS * 2)), {{10,29}}, "_gdn_fused_gating_bf16_paraby_0_paraby_1_l_alog"});
@@ -153,7 +129,6 @@ void gdn_fused_gating_bf16(const choreo::spanned_view<choreo::f32, 1> & A_log, c
   HeapSimulator __co_local_heap_simulator;
   HeapSimulator::Result __co__local_result = __co_local_heap_simulator.Allocate(__co__local_chunks, 512);
   unsigned __co__local_spm_size = __co__local_result.heap_size;
-  choreo::runtime_check(__co__local_spm_size <= (size_t)1572352, "In the memory reuse of dynamic shapes, the size of the initial local spm should not exceed the memory usage limit 1572352 bytes.");
   unsigned long __co__local_chunk_offsets[8];
   size_t __co__local_chunks_idx = 0;
   for (const auto& [buffer_id, offset] : __co__local_result.chunk_offsets)

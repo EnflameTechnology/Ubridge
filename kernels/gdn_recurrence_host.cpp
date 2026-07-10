@@ -180,25 +180,7 @@ __global__ void __choreo_device_gdn_recurrence_bf16(choreo::bf16 * Q, choreo::bf
 void gdn_recurrence_bf16(const choreo::spanned_view<choreo::bf16, 3> & Q, const choreo::spanned_view<choreo::bf16, 3> & K, const choreo::spanned_view<choreo::bf16, 3> & V, const choreo::spanned_view<choreo::f32, 2> & G, const choreo::spanned_view<choreo::f32, 2> & Beta, const choreo::spanned_view<choreo::f32, 3> & State, const choreo::spanned_view<choreo::f32, 3> & Out, choreo::stream_t _s) {
   auto &BH = Q.shape()[0];
   auto &SEQ = Q.shape()[1];
-  choreo::runtime_check(Q.shape()[2] == 128, "shape inconsistent on the 1st parameter ('Q', dim: 2): expect: 128, but got " + std::to_string(Q.shape()[2]) + ".");
-  choreo::runtime_check(K.shape()[2] == 128, "shape inconsistent on the 2nd parameter ('K', dim: 2): expect: 128, but got " + std::to_string(K.shape()[2]) + ".");
-  choreo::runtime_check(V.shape()[2] == 128, "shape inconsistent on the 3rd parameter ('V', dim: 2): expect: 128, but got " + std::to_string(V.shape()[2]) + ".");
-  choreo::runtime_check(State.shape()[1] == 128, "shape inconsistent on the 6th parameter ('State', dim: 1): expect: 128, but got " + std::to_string(State.shape()[1]) + ".");
-  choreo::runtime_check(State.shape()[2] == 128, "shape inconsistent on the 6th parameter ('State', dim: 2): expect: 128, but got " + std::to_string(State.shape()[2]) + ".");
-  choreo::runtime_check(Out.shape()[2] == 128, "shape inconsistent on the 7th parameter ('Out', dim: 2): expect: 128, but got " + std::to_string(Out.shape()[2]) + ".");
-  choreo::runtime_check(Q.shape()[0] == K.shape()[0], "The shapes of the 1st parameter (dim: 0) and the 2nd parameter (dim: 0) are inconsistent.");
-  choreo::runtime_check(K.shape()[0] == V.shape()[0], "The shapes of the 2nd parameter (dim: 0) and the 3rd parameter (dim: 0) are inconsistent.");
-  choreo::runtime_check(V.shape()[0] == G.shape()[0], "The shapes of the 3rd parameter (dim: 0) and the 4th parameter (dim: 0) are inconsistent.");
-  choreo::runtime_check(G.shape()[0] == Beta.shape()[0], "The shapes of the 4th parameter (dim: 0) and the 5th parameter (dim: 0) are inconsistent.");
-  choreo::runtime_check(Beta.shape()[0] == State.shape()[0], "The shapes of the 5th parameter (dim: 0) and the 6th parameter (dim: 0) are inconsistent.");
-  choreo::runtime_check(State.shape()[0] == Out.shape()[0], "The shapes of the 6th parameter (dim: 0) and the 7th parameter (dim: 0) are inconsistent.");
-  choreo::runtime_check(Q.shape()[1] == K.shape()[1], "The shapes of the 1st parameter (dim: 1) and the 2nd parameter (dim: 1) are inconsistent.");
-  choreo::runtime_check(K.shape()[1] == V.shape()[1], "The shapes of the 2nd parameter (dim: 1) and the 3rd parameter (dim: 1) are inconsistent.");
-  choreo::runtime_check(V.shape()[1] == G.shape()[1], "The shapes of the 3rd parameter (dim: 1) and the 4th parameter (dim: 1) are inconsistent.");
-  choreo::runtime_check(G.shape()[1] == Beta.shape()[1], "The shapes of the 4th parameter (dim: 1) and the 5th parameter (dim: 1) are inconsistent.");
-  choreo::runtime_check(Beta.shape()[1] == Out.shape()[1], "The shapes of the 5th parameter (dim: 1) and the 7th parameter (dim: 1) are inconsistent.");
 
-  choreo::runtime_check((static_cast<long long>(SEQ) != 0LL), "zero is detected for the 1st dim of the mdspan inside the with-in statement, 115.30");
   dim3 __gdn_recurrence_bf16_gdims0(2, 1, 1);
   dim3 __gdn_recurrence_bf16_bdims0(12, 1, 1);
   __choreo_device_gdn_recurrence_bf16<<<__gdn_recurrence_bf16_gdims0, __gdn_recurrence_bf16_bdims0, 0, _s>>>(Q.data(), K.data(), V.data(), G.data(), Beta.data(), State.data(), Out.data(), BH, SEQ);

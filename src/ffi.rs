@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_void};
+use core::ffi::{c_float, c_int, c_void};
 use half::{bf16, f16};
 use tops_backend::driv;
 #[repr(C)]
@@ -351,6 +351,80 @@ extern "C" {
         out: *mut f32,
         batch: c_int,
         heads: c_int,
+        k_dim: c_int,
+        v_dim: c_int,
+        max_slots: c_int,
+        num_blocks: u32,
+        dim_blocks: u32,
+        stream: *const c_void,
+    );
+
+    // ─── GDN decode with slots (GQA) ───
+    pub fn gdn_decode_slots_gqa_bf16(
+        q: *const bf16,
+        k: *const bf16,
+        v: *const bf16,
+        g: *const f32,
+        beta: *const f32,
+        state: *mut f32,
+        slots: *const i64,
+        qscale: *const f32,
+        out: *mut f32,
+        batch: c_int,
+        num_v_heads: c_int,
+        num_k_heads: c_int,
+        k_dim: c_int,
+        v_dim: c_int,
+        max_slots: c_int,
+        num_blocks: u32,
+        dim_blocks: u32,
+        stream: *const c_void,
+    );
+
+    // ─── GDN decode recurrence + post fused (gating + GQA + RMSNorm + SiLU(z)) ───
+    pub fn gdn_decode_recurrence_post_fused_bf16(
+        q: *const bf16,
+        k: *const bf16,
+        v: *const bf16,
+        a: *const bf16,
+        b: *const bf16,
+        a_log: *const f32,
+        dt_bias: *const f32,
+        z: *const bf16,
+        state: *mut f32,
+        slots: *const i64,
+        norm_weight: *const f32,
+        q_scale: c_float,
+        out: *mut bf16,
+        batch: c_int,
+        nkh: c_int,
+        nh: c_int,
+        k_dim: c_int,
+        v_dim: c_int,
+        max_slots: c_int,
+        num_blocks: u32,
+        dim_blocks: u32,
+        stream: *const c_void,
+    );
+
+    // ─── GDN decode L2Norm + recurrence + post fused (L2Norm + gating + GQA + RMSNorm + SiLU(z)) ───
+    pub fn gdn_decode_l2norm_recurrence_post_fused_bf16(
+        q: *const bf16,
+        k: *const bf16,
+        v: *const bf16,
+        a: *const bf16,
+        b: *const bf16,
+        a_log: *const f32,
+        dt_bias: *const f32,
+        z: *const bf16,
+        state: *mut f32,
+        slots: *const i64,
+        norm_weight: *const f32,
+        q_scale: c_float,
+        out: *mut bf16,
+        batch: c_int,
+        nkh: c_int,
+        nh: c_int,
         k_dim: c_int,
         v_dim: c_int,
         max_slots: c_int,
