@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
+use rayon::prelude::*;
 use reqwest::blocking::Client;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 const BC_FILE_NAME: &str = "acore.bc";
 
@@ -42,57 +43,279 @@ const KERNELS: [&str; 35] = [
     "cache_host",
 ];
 
-fn unzip(filename: PathBuf, path: PathBuf) -> Result<()> {
-    let mut command_tar = std::process::Command::new("tar");
-    command_tar.arg("-xf");
-    command_tar.arg(&filename);
-    command_tar.arg("-C");
-    command_tar.arg(&path);
+/// Minimum expected size of extracted libacoreop.bc (~305MB). Used to detect
+/// truncated extracts from a previous interrupted unpack.
+const LIBACOREOP_MIN_BYTES: u64 = 200 * 1024 * 1024;
 
+fn atomic_lib_ready(path: &Path) -> bool {
+    let bc = path.join("atomic/lib/libacoreop.bc");
+    match bc.metadata() {
+        Ok(m) => m.len() >= LIBACOREOP_MIN_BYTES,
+        Err(_) => false,
+    }
+}
+
+fn unzip(filename: &Path, path: &Path) -> Result<()> {
     std::fs::create_dir_all(path)?;
-    let output = command_tar
-        .spawn()
-        .context(format!("failed spawning tar"))?
-        .wait_with_output()?;
+    // Block until tar fully finishes — do not start topscc until this returns.
+    let output = std::process::Command::new("tar")
+        .arg("-xf")
+        .arg(filename)
+        .arg("-C")
+        .arg(path)
+        .output()
+        .context("failed spawning tar")?;
     if !output.status.success() {
         anyhow::bail!(
-            "tar error while executing: {:?}\n\n# stdout\n{:#}\n\n# stderr\n{:#}",
-            &command_tar,
+            "tar error while extracting {:?}:\n# stdout\n{}\n# stderr\n{}",
+            filename,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
-        )
+        );
     }
+    // Ensure data is durable before topscc mmaps libacoreop.bc.
+    let _ = std::process::Command::new("sync").status();
     Ok(())
 }
 
-fn check_atomic_op(path: PathBuf, kernel_dir: PathBuf) -> Result<()> {
-    let url = format!("{:}/{}", std::env::var("ATOMIC_URL")?, BC_FILE_NAME,);
-    let filename = if kernel_dir.join(BC_FILE_NAME).exists() {
+fn check_atomic_op(path: &Path, kernel_dir: &Path) -> Result<()> {
+    let atomic_dir = path.join("atomic");
+    let bc_path = atomic_dir.join("lib/libacoreop.bc");
+
+    if atomic_lib_ready(path) && atomic_dir.join("include").exists() {
+        println!(
+            "cargo:warning=atomic lib ready: {} ({} bytes)",
+            bc_path.display(),
+            bc_path.metadata()?.len()
+        );
+        return Ok(());
+    }
+
+    // Incomplete/missing extract from a prior failed build — wipe and redo.
+    if atomic_dir.exists() && !atomic_lib_ready(path) {
+        println!(
+            "cargo:warning=incomplete atomic extract at {}, re-extracting",
+            atomic_dir.display()
+        );
+        let _ = std::fs::remove_dir_all(&atomic_dir);
+    }
+
+    let tarball = if kernel_dir.join(BC_FILE_NAME).exists() {
         kernel_dir.join(BC_FILE_NAME)
     } else {
-        path.join("atomic/".to_string() + BC_FILE_NAME)
+        atomic_dir.join(BC_FILE_NAME)
     };
 
-    if !filename.exists() {
-        let _ = std::fs::create_dir(path.join("atomic/"));
+    if !tarball.exists() {
+        std::fs::create_dir_all(&atomic_dir)?;
+        let url = format!(
+            "{}/{}",
+            std::env::var("ATOMIC_URL")
+                .context("ATOMIC_URL not set and kernels/scorpio/acore.bc missing")?,
+            BC_FILE_NAME
+        );
         let client = Client::new();
-        match client.get(&url).send() {
-            Ok(mut response) => {
-                let mut file = std::fs::File::create(&filename)?;
-                std::io::copy(&mut response, &mut file)?;
-                unzip(filename, path.join("atomic/"))?
-            }
-            _ => {
-                anyhow::bail!(
-                    "error while configuring atomic dependencies, unable to obtain {:?}",
-                    url,
-                )
-            }
-        }
-    } else if !path.join("atomic/include").exists() || !path.join("atomic/lib").exists() {
-        unzip(filename, path.join("atomic/"))?
+        let mut response = client
+            .get(&url)
+            .send()
+            .with_context(|| format!("failed downloading {url}"))?;
+        let mut file = std::fs::File::create(&tarball)?;
+        std::io::copy(&mut response, &mut file)?;
+        file.sync_all()?;
+        drop(file);
     }
+
+    println!(
+        "cargo:warning=extracting atomic deps from {} → {} (blocking until done)",
+        tarball.display(),
+        atomic_dir.display()
+    );
+    unzip(&tarball, &atomic_dir)?;
+
+    if !atomic_lib_ready(path) {
+        anyhow::bail!(
+            "atomic extract finished but {} missing or too small (need >= {} bytes)",
+            bc_path.display(),
+            LIBACOREOP_MIN_BYTES
+        );
+    }
+    println!(
+        "cargo:warning=atomic extract complete: {} ({} bytes)",
+        bc_path.display(),
+        bc_path.metadata()?.len()
+    );
     Ok(())
+}
+
+/// Compile one kernel. Returns `Some(link_name)` for host kernels that need
+/// `cargo:rustc-link-lib`, or `None` for device fatbins.
+fn compile_kernel(
+    name: &str,
+    absolute_kernel_dir: &Path,
+    kernel_out_dir: &Path,
+    build_dir: &Path,
+    compiler: &str,
+    compute_cap: usize,
+) -> Result<Option<String>> {
+    let is_host_kernel = name.contains("_host");
+    let fatbin_file = if is_host_kernel {
+        build_dir.join(format!("{name}.a"))
+    } else {
+        kernel_out_dir.join(format!("{name}.topsfb"))
+    };
+    let kernel_file = absolute_kernel_dir.join(format!("{name}.cpp"));
+    let should_compile = if fatbin_file.exists() {
+        let in_modified = kernel_file.metadata()?.modified()?;
+        let out_modified = fatbin_file.metadata()?.modified()?;
+        in_modified.duration_since(out_modified).is_ok()
+    } else {
+        true
+    };
+    let build_file = if is_host_kernel {
+        build_dir.join(format!("{name}.o"))
+    } else {
+        // Unique per-kernel temp dir avoids --save-temps collisions under parallel topscc.
+        let tmp_dir = build_dir.join(format!("tmp_{name}"));
+        std::fs::create_dir_all(&tmp_dir)?;
+        tmp_dir.join(format!("{name}.topsfb"))
+    };
+
+    if should_compile {
+        if is_host_kernel {
+            let output = std::process::Command::new(compiler)
+                .arg(&kernel_file)
+                .arg(format!("-arch=gcu{compute_cap}"))
+                .arg("-O3")
+                .arg("-c")
+                .arg("-std=c++17")
+                .arg("-fPIC")
+                .arg("-ltops")
+                .arg("-Xclang")
+                .arg("-fallow-half-arguments-and-returns")
+                .arg("-o")
+                .arg(&build_file)
+                .arg(format!("-D__GCU_ARCH__={compute_cap}"))
+                .arg(format!("-D__KRT_ARCH__={compute_cap}"))
+                .arg("-D__ATOMIC_OP")
+                .arg("-D__ACORE_OP__")
+                .arg("-DTOPSCC_PRIVATE_DTE_AUTO_INIT")
+                .arg("-fno-omit-frame-pointer")
+                .arg("-DNDEBUG")
+                .arg(format!("-I{}", absolute_kernel_dir.display()))
+                .arg(format!(
+                    "-I{}",
+                    absolute_kernel_dir.join("atomic/include").display()
+                ))
+                .arg(format!(
+                    "-I{}",
+                    absolute_kernel_dir.join("atomic/include/common").display()
+                ))
+                .arg(format!(
+                    "--tops-device-lib-path={}",
+                    absolute_kernel_dir.join("atomic/lib").display()
+                ))
+                .arg("--tops-device-lib=libacoreop.bc")
+                .output()
+                .with_context(|| format!("failed spawning {compiler} for host kernel `{name}`"))?;
+            if !output.status.success() {
+                anyhow::bail!(
+                    "host kernel `{name}` compile failed (status {:?}):\n# stdout\n{}\n# stderr\n{}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+
+            let output_linker = std::process::Command::new("ar")
+                .arg("-crv")
+                .arg("-o")
+                .arg(&fatbin_file)
+                .arg(&build_file)
+                .output()
+                .with_context(|| format!("failed spawning ar for host kernel `{name}`"))?;
+            if !output_linker.status.success() {
+                anyhow::bail!(
+                    "host kernel `{name}` ar failed (status {:?}):\n# stdout\n{}\n# stderr\n{}",
+                    output_linker.status.code(),
+                    String::from_utf8_lossy(&output_linker.stdout),
+                    String::from_utf8_lossy(&output_linker.stderr)
+                );
+            }
+        } else {
+            let tmp_dir = build_file.parent().unwrap();
+            let output = std::process::Command::new(compiler)
+                .current_dir(tmp_dir)
+                .arg(&kernel_file)
+                .arg(format!("-arch=gcu{compute_cap}"))
+                .arg("-O3")
+                .arg("-std=c++17")
+                .arg("-fPIC")
+                .arg("-ltops")
+                .arg("-Xclang")
+                .arg("-fallow-half-arguments-and-returns")
+                .arg("-o")
+                .arg(&build_file)
+                .arg(format!("-D__GCU_ARCH__={compute_cap}"))
+                .arg(format!("-D__KRT_ARCH__={compute_cap}"))
+                .arg("-D__ATOMIC_OP")
+                .arg("-D__ACORE_OP__")
+                .arg("-DTOPS_DISABLE_FORCE_INLINE")
+                .arg("--target=x86_64-unknown-linux-gnu")
+                .arg("-fno-omit-frame-pointer")
+                .arg("-DNDEBUG")
+                .arg(format!(
+                    "-I{}",
+                    absolute_kernel_dir.join("atomic/include").display()
+                ))
+                .arg(format!(
+                    "-I{}",
+                    absolute_kernel_dir.join("atomic/include/common").display()
+                ))
+                .arg(format!(
+                    "--tops-device-lib-path={}",
+                    absolute_kernel_dir.join("atomic/lib").display()
+                ))
+                .arg("--tops-device-lib=libacoreop.bc")
+                .arg("--save-temps")
+                .output()
+                .with_context(|| format!("failed spawning {compiler} for kernel `{name}`"))?;
+
+            let tmp_fatbin = tmp_dir.join(format!("{name}.cpp-tops-dtu-enflame-tops.topsfb"));
+            if !output.status.success() && !tmp_fatbin.exists() {
+                anyhow::bail!(
+                    "device kernel `{name}` compile failed (status {:?}):\n# stdout\n{}\n# stderr\n{}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            let src_fatbin = if tmp_fatbin.exists() {
+                tmp_fatbin
+            } else {
+                build_file.clone()
+            };
+            std::fs::rename(&src_fatbin, &fatbin_file).with_context(|| {
+                format!(
+                    "failed moving {} → {} for kernel `{name}`",
+                    src_fatbin.display(),
+                    fatbin_file.display()
+                )
+            })?;
+        }
+    }
+
+    if is_host_kernel {
+        let lib_dst = build_dir.join(format!("lib{name}.a"));
+        std::fs::copy(&fatbin_file, &lib_dst).with_context(|| {
+            format!(
+                "failed copying {} → {} for host kernel `{name}`",
+                fatbin_file.display(),
+                lib_dst.display()
+            )
+        })?;
+        return Ok(Some(name.to_string()));
+    }
+    Ok(None)
 }
 
 fn main() -> Result<()> {
@@ -117,179 +340,68 @@ fn main() -> Result<()> {
     }
 
     let mut build_dir = PathBuf::from(std::env::var("OUT_DIR").context("OUT_DIR not set")?);
-    if !std::env::set_current_dir(&build_dir).is_ok() {
+    if std::env::set_current_dir(&build_dir).is_err() {
         build_dir = PathBuf::from(absolute_kernel_dir.clone());
     }
 
-    let compute_cap = 300 as usize;
+    let compute_cap = 300usize;
     let compiler = "/opt/tops/bin/topscc";
-    let mut first_atomic_check = true;
-    KERNELS
-        .iter()
-        .map(|f| {
-            let fname = f.to_string();
-            let is_host_kernel = fname.find("_host").is_some();
-            let fatbin_file = if is_host_kernel {
-                build_dir.join(format!("{}.a", f.to_string()))
-            } else {
-                kernel_out_dir.join(f.to_string() + ".topsfb")
-            };
-            let kernel_file = absolute_kernel_dir.join(f.to_string() + ".cpp");
-            let out_modified: Result<_, _> = fatbin_file.metadata().and_then(|m| m.modified());
-            let should_compile = if fatbin_file.exists() {
-                let in_modified = kernel_file.metadata().unwrap().modified().unwrap();
-                in_modified.duration_since(out_modified.unwrap()).is_ok()
-            } else {
-                true
-            };
-            let build_file = if is_host_kernel {
-                build_dir.join(f.to_string() + ".o")
-            } else {
-                build_dir.join(f.to_string() + ".topsfb")
-            };
-            if should_compile {
-                if first_atomic_check {
-                    first_atomic_check = false;
-                    check_atomic_op(absolute_kernel_dir.clone(), kernel_out_dir.clone())?;
-                }
-                let mut command = std::process::Command::new(compiler);
-                if is_host_kernel {
-                    command
-                    .arg(kernel_file)
-                    .arg(format!("-arch=gcu{compute_cap}"))
-                    .arg("-O3")
-                    .arg("-c")
-                    .arg("-std=c++17")
-                    .arg("-fPIC")
-                    .arg("-ltops")
-                    .arg("-Xclang")
-                    .arg("-fallow-half-arguments-and-returns")
-                    .args(["-o", build_file.to_str().unwrap()])
-                    .arg(format!("-D__GCU_ARCH__={compute_cap}"))
-                    .arg(format!("-D__KRT_ARCH__={compute_cap}"))
-                    .arg("-D__ATOMIC_OP")
-                    .arg("-D__ACORE_OP__")
-                    .arg("-DTOPSCC_PRIVATE_DTE_AUTO_INIT")
-                    .arg("-fno-omit-frame-pointer")
-                    .arg("-DNDEBUG")
-                    .arg(format!("-I{:}", absolute_kernel_dir.to_str().unwrap()))
-                    .arg(format!("-I{:}", absolute_kernel_dir.join("atomic/include").to_str().unwrap()))
-                    .arg(format!("-I{:}", absolute_kernel_dir.join("atomic/include/common").to_str().unwrap()))
-                    .arg(format!("--tops-device-lib-path={:}", absolute_kernel_dir.join("atomic/lib").to_str().unwrap()))
-                    .arg("--tops-device-lib=libacoreop.bc");
 
-                    let output = command
-                        .spawn()
-                        .context(format!("failed spawning {compiler}"))?
-                        .wait_with_output()?;
-                    if !output.status.success() {
-                        anyhow::bail!(
-                            "{:?} error while executing compiling: {:?}\n\n# stdout\n{:#}\n\n# stderr\n{:#}",
-                            compiler,
-                            &command,
-                            String::from_utf8_lossy(&output.stdout),
-                            String::from_utf8_lossy(&output.stderr)
-                        )
-                    }
-                    let mut command_link = std::process::Command::new("ar");
-                    command_link
-                        .arg("-crv")
-                        .args(["-o", fatbin_file.to_str().unwrap()])
-                        .arg(build_file);
-                    let output_linker = command_link
-                        .spawn()
-                        .context("failed spawning linker")?
-                        .wait_with_output()?;
-                    if !output_linker.status.success() {
-                        anyhow::bail!(
-                            "{:?} error while linking: {:?}\n\n# stdout\n{:#}\n\n# stderr\n{:#}",
-                            compiler,
-                            &command,
-                            String::from_utf8_lossy(&output_linker.stdout),
-                            String::from_utf8_lossy(&output_linker.stderr)
-                        )
-                    }
-                } else {
-                    command
-                    .arg(kernel_file)
-                    .arg(format!("-arch=gcu{compute_cap}"))
-                    .arg("-O3")
-                    .arg("-std=c++17")
-                    .arg("-fPIC")
-                    .arg("-ltops")
-                    .arg("-Xclang")
-                    .arg("-fallow-half-arguments-and-returns")
-                    .args(["-o", build_file.to_str().unwrap()])
-                    .arg(format!("-D__GCU_ARCH__={compute_cap}"))
-                    .arg(format!("-D__KRT_ARCH__={compute_cap}"))
-                    .arg("-D__ATOMIC_OP")
-                    .arg("-D__ACORE_OP__")
-                    .arg("-DTOPS_DISABLE_FORCE_INLINE")
-                    .arg("--target=x86_64-unknown-linux-gnu")
-                    .arg("-fno-omit-frame-pointer")
-                    .arg("-DNDEBUG")
-                    .arg(format!("-I{:}", absolute_kernel_dir.join("atomic/include").to_str().unwrap()))
-                    .arg(format!("-I{:}", absolute_kernel_dir.join("atomic/include/common").to_str().unwrap()))
-                    .arg(format!("--tops-device-lib-path={:}", absolute_kernel_dir.join("atomic/lib").to_str().unwrap()))
-                    .arg("--tops-device-lib=libacoreop.bc")
-                    .arg("--save-temps");
+    // Unpack atomic bitcode first and wait until it is fully on disk.
+    // Each new ubridge git rev uses a fresh cargo checkout, so this must
+    // complete before any topscc invocation that loads libacoreop.bc.
+    check_atomic_op(&absolute_kernel_dir, &kernel_out_dir)?;
 
-                    let output = command
-                        .spawn()
-                        .context(format!("failed spawning {compiler}"))?
-                        .wait_with_output()?;
-                    let tmp_fatbin_file = build_dir.join(f.to_string() + ".cpp-tops-dtu-enflame-tops.topsfb");
-                    if !output.status.success() && !PathBuf::from(tmp_fatbin_file).exists() {
-                        anyhow::bail!(
-                            "{:?} error while executing compiling: {:?}\n\n# stdout\n{:#}\n\n# stderr\n{:#}",
-                            compiler,
-                            &command,
-                            String::from_utf8_lossy(&output.stdout),
-                            String::from_utf8_lossy(&output.stderr)
-                        )
-                    }
-                    let mut command_mv = std::process::Command::new("mv");
-                    command_mv.arg(build_dir.join(f.to_string() + ".cpp-tops-dtu-enflame-tops.topsfb"));
-                    command_mv.arg(fatbin_file.clone());
-                    let output = command_mv
-                        .spawn()
-                        .context(format!("failed spawning {compiler}"))?
-                        .wait_with_output()?;
-                    if !output.status.success() {
-                        anyhow::bail!(
-                            "{:?} error while executing compiling: {:?}\n\n# stdout\n{:#}\n\n# stderr\n{:#}",
-                            compiler,
-                            &command_mv,
-                            String::from_utf8_lossy(&output.stdout),
-                            String::from_utf8_lossy(&output.stderr)
-                        )
-                    }
-                }
-            }
-            if is_host_kernel {
-                let mut command_cp = std::process::Command::new("cp");
-                command_cp.arg(build_dir.join(fatbin_file.clone()));
-                command_cp.arg(build_dir.join(format!("lib{}.a", fname)));
-                let output = command_cp
-                    .spawn()
-                    .context(format!("failed spawning {compiler}"))?
-                    .wait_with_output()?;
-                if !output.status.success() {
-                    anyhow::bail!(
-                        "{:?} error while linking host kernel: {:?}\n\n# stdout\n{:#}\n\n# stderr\n{:#}",
-                        compiler,
-                        &fname,
-                        String::from_utf8_lossy(&output.stdout),
-                        String::from_utf8_lossy(&output.stderr)
-                    )
-                } else {
-                    println!("cargo:rustc-link-search={}", build_dir.display());
-                    println!("cargo:rustc-link-lib={}", fname);
-                }
-            }
-            Ok(())
+    println!(
+        "cargo:warning=compiling {} kernels in parallel ({} threads)",
+        KERNELS.len(),
+        num_cpus
+    );
+
+    // Parallel compile; collect every failure so cargo shows the real stderr.
+    let results: Vec<(&str, Result<Option<String>>)> = KERNELS
+        .par_iter()
+        .map(|name| {
+            let res = compile_kernel(
+                name,
+                &absolute_kernel_dir,
+                &kernel_out_dir,
+                &build_dir,
+                compiler,
+                compute_cap,
+            );
+            (*name, res)
         })
-        .collect::<Result<()>>()?;
+        .collect();
+
+    let mut errors: Vec<String> = Vec::new();
+    let mut link_libs: Vec<String> = Vec::new();
+    for (name, res) in results {
+        match res {
+            Ok(Some(lib)) => link_libs.push(lib),
+            Ok(None) => {}
+            Err(e) => {
+                // {:#} keeps the full anyhow chain + topscc stdout/stderr.
+                errors.push(format!("=== kernel `{name}` ===\n{e:#}"));
+            }
+        }
+    }
+
+    if !errors.is_empty() {
+        anyhow::bail!(
+            "{} kernel(s) failed to compile:\n\n{}",
+            errors.len(),
+            errors.join("\n\n")
+        );
+    }
+
+    // Emit link lines serially (cargo build-script protocol is not thread-safe).
+    if !link_libs.is_empty() {
+        println!("cargo:rustc-link-search={}", build_dir.display());
+        for lib in link_libs {
+            println!("cargo:rustc-link-lib={lib}");
+        }
+    }
 
     // Build topsaten C++ wrappers (regular C++ compiled with g++, linked
     // against libtopsaten.so).
