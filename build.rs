@@ -37,8 +37,7 @@ const KERNELS: [&str; 36] = [
     "gdn_recurrence_varlen_host",
     "gdn_decode_slots_host",
     "gdn_decode_slots_gqa_host",
-    "gdn_decode_recurrence_post_fused_host",
-    "gdn_decode_l2norm_recurrence_post_fused_bf16_host",
+    "gdn_decode_recurrence_fused_bf16_host",
     "causal_conv1d_host",
     "cache_host",
 ];
