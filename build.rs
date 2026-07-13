@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 const BC_FILE_NAME: &str = "acore.bc";
 
-const KERNELS: [&str; 36] = [
+const KERNELS: [&str; 35] = [
     "unary",
     "fill",
     "binary",
