@@ -402,7 +402,7 @@ int topsaten_matmul_broadcast(
  *
  * input:        [n_rows, n_cols]
  * output_value: [n_rows, k]
- * output_index: [n_rows, k]  (int64_t indices)
+ * output_index: [n_rows, k]  (u32/i32 indices — topsaten rejects i64)
  */
 int topsaten_topk(
     void *output_value_ptr, void *output_index_ptr,
@@ -422,7 +422,7 @@ int topsaten_topk(
     topsatenSize_t out_sz(out_dims, 2);
     int64_t out_strides[2] = {static_cast<int64_t>(k), 1};
     topsatenSize_t out_st(out_strides, 2);
-    topsatenTensor t_output_index(out_sz, out_st, TOPSATEN_DATA_I64,
+    topsatenTensor t_output_index(out_sz, out_st, TOPSATEN_DATA_U32,
         static_cast<topsatenDeviceMemHandle_t>(output_index_ptr));
 
     int64_t axis = 1;  // last dim of 2D [n_rows, n_cols]
@@ -446,7 +446,7 @@ int topsaten_topk(
  *
  * input:         [n_rows, n_cols]
  * output_sorted: [n_rows, n_cols]  (sorted values)
- * output_index:  [n_rows, n_cols]  (int64_t indices)
+ * output_index:  [n_rows, n_cols]  (u32/i32 indices — topsaten rejects i64)
  */
 int topsaten_sort(
     void *output_sorted_ptr, void *output_index_ptr,
@@ -466,7 +466,7 @@ int topsaten_sort(
     topsatenSize_t out_sz(out_dims, 2);
     int64_t out_strides[2] = {static_cast<int64_t>(n_cols), 1};
     topsatenSize_t out_st(out_strides, 2);
-    topsatenTensor t_output_index(out_sz, out_st, TOPSATEN_DATA_I64,
+    topsatenTensor t_output_index(out_sz, out_st, TOPSATEN_DATA_U32,
         static_cast<topsatenDeviceMemHandle_t>(output_index_ptr));
 
     int64_t dim = -1;
