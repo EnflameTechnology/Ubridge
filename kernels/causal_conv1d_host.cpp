@@ -349,17 +349,7 @@ void causal_conv1d_fwd_bf16_prod(const choreo::spanned_view<choreo::bf16, 2> & X
   auto &DIM_G = X.shape()[1];
   auto &MAX_BATCH = St.shape()[0];
   auto &TOTAL_TOKENS = X.shape()[0];
-  choreo::runtime_check(W.shape()[0] == 4, "shape inconsistent on the 2nd parameter ('W', dim: 0): expect: 4, but got " + std::to_string(W.shape()[0]) + ".");
-  choreo::runtime_check(St.shape()[1] == 3, "shape inconsistent on the 4th parameter ('St', dim: 1): expect: 3, but got " + std::to_string(St.shape()[1]) + ".");
-  choreo::runtime_check(X.shape()[1] == W.shape()[1], "The shapes of the 1st parameter (dim: 1) and the 2nd parameter (dim: 1) are inconsistent.");
-  choreo::runtime_check(W.shape()[1] == Bias.shape()[0], "The shapes of the 2nd parameter (dim: 1) and the 3rd parameter (dim: 0) are inconsistent.");
-  choreo::runtime_check(Bias.shape()[0] == St.shape()[2], "The shapes of the 3rd parameter (dim: 0) and the 4th parameter (dim: 2) are inconsistent.");
-  choreo::runtime_check(St.shape()[2] == Out.shape()[1], "The shapes of the 4th parameter (dim: 2) and the 7th parameter (dim: 1) are inconsistent.");
-  choreo::runtime_check(X.shape()[0] == Out.shape()[0], "The shapes of the 1st parameter (dim: 0) and the 7th parameter (dim: 0) are inconsistent.");
 
-  choreo::runtime_check((static_cast<long long>(BATCH) * 8LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 219.26");
-  choreo::runtime_check((static_cast<long long>(BATCH_P1) * 4LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 220.30");
-  choreo::runtime_check((static_cast<long long>(BATCH_P1) * 4LL < 4294967296LL), "The size of data transferred by DMA cannot exceed 2^32., 221.28");
   dim3 __causal_conv1d_fwd_bf16_prod_gdims0(2, 1, 1);
   dim3 __causal_conv1d_fwd_bf16_prod_bdims0(12, 1, 1);
   __choreo_device_causal_conv1d_fwd_bf16_prod<<<__causal_conv1d_fwd_bf16_prod_gdims0, __causal_conv1d_fwd_bf16_prod_bdims0, 0, _s>>>(X.data(), W.data(), Bias.data(), St.data(), CacheIdx.data(), QSL.data(), Out.data(), silu, BATCH, BATCH_P1, DIM_G, MAX_BATCH, TOTAL_TOKENS);

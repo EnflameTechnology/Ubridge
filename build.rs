@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 const BC_FILE_NAME: &str = "acore.bc";
 
-const KERNELS: [&str; 33] = [
+const KERNELS: [&str; 35] = [
     "unary",
     "fill",
     "binary",
@@ -36,6 +36,8 @@ const KERNELS: [&str; 33] = [
     "gdn_recurrence_host",
     "gdn_recurrence_varlen_host",
     "gdn_decode_slots_host",
+    "gdn_decode_slots_gqa_host",
+    "gdn_decode_recurrence_fused_bf16_host",
     "causal_conv1d_host",
     "cache_host",
 ];
@@ -292,6 +294,7 @@ fn main() -> Result<()> {
     // Build topsaten C++ wrappers (regular C++ compiled with g++, linked
     // against libtopsaten.so).
     // MoE wrapper is always built; ops wrapper only with "aten" feature.
+    #[cfg(feature = "aten")]
     {
         let topsaten_include =
             std::env::var("TOPSATEN_HOME").unwrap_or_else(|_| "/usr".to_string());
@@ -299,7 +302,6 @@ fn main() -> Result<()> {
 
         let mut wrappers: Vec<(&str, &str)> =
             vec![("topsaten_moe_wrapper", "libtopsaten_moe_wrapper")];
-        #[cfg(feature = "aten")]
         wrappers.push(("topsaten_ops_wrapper", "libtopsaten_ops_wrapper"));
 
         for (src_name, lib_name) in wrappers {
