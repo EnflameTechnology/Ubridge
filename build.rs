@@ -352,6 +352,20 @@ fn main() -> Result<()> {
     // complete before any topscc invocation that loads libacoreop.bc.
     check_atomic_op(&absolute_kernel_dir, &kernel_out_dir)?;
 
+    // Warm up by fully reading libacoreop.bc into page cache before parallel
+    // topscc. Fresh extracts otherwise hit intermittent "can't skip to bit".
+    {
+        let bc_path = absolute_kernel_dir.join("atomic/lib/libacoreop.bc");
+        let data = std::fs::read(&bc_path)
+            .with_context(|| format!("failed reading bitcode {}", bc_path.display()))?;
+        println!(
+            "cargo:warning=warmup read of {} ({} bytes)",
+            bc_path.display(),
+            data.len()
+        );
+        std::mem::drop(data);
+    }
+
     println!(
         "cargo:warning=compiling {} kernels in parallel ({} threads)",
         KERNELS.len(),
