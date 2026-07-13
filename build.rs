@@ -294,6 +294,7 @@ fn main() -> Result<()> {
     // Build topsaten C++ wrappers (regular C++ compiled with g++, linked
     // against libtopsaten.so).
     // MoE wrapper is always built; ops wrapper only with "aten" feature.
+    #[cfg(feature = "aten")]
     {
         let topsaten_include =
             std::env::var("TOPSATEN_HOME").unwrap_or_else(|_| "/usr".to_string());
@@ -301,7 +302,6 @@ fn main() -> Result<()> {
 
         let mut wrappers: Vec<(&str, &str)> =
             vec![("topsaten_moe_wrapper", "libtopsaten_moe_wrapper")];
-        #[cfg(feature = "aten")]
         wrappers.push(("topsaten_ops_wrapper", "libtopsaten_ops_wrapper"));
 
         for (src_name, lib_name) in wrappers {
