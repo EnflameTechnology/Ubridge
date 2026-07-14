@@ -3,8 +3,11 @@
  *   - RMS Normalization (topsvllmRmsNorm)
  *   - Fused Add + RMS Normalization (topsvllmFusedAddRmsNorm)
  *   - Matrix Multiplication (topsatenMatmul)
+ *   - Flash Attention (topsfa*)
  *
- * Uses the same graph-aware allocator pattern as topsaten_moe_wrapper.cpp.
+ * Registers the same graph-aware allocator as topsaten_moe_wrapper.cpp so
+ * dense / FA paths (which never touch MoE) still get correct capture/replay
+ * workspace allocs.
  */
 #include <cstdint>
 #include <cstdio>
@@ -14,6 +17,19 @@
 #include <topsaten/topsaten_vllm.h>
 #include <topsaten/topsaten_ops.h>
 #include <topsaten/topsaten_fa.h>
+
+// ---------------------------------------------------------------------------
+// Graph-aware allocator for topsaten kernel workspaces (same as MoE wrapper).
+// ---------------------------------------------------------------------------
+
+static topsError_t graph_aware_malloc_async(void **ptr, size_t size,
+                                            topsStream_t stream, uint64_t) {
+    return topsMallocAsync(ptr, size, stream, 0);
+}
+
+static topsError_t graph_aware_free_async(void *ptr, topsStream_t stream) {
+    return topsFreeAsync(ptr, stream);
+}
 
 // ---------------------------------------------------------------------------
 // topsaten initialization (shared init state with topsaten_moe_wrapper.cpp
@@ -32,6 +48,8 @@ static void ensure_ops_init() {
             g_ops_topsaten_initialized.store(false);
             return;
         }
+        topsatenMallocAsyncFuncRegister(graph_aware_malloc_async);
+        topsatenFreeAsyncFuncRegister(graph_aware_free_async);
     }
 }
 
@@ -871,18 +889,24 @@ int topsfa_flash_attn_fwd(
 
 /**
  * topsfaFlashAttnVarlenFwd wrapper
+ *
+ *   - Dense (no block_table):
+ *       k/v: [total_k, num_heads_k, head_size]
+ *       cu_seqlens_k required; seqused_k unused
+ *   - Paged (block_table set) — used for chunked prefill + decode:
+ *       k/v: [num_blocks, page_block_size, num_heads_k, head_size]
+ *       seqused_k: [batch] actual KV lengths (required)
+ *       cu_seqlens_k: dummy (may be null; wrapper ignores it)
+ *
  * query:  [total_q, num_heads, head_size]
- * key:    [total_k, num_heads_k, head_size]
- * value:  [total_k, num_heads_k, head_size]
- * cu_seqlens_q: [batch + 1] (i32)
- * cu_seqlens_k: [batch + 1] (i32)
  * output: [total_q, num_heads, head_size]
- * softmax_lse: [total_q, num_heads]
+ * softmax_lse: [num_heads, total_q]  (runtime CheckArgs: [q_num_heads, total_q])
  */
 int topsfa_flash_attn_varlen_fwd(
     void *out_ptr, void *softmax_lse_ptr,
     const void *q_ptr, const void *k_ptr, const void *v_ptr,
     const void *cu_seqlens_q_ptr, const void *cu_seqlens_k_ptr,
+    const void *seqused_k_ptr,
     const void *block_table_ptr,
     const void *alibi_slopes_ptr,
     int32_t total_q, int32_t total_k,
@@ -892,6 +916,7 @@ int topsfa_flash_attn_varlen_fwd(
     int32_t is_causal,
     int32_t window_size_left, int32_t window_size_right,
     int32_t has_block_table, int32_t block_table_batch, int32_t block_table_max_blocks,
+    int32_t num_blocks, int32_t page_block_size,
     int32_t dtype_code, void *stream_) {
     ensure_ops_init();
     topsStream_t stream = reinterpret_cast<topsStream_t>(stream_);
@@ -899,21 +924,43 @@ int topsfa_flash_attn_varlen_fwd(
 
     auto t_q = make_tensor_3d(const_cast<void*>(q_ptr),
         total_q, num_heads, head_size, dtype);
-    auto t_k = make_tensor_3d(const_cast<void*>(k_ptr),
-        total_k, num_heads_k, head_size, dtype);
-    auto t_v = make_tensor_3d(const_cast<void*>(v_ptr),
-        total_k, num_heads_k, head_size, dtype);
+    topsatenTensor t_k;
+    topsatenTensor t_v;
+    if (has_block_table && block_table_ptr) {
+        t_k = make_tensor_4d(const_cast<void*>(k_ptr),
+            num_blocks, page_block_size, num_heads_k, head_size, dtype);
+        t_v = make_tensor_4d(const_cast<void*>(v_ptr),
+            num_blocks, page_block_size, num_heads_k, head_size, dtype);
+    } else {
+        t_k = make_tensor_3d(const_cast<void*>(k_ptr),
+            total_k, num_heads_k, head_size, dtype);
+        t_v = make_tensor_3d(const_cast<void*>(v_ptr),
+            total_k, num_heads_k, head_size, dtype);
+    }
     auto t_out = make_tensor_3d(out_ptr,
         total_q, num_heads, head_size, dtype);
     auto t_lse = make_tensor_2d(softmax_lse_ptr,
-        total_q, num_heads, TOPSATEN_DATA_FP32);
+        num_heads, total_q, TOPSATEN_DATA_FP32);
 
     auto t_cu_q = make_tensor_1d(const_cast<void*>(cu_seqlens_q_ptr),
         batch + 1, TOPSATEN_DATA_I32);
-    auto t_cu_k = make_tensor_1d(const_cast<void*>(cu_seqlens_k_ptr),
-        batch + 1, TOPSATEN_DATA_I32);
+
+    // when seqused_k is set, cu_seqlens_k is unused (dummy).
+    // Always provide a (batch+1) tensor so the OP sees a valid handle.
+    topsatenTensor t_cu_k;
+    if (cu_seqlens_k_ptr) {
+        t_cu_k = make_tensor_1d(const_cast<void*>(cu_seqlens_k_ptr),
+            batch + 1, TOPSATEN_DATA_I32);
+    } else {
+        t_cu_k = make_tensor_1d(const_cast<void*>(cu_seqlens_q_ptr),
+            batch + 1, TOPSATEN_DATA_I32);
+    }
 
     topsatenTensor t_seqused_k;
+    if (seqused_k_ptr) {
+        t_seqused_k = make_tensor_1d(const_cast<void*>(seqused_k_ptr),
+            batch, TOPSATEN_DATA_I32);
+    }
     topsatenTensor t_leftpad_k;
 
     topsatenTensor t_block_table;
@@ -943,7 +990,7 @@ int topsfa_flash_attn_varlen_fwd(
         make_scalar_i64(max_seqlen_k),
         make_scalar_f64(0.0),
         make_scalar_f64(static_cast<double>(softmax_scale)),
-        false, is_causal != 0,
+        /*zero_tensors=*/true, is_causal != 0,
         make_scalar_i64(static_cast<int64_t>(window_size_left)),
         make_scalar_i64(static_cast<int64_t>(window_size_right)),
         make_scalar_f64(static_cast<double>(softcap)),

@@ -617,7 +617,7 @@ extern "C" {
         dim_blocks: u32,
         stream: *const c_void,
     );
-    
+
     pub fn reshape_and_cache_flash_host(
         dimBlocks: dim3,
         dimThreads: dim3,
@@ -1048,6 +1048,7 @@ extern "C" {
         v: *const c_void,
         cu_seqlens_q: *const c_void,
         cu_seqlens_k: *const c_void,
+        seqused_k: *const c_void,
         block_table: *const c_void,
         alibi_slopes: *const c_void,
         total_q: c_int,
@@ -1066,6 +1067,8 @@ extern "C" {
         has_block_table: c_int,
         block_table_batch: c_int,
         block_table_max_blocks: c_int,
+        num_blocks: c_int,
+        page_block_size: c_int,
         dtype_code: c_int,
         stream: *const c_void,
     ) -> c_int;
