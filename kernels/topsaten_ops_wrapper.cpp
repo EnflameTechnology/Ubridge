@@ -93,6 +93,16 @@ static topsatenTensor make_tensor_nd(void *data, int32_t ndim,
                           static_cast<topsatenDeviceMemHandle_t>(data));
 }
 
+static topsatenTensor make_tensor_strided(void *data, int32_t ndim,
+                                          const int64_t *shape,
+                                          const int64_t *strides,
+                                          topsatenDataType_t dtype) {
+    topsatenSize_t dim_size(shape, ndim);
+    topsatenSize_t stride_size(strides, ndim);
+    return topsatenTensor(dim_size, stride_size, dtype,
+                          static_cast<topsatenDeviceMemHandle_t>(data));
+}
+
 static topsatenDataType_t dtype_from_code(int32_t code) {
     return static_cast<topsatenDataType_t>(code);
 }
@@ -1035,6 +1045,34 @@ int topsfa_flash_attn_fwd_kvcache(
         is_rotary_interleaved != 0, s_ns,
         stream);
 
+    return static_cast<int>(st);
+}
+
+/**
+ * General (possibly strided) copy via topsatenCopy.
+ *
+ * Used as a fallback when the custom ucopy_* kernels would request more
+ * shared memory than the device can provide (large non-contiguous tensors).
+ *
+ * input/output may be non-contiguous; shapes are element shapes and
+ * strides are in elements (matching candle Layout).
+ */
+int topsaten_copy(
+    void *out_ptr, const void *in_ptr,
+    int32_t ndim,
+    const int64_t *out_shape, const int64_t *out_strides,
+    const int64_t *in_shape, const int64_t *in_strides,
+    int32_t dtype_code, void *stream_) {
+    ensure_ops_init();
+    topsStream_t stream = reinterpret_cast<topsStream_t>(stream_);
+    topsatenDataType_t dtype = dtype_from_code(dtype_code);
+
+    auto t_in = make_tensor_strided(const_cast<void*>(in_ptr), ndim,
+                                    in_shape, in_strides, dtype);
+    auto t_out = make_tensor_strided(out_ptr, ndim,
+                                     out_shape, out_strides, dtype);
+
+    topsatenStatus_t st = topsaten::topsatenCopy(t_out, t_in, false, stream);
     return static_cast<int>(st);
 }
 

@@ -1099,4 +1099,17 @@ extern "C" {
         dtype_code: c_int,
         stream: *const c_void,
     ) -> c_int;
+
+    /// Strided / general copy via topsatenCopy (large-tensor fallback for ucopy_*).
+    pub fn topsaten_copy(
+        out: *mut c_void,
+        inp: *const c_void,
+        ndim: c_int,
+        out_shape: *const i64,
+        out_strides: *const i64,
+        in_shape: *const i64,
+        in_strides: *const i64,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
 }
