@@ -468,6 +468,27 @@ extern "C" {
         dim_blocks: u32,
         stream: *const c_void,
     );
+    pub fn gdn_recurrence_varlen_gqa_bf16(
+        q: *const bf16,
+        k: *const bf16,
+        v: *const bf16,
+        g: *const bf16,
+        beta: *const bf16,
+        state: *mut f32,
+        slots: *const i64,
+        out: *mut bf16,
+        cu_seqlens: *const u32,
+        total_tokens: c_int,
+        batch: c_int,
+        num_k_heads: c_int,
+        num_v_heads: c_int,
+        k_dim: c_int,
+        v_dim: c_int,
+        max_slots: c_int,
+        num_blocks: u32,
+        dim_blocks: u32,
+        stream: *const c_void,
+    );
 
     // ─── GDN fused gating (to be ported to Choreo) ───
     pub fn gdn_fused_gating_f32(
@@ -697,6 +718,18 @@ extern "C" {
         input: *const c_void,
         gamma: *const c_void,
         num_tokens: c_int,
+        hidden_size: c_int,
+        epsilon: f32,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+
+    pub fn topsaten_rms_norm_3d(
+        output: *mut c_void,
+        input: *const c_void,
+        gamma: *const c_void,
+        tokens: c_int,
+        heads: c_int,
         hidden_size: c_int,
         epsilon: f32,
         dtype_code: c_int,
@@ -1113,6 +1146,16 @@ extern "C" {
         in_shape: *const i64,
         in_strides: *const i64,
         dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+
+    /// Dtype-aware contiguous copy/cast through TopsAten.
+    pub fn topsaten_cast(
+        out: *mut c_void,
+        inp: *const c_void,
+        numel: i64,
+        input_dtype_code: i32,
+        output_dtype_code: i32,
         stream: *const c_void,
     ) -> c_int;
 }

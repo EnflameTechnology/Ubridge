@@ -83,13 +83,13 @@ __co_device__ void gdn_recurrence_step_varlen_acore(
 
 #define KD 128
 #define VD 128
-__global__ void __choreo_device_gdn_recurrence_varlen_bf16(choreo::bf16 * Q, choreo::bf16 * K, choreo::bf16 * V, choreo::bf16 * G, choreo::bf16 * Beta, float * State, int64_t * Slots, choreo::bf16 * Out, unsigned int * CuSeqlens, unsigned BATCH, unsigned BATCH_P1, unsigned MAX_SLOTS, unsigned NH, unsigned TOTAL_TOKENS) {
+__global__ void __choreo_device_gdn_recurrence_varlen_bf16(choreo::bf16 * Q, choreo::bf16 * K, choreo::bf16 * V, choreo::bf16 * G, choreo::bf16 * Beta, float * State, int64_t * Slots, choreo::bf16 * Out, unsigned int * CuSeqlens, unsigned BATCH, unsigned BATCH_P1, unsigned MAX_SLOTS, unsigned NHQ, unsigned NHV, unsigned TOTAL_TOKENS) {
   choreo::choreo_sdte __choreo_dte_pool__[9];
   for (int __i = 0; __i < 9; ++__i) __choreo_dte_pool__[__i].init();
   { // parallel-by: 96.24
   __local__ __valigned__ unsigned char anon_1[136192];
   int sip_id = __tops_tid_x() * 2 + __tops_bid_x();
-  int total_work = (BATCH * NH);
+  int total_work = (BATCH * NHV);
   int work_per_sip = ((total_work + 23) / 24);
   // with-in: 102.9
   {
@@ -99,8 +99,9 @@ __global__ void __choreo_device_gdn_recurrence_varlen_bf16(choreo::bf16 * Q, cho
       int work_id = (sip_id * work_per_sip) + __iv_wi__elem__0;
       // inthreads: 104.13
       if ((work_id < total_work)) {
-        int seq_idx = (work_id / NH);
-        int head_idx = (work_id % NH);
+        int seq_idx = (work_id / NHV);
+        int head_idx = (work_id % NHV);
+        int q_head_idx = head_idx / (NHV / NHQ);
         int64_t* slot_f__buf__ = (int64_t*)(anon_1 + 0);
         choreo::future slot_f(__choreo_dte_pool__[0], "slot_f", 108, 26, slot_f__buf__);
         tops::mdspan __mds0_Slots(tops::Global, (char*)Slots, BATCH, 8);
@@ -132,7 +133,7 @@ __global__ void __choreo_device_gdn_recurrence_varlen_bf16(choreo::bf16 * Q, cho
         int seq_len = (end_t - start);
         float* state_l__buf__ = (float*)(anon_1 + 0);
         choreo::future state_l(__choreo_dte_pool__[3], "state_l", 118, 27, state_l__buf__);
-        tops::mdspan __mds6_State(tops::Global, (float*)State, MAX_SLOTS, NH, 128, 128);
+        tops::mdspan __mds6_State(tops::Global, (float*)State, MAX_SLOTS, NHV, 128, 128);
         tops::mdspan __mds7_state_l__buf__(tops::Private, (float*)state_l__buf__, 1, 1, 128, 128);
         int __slice_offset3__State_2_state_l__buf__[] = {(int)(slot), (int)(head_idx), 0, 0};
         tops::event state_l__event__ = tops::slice_async(*state_l.get_ctx(), __mds7_state_l__buf__, __mds6_State, __slice_offset3__State_2_state_l__buf__);
@@ -152,35 +153,35 @@ __global__ void __choreo_device_gdn_recurrence_varlen_bf16(choreo::bf16 * Q, cho
             int token_idx = start + __iv_t__elem__0;
             choreo::bfloat16* q_l__buf__ = (choreo::bfloat16*)(anon_1 + 134144);
             choreo::future q_l(__choreo_dte_pool__[4], "q_l", 133, 27, q_l__buf__);
-            tops::mdspan __mds8_Q(tops::Global, (choreo::bfloat16*)Q, TOTAL_TOKENS, NH, 128);
+            tops::mdspan __mds8_Q(tops::Global, (choreo::bfloat16*)Q, TOTAL_TOKENS, NHQ, 128);
             tops::mdspan __mds9_q_l__buf__(tops::Private, (choreo::bfloat16*)q_l__buf__, 1, 1, 128);
-            int __slice_offset4__Q_2_q_l__buf__[] = {(int)(token_idx), (int)(head_idx), 0};
+            int __slice_offset4__Q_2_q_l__buf__[] = {(int)(token_idx), (int)(q_head_idx), 0};
             tops::event q_l__event__ = tops::slice_async(*q_l.get_ctx(), __mds9_q_l__buf__, __mds8_Q, __slice_offset4__Q_2_q_l__buf__);
             q_l.set_event(q_l__event__);
             choreo::bfloat16* k_l__buf__ = (choreo::bfloat16*)(anon_1 + 133632);
             choreo::future k_l(__choreo_dte_pool__[5], "k_l", 134, 27, k_l__buf__);
-            tops::mdspan __mds10_K(tops::Global, (choreo::bfloat16*)K, TOTAL_TOKENS, NH, 128);
+            tops::mdspan __mds10_K(tops::Global, (choreo::bfloat16*)K, TOTAL_TOKENS, NHQ, 128);
             tops::mdspan __mds11_k_l__buf__(tops::Private, (choreo::bfloat16*)k_l__buf__, 1, 1, 128);
-            int __slice_offset5__K_2_k_l__buf__[] = {(int)(token_idx), (int)(head_idx), 0};
+            int __slice_offset5__K_2_k_l__buf__[] = {(int)(token_idx), (int)(q_head_idx), 0};
             tops::event k_l__event__ = tops::slice_async(*k_l.get_ctx(), __mds11_k_l__buf__, __mds10_K, __slice_offset5__K_2_k_l__buf__);
             k_l.set_event(k_l__event__);
             choreo::bfloat16* v_l__buf__ = (choreo::bfloat16*)(anon_1 + 134656);
             choreo::future v_l(__choreo_dte_pool__[6], "v_l", 135, 27, v_l__buf__);
-            tops::mdspan __mds12_V(tops::Global, (choreo::bfloat16*)V, TOTAL_TOKENS, NH, 128);
+            tops::mdspan __mds12_V(tops::Global, (choreo::bfloat16*)V, TOTAL_TOKENS, NHV, 128);
             tops::mdspan __mds13_v_l__buf__(tops::Private, (choreo::bfloat16*)v_l__buf__, 1, 1, 128);
             int __slice_offset6__V_2_v_l__buf__[] = {(int)(token_idx), (int)(head_idx), 0};
             tops::event v_l__event__ = tops::slice_async(*v_l.get_ctx(), __mds13_v_l__buf__, __mds12_V, __slice_offset6__V_2_v_l__buf__);
             v_l.set_event(v_l__event__);
             choreo::bfloat16* g_f__buf__ = (choreo::bfloat16*)(anon_1 + 135680);
             choreo::future g_f(__choreo_dte_pool__[7], "g_f", 136, 27, g_f__buf__);
-            tops::mdspan __mds14_G(tops::Global, (choreo::bfloat16*)G, TOTAL_TOKENS, NH);
+            tops::mdspan __mds14_G(tops::Global, (choreo::bfloat16*)G, TOTAL_TOKENS, NHV);
             tops::mdspan __mds15_g_f__buf__(tops::Private, (choreo::bfloat16*)g_f__buf__, 1, 1);
             int __slice_offset7__G_2_g_f__buf__[] = {(int)(token_idx), (int)(head_idx)};
             tops::event g_f__event__ = tops::slice_async(*g_f.get_ctx(), __mds15_g_f__buf__, __mds14_G, __slice_offset7__G_2_g_f__buf__);
             g_f.set_event(g_f__event__);
             choreo::bfloat16* beta_f__buf__ = (choreo::bfloat16*)(anon_1 + 135168);
             choreo::future beta_f(__choreo_dte_pool__[8], "beta_f", 137, 30, beta_f__buf__);
-            tops::mdspan __mds16_Beta(tops::Global, (choreo::bfloat16*)Beta, TOTAL_TOKENS, NH);
+            tops::mdspan __mds16_Beta(tops::Global, (choreo::bfloat16*)Beta, TOTAL_TOKENS, NHV);
             tops::mdspan __mds17_beta_f__buf__(tops::Private, (choreo::bfloat16*)beta_f__buf__, 1, 1);
             int __slice_offset8__Beta_2_beta_f__buf__[] = {(int)(token_idx), (int)(head_idx)};
             tops::event beta_f__event__ = tops::slice_async(*beta_f.get_ctx(), __mds17_beta_f__buf__, __mds16_Beta, __slice_offset8__Beta_2_beta_f__buf__);
@@ -195,7 +196,7 @@ __global__ void __choreo_device_gdn_recurrence_varlen_bf16(choreo::bf16 * Q, cho
             gdn_recurrence_step_varlen_acore((float*)state_l.data(), (choreo::bf16*)q_l.data(), (choreo::bf16*)k_l.data(), (choreo::bf16*)v_l.data(), g_val, beta_val, (float*)out_l, (choreo::bf16*)out_bf16_l, (float*)kq_f32_l, (float*)kv_delta_l, (float*)update_l, (float*)v_f32_l);
             choreo::future __choreo_anon_fut__0(__choreo_dte_pool__[0], "", 152, 21);
             tops::mdspan __mds18_out_bf16_l(tops::Private, (choreo::bfloat16*)out_bf16_l, 1, 1, 128);
-            tops::mdspan __mds19_Out(tops::Global, (choreo::bfloat16*)Out, TOTAL_TOKENS, NH, 128);
+            tops::mdspan __mds19_Out(tops::Global, (choreo::bfloat16*)Out, TOTAL_TOKENS, NHV, 128);
             int __deslice_offset0__Out_2_out_bf16_l[] = {(int)(token_idx), (int)(head_idx), 0};
             tops::deslice(*__choreo_anon_fut__0.get_ctx(), __mds19_Out, __mds18_out_bf16_l, __deslice_offset0__Out_2_out_bf16_l);
           } // t__elem__0
@@ -203,7 +204,7 @@ __global__ void __choreo_device_gdn_recurrence_varlen_bf16(choreo::bf16 * Q, cho
         }
         choreo::future __choreo_anon_fut__1(__choreo_dte_pool__[0], "", 155, 17);
         tops::mdspan __mds20_state_l(tops::Private, (float*)state_l.data(), 1, 1, 128, 128);
-        tops::mdspan __mds21_State(tops::Global, (float*)State, MAX_SLOTS, NH, 128, 128);
+        tops::mdspan __mds21_State(tops::Global, (float*)State, MAX_SLOTS, NHV, 128, 128);
         int __deslice_offset1__State_2_state_l[] = {(int)(slot), (int)(head_idx), 0, 0};
         tops::deslice(*__choreo_anon_fut__1.get_ctx(), __mds21_State, __mds20_state_l, __deslice_offset1__State_2_state_l);
       }
@@ -218,12 +219,13 @@ void gdn_recurrence_varlen_bf16(const choreo::spanned_view<choreo::bf16, 3> & Q,
   auto &BATCH = Slots.shape()[0];
   auto &BATCH_P1 = CuSeqlens.shape()[0];
   auto &MAX_SLOTS = State.shape()[0];
-  auto &NH = Q.shape()[1];
+  auto &NHQ = Q.shape()[1];
+  auto &NHV = V.shape()[1];
   auto &TOTAL_TOKENS = Q.shape()[0];
 
   dim3 __gdn_recurrence_varlen_bf16_gdims0(2, 1, 1);
   dim3 __gdn_recurrence_varlen_bf16_bdims0(12, 1, 1);
-  __choreo_device_gdn_recurrence_varlen_bf16<<<__gdn_recurrence_varlen_bf16_gdims0, __gdn_recurrence_varlen_bf16_bdims0, 0, _s>>>(Q.data(), K.data(), V.data(), G.data(), Beta.data(), State.data(), Slots.data(), Out.data(), CuSeqlens.data(), BATCH, BATCH_P1, MAX_SLOTS, NH, TOTAL_TOKENS);
+  __choreo_device_gdn_recurrence_varlen_bf16<<<__gdn_recurrence_varlen_bf16_gdims0, __gdn_recurrence_varlen_bf16_bdims0, 0, _s>>>(Q.data(), K.data(), V.data(), G.data(), Beta.data(), State.data(), Slots.data(), Out.data(), CuSeqlens.data(), BATCH, BATCH_P1, MAX_SLOTS, NHQ, NHV, TOTAL_TOKENS);
 }
 // CPU reference for correctness verification (varlen layout)
 
@@ -232,24 +234,24 @@ extern "C" void gdn_recurrence_varlen_bf16_wrapper(
     void* q, void* k, void* v,
     void* g, void* beta,
     float* state, int64_t* slots, void* out, uint32_t* cu_seqlens,
-    int total_tokens, int batch, int num_heads,
+    int total_tokens, int batch, int num_k_heads, int num_v_heads,
     int max_slots, int k_dim, int v_dim, topsStream_t stream) {
   auto q_sv = croq::make_spanview<3, croq::bf16>(
-      (croq::bf16*)q, {(size_t)total_tokens, (size_t)num_heads, (size_t)k_dim});
+      (croq::bf16*)q, {(size_t)total_tokens, (size_t)num_k_heads, (size_t)k_dim});
   auto k_sv = croq::make_spanview<3, croq::bf16>(
-      (croq::bf16*)k, {(size_t)total_tokens, (size_t)num_heads, (size_t)k_dim});
+      (croq::bf16*)k, {(size_t)total_tokens, (size_t)num_k_heads, (size_t)k_dim});
   auto v_sv = croq::make_spanview<3, croq::bf16>(
-      (croq::bf16*)v, {(size_t)total_tokens, (size_t)num_heads, (size_t)v_dim});
+      (croq::bf16*)v, {(size_t)total_tokens, (size_t)num_v_heads, (size_t)v_dim});
   auto g_sv = croq::make_spanview<2, croq::bf16>(
-      (croq::bf16*)g, {(size_t)total_tokens, (size_t)num_heads});
+      (croq::bf16*)g, {(size_t)total_tokens, (size_t)num_v_heads});
   auto beta_sv = croq::make_spanview<2, croq::bf16>(
-      (croq::bf16*)beta, {(size_t)total_tokens, (size_t)num_heads});
+      (croq::bf16*)beta, {(size_t)total_tokens, (size_t)num_v_heads});
   auto state_sv = croq::make_spanview<4, float>(
-      state, {(size_t)max_slots, (size_t)num_heads, (size_t)k_dim, (size_t)v_dim});
+      state, {(size_t)max_slots, (size_t)num_v_heads, (size_t)k_dim, (size_t)v_dim});
   auto slots_sv = croq::make_spanview<1, croq::s64>(
       (croq::s64*)slots, {(size_t)batch});
   auto out_sv = croq::make_spanview<3, croq::bf16>(
-      (croq::bf16*)out, {(size_t)total_tokens, (size_t)num_heads, (size_t)v_dim});
+      (croq::bf16*)out, {(size_t)total_tokens, (size_t)num_v_heads, (size_t)v_dim});
   auto cu_sv = croq::make_spanview<1, unsigned int>(
       cu_seqlens, {(size_t)(batch + 1)});
   gdn_recurrence_varlen_bf16(

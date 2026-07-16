@@ -127,6 +127,21 @@ static topsatenDataType_t dtype_from_code(int32_t code) {
 
 extern "C" {
 
+// Contiguous dtype conversion. TopsAten's Copy kernel supports differing
+// input/output dtypes and is substantially better suited to large tensors
+// than launching the generic Ubridge cast_* kernels.
+int topsaten_cast(void *out_ptr, const void *in_ptr, int64_t numel,
+                  int32_t input_dtype_code, int32_t output_dtype_code,
+                  void *stream_) {
+    ensure_ops_init();
+    topsStream_t stream = reinterpret_cast<topsStream_t>(stream_);
+    auto input = make_tensor_1d(const_cast<void *>(in_ptr), numel,
+                                dtype_from_code(input_dtype_code));
+    auto output = make_tensor_1d(out_ptr, numel,
+                                 dtype_from_code(output_dtype_code));
+    return static_cast<int>(topsaten::topsatenCopy(output, input, false, stream));
+}
+
 // =========================================================================
 // RMS Normalization
 // =========================================================================
@@ -149,6 +164,32 @@ int topsaten_rms_norm(
 
     auto t_output = make_tensor_2d(output_ptr, num_tokens, hidden_size, dtype);
     auto t_input = make_tensor_2d(input_ptr, num_tokens, hidden_size, dtype);
+    auto t_gamma = make_tensor_1d(gamma_ptr, hidden_size, dtype);
+
+    topsatenScalar_t eps;
+    eps.dtype = TOPSATEN_DATA_FP32;
+    eps.fval = static_cast<double>(epsilon);
+
+    topsatenStatus_t st = topsvllm::topsvllmRmsNorm(
+        t_output, t_input, t_gamma, eps, stream);
+
+    return static_cast<int>(st);
+}
+
+// Rank-3 variant used by Qwen Q/K normalization. vLLM passes
+// [tokens, heads, head_size] directly to topsvllmRmsNorm; preserve that
+// shape instead of flattening it to [tokens * heads, head_size].
+int topsaten_rms_norm_3d(
+    void *output_ptr, void *input_ptr, void *gamma_ptr,
+    int32_t tokens, int32_t heads, int32_t hidden_size,
+    float epsilon, int32_t dtype_code, void *stream_) {
+    ensure_ops_init();
+
+    topsStream_t stream = reinterpret_cast<topsStream_t>(stream_);
+    topsatenDataType_t dtype = dtype_from_code(dtype_code);
+
+    auto t_output = make_tensor_3d(output_ptr, tokens, heads, hidden_size, dtype);
+    auto t_input = make_tensor_3d(input_ptr, tokens, heads, hidden_size, dtype);
     auto t_gamma = make_tensor_1d(gamma_ptr, hidden_size, dtype);
 
     topsatenScalar_t eps;
