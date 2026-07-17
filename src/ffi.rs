@@ -368,7 +368,7 @@ extern "C" {
         beta: *const f32,
         state: *mut f32,
         slots: *const i64,
-        qscale: *const f32,
+        q_scale: c_float,
         out: *mut f32,
         batch: c_int,
         num_v_heads: c_int,
@@ -466,6 +466,8 @@ extern "C" {
         max_slots: c_int,
         num_blocks: u32,
         dim_blocks: u32,
+        q_scale: f32,
+        normalize_qk: bool,
         stream: *const c_void,
     );
     pub fn gdn_recurrence_varlen_gqa_bf16(
@@ -487,6 +489,7 @@ extern "C" {
         max_slots: c_int,
         num_blocks: u32,
         dim_blocks: u32,
+        q_scale: f32,
         stream: *const c_void,
     );
 
@@ -1106,6 +1109,39 @@ extern "C" {
         stream: *const c_void,
     ) -> c_int;
 
+    pub fn topsvllm_flash_attn_varlen_fwd(
+        out: *mut c_void,
+        softmax_lse: *mut c_void,
+        q: *const c_void,
+        k: *const c_void,
+        v: *const c_void,
+        cu_seqlens_q: *const c_void,
+        cu_seqlens_k: *const c_void,
+        seqused_k: *const c_void,
+        block_table: *const c_void,
+        alibi_slopes: *const c_void,
+        total_q: c_int,
+        total_k: c_int,
+        batch: c_int,
+        num_heads: c_int,
+        num_heads_k: c_int,
+        head_size: c_int,
+        max_seqlen_q: c_int,
+        max_seqlen_k: c_int,
+        softmax_scale: f32,
+        softcap: f32,
+        is_causal: c_int,
+        window_size_left: c_int,
+        window_size_right: c_int,
+        has_block_table: c_int,
+        block_table_batch: c_int,
+        block_table_max_blocks: c_int,
+        num_blocks: c_int,
+        page_block_size: c_int,
+        dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+
     pub fn topsfa_flash_attn_fwd_kvcache(
         out: *mut c_void,
         softmax_lse: *mut c_void,
@@ -1133,6 +1169,62 @@ extern "C" {
         num_splits: c_int,
         has_block_table: c_int,
         dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+
+    /// Store F16/BF16/F32 K/V into the GCU int8 paged cache.
+    pub fn tops_reshape_and_cache_flash_int8kv(
+        key_cache: *mut c_void,
+        value_cache: *mut c_void,
+        key: *const c_void,
+        value: *const c_void,
+        slot_mapping: *const c_void,
+        k_scale: *const c_void,
+        v_scale: *const c_void,
+        k_zp: *const c_void,
+        v_zp: *const c_void,
+        num_tokens: c_int,
+        num_heads: c_int,
+        head_size: c_int,
+        num_blocks: c_int,
+        block_size: c_int,
+        key_stride: c_int,
+        value_stride: c_int,
+        scale_len: c_int,
+        input_dtype_code: c_int,
+        stream: *const c_void,
+    ) -> c_int;
+
+    /// Varlen paged attention reading an int8 K/V cache.
+    pub fn tops_flash_attn_varlen_int8kv(
+        out: *mut c_void,
+        softmax_lse: *mut c_void,
+        q: *const c_void,
+        key_cache: *const c_void,
+        value_cache: *const c_void,
+        cu_seqlens_q: *const c_void,
+        seqused_k: *const c_void,
+        block_table: *const c_void,
+        k_descale: *const c_void,
+        v_descale: *const c_void,
+        total_q: c_int,
+        batch: c_int,
+        num_heads: c_int,
+        num_heads_k: c_int,
+        head_size: c_int,
+        max_seqlen_q: c_int,
+        max_seqlen_k: c_int,
+        num_blocks: c_int,
+        page_block_size: c_int,
+        max_num_blocks_per_seq: c_int,
+        scale_len: c_int,
+        dtype_code: c_int,
+        softmax_scale: f32,
+        softcap: f32,
+        is_causal: c_int,
+        window_size_left: c_int,
+        window_size_right: c_int,
+        num_splits: c_int,
         stream: *const c_void,
     ) -> c_int;
 

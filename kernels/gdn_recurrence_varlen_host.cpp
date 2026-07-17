@@ -33,6 +33,22 @@ using namespace choreo;
 #define BV_CONST 128
 #define VE_F32 (sizeof(__vector float) / sizeof(float))
 
+using vf = __vector4 float;
+using vb = __vector2 __bf16;
+
+__co_device__ void l2_norm_bf16_128_to_f32(
+    float* out_f32_v, void* in_bf16_v, float eps
+) {
+    float* out_f32 = (float*)out_f32_v;
+    __bf16* in_bf16 = (__bf16*)in_bf16_v;
+    vb x_raw = *(vb*)in_bf16;
+    vf xf = tcle::cvt<vf>(x_raw);
+    vf sq = xf * xf;
+    float sum_sq = tops::vreduce_sum<float>(sq);
+    vf normalized = xf * (vf)(tcle::rsqrt(sum_sq + eps));
+    *(vf*)out_f32 = normalized;
+}
+
 __co_device__ void gdn_recurrence_step_varlen_acore(
     float* state,
     void* q_v, void* k_v, void* v_v,
@@ -42,14 +58,20 @@ __co_device__ void gdn_recurrence_step_varlen_acore(
     float* kq_f32,
     float* kv_delta_buf,
     float* update_buf,
-    float* v_f32_buf
+    float* v_f32_buf,
+    float q_scale,
+    bool normalize_qk
 ) {
     __bf16* q_f16 = (__bf16*)q_v;
     __bf16* k_f16 = (__bf16*)k_v;
     __bf16* v_f16 = (__bf16*)v_v;
 
-    // Step 1+2 combined: convert k to f32, then kv_mem = S^T @ k (matmul)
-    acore::convert<float, __bf16>(kq_f32, k_f16, BK_CONST);
+    // Step 1+2 combined: normalize/convert k, then kv_mem = S^T @ k.
+    if (normalize_qk) {
+        l2_norm_bf16_128_to_f32(kq_f32, k_f16, 1e-6f);
+    } else {
+        acore::convert<float, __bf16>(kq_f32, k_f16, BK_CONST);
+    }
     acore::matmul<1, acore::MK_KN>(
         kv_delta_buf, kq_f32, state, (float*)nullptr, (int*)nullptr,
         BK_CONST, BV_CONST, 0, 1, 0, 1, 0);
@@ -71,8 +93,21 @@ __co_device__ void gdn_recurrence_step_varlen_acore(
     acore::outer(update_buf, kq_f32, kv_delta_buf, BK_CONST, BV_CONST);
     acore::add(state, update_buf, state, BK_CONST * BV_CONST, g_val);
 
-    // Step 5: readout o = S^T @ q
-    acore::convert<float, __bf16>(kq_f32, q_f16, BK_CONST);
+    // Step 5: readout o = S^T @ q. GQA prefill also normalizes and scales q
+    // here, avoiding a separate full-token tensor operation.
+    if (normalize_qk) {
+        l2_norm_bf16_128_to_f32(kq_f32, q_f16, 1e-6f);
+    } else {
+        acore::convert<float, __bf16>(kq_f32, q_f16, BK_CONST);
+    }
+    if (q_scale != 1.0f) {
+        auto q_rd = tcle::leaptr<__vector float, 1>(kq_f32, sizeof(__vector float));
+        auto q_wr = tcle::leaptr<__vector float, 1>(kq_f32, sizeof(__vector float));
+        __vector float scale = (__vector float)q_scale;
+        for (int j = 0; j < BK_CONST; j += VE_F32) {
+            q_wr.store<0>(q_rd.load<0>() * scale);
+        }
+    }
     acore::matmul<1, acore::MK_KN>(
         o_out, kq_f32, state, (float*)nullptr, (int*)nullptr,
         BK_CONST, BV_CONST, 0, 1, 0, 1, 0);
@@ -83,7 +118,7 @@ __co_device__ void gdn_recurrence_step_varlen_acore(
 
 #define KD 128
 #define VD 128
-__global__ void __choreo_device_gdn_recurrence_varlen_bf16(choreo::bf16 * Q, choreo::bf16 * K, choreo::bf16 * V, choreo::bf16 * G, choreo::bf16 * Beta, float * State, int64_t * Slots, choreo::bf16 * Out, unsigned int * CuSeqlens, unsigned BATCH, unsigned BATCH_P1, unsigned MAX_SLOTS, unsigned NHQ, unsigned NHV, unsigned TOTAL_TOKENS) {
+__global__ void __choreo_device_gdn_recurrence_varlen_bf16(choreo::bf16 * Q, choreo::bf16 * K, choreo::bf16 * V, choreo::bf16 * G, choreo::bf16 * Beta, float * State, int64_t * Slots, choreo::bf16 * Out, unsigned int * CuSeqlens, unsigned BATCH, unsigned BATCH_P1, unsigned MAX_SLOTS, unsigned NHQ, unsigned NHV, unsigned TOTAL_TOKENS, float QScale, unsigned NORMALIZE_QK) {
   choreo::choreo_sdte __choreo_dte_pool__[9];
   for (int __i = 0; __i < 9; ++__i) __choreo_dte_pool__[__i].init();
   { // parallel-by: 96.24
@@ -193,7 +228,7 @@ __global__ void __choreo_device_gdn_recurrence_varlen_bf16(choreo::bf16 * Q, cho
             beta_f.wait();
             float g_val = bf16_to_f32(*((choreo::bfloat16*)g_f.data() + 0));
             float beta_val = bf16_to_f32(*((choreo::bfloat16*)beta_f.data() + 0));
-            gdn_recurrence_step_varlen_acore((float*)state_l.data(), (choreo::bf16*)q_l.data(), (choreo::bf16*)k_l.data(), (choreo::bf16*)v_l.data(), g_val, beta_val, (float*)out_l, (choreo::bf16*)out_bf16_l, (float*)kq_f32_l, (float*)kv_delta_l, (float*)update_l, (float*)v_f32_l);
+            gdn_recurrence_step_varlen_acore((float*)state_l.data(), (choreo::bf16*)q_l.data(), (choreo::bf16*)k_l.data(), (choreo::bf16*)v_l.data(), g_val, beta_val, (float*)out_l, (choreo::bf16*)out_bf16_l, (float*)kq_f32_l, (float*)kv_delta_l, (float*)update_l, (float*)v_f32_l, QScale, NORMALIZE_QK != 0);
             choreo::future __choreo_anon_fut__0(__choreo_dte_pool__[0], "", 152, 21);
             tops::mdspan __mds18_out_bf16_l(tops::Private, (choreo::bfloat16*)out_bf16_l, 1, 1, 128);
             tops::mdspan __mds19_Out(tops::Global, (choreo::bfloat16*)Out, TOTAL_TOKENS, NHV, 128);
@@ -215,7 +250,7 @@ __global__ void __choreo_device_gdn_recurrence_varlen_bf16(choreo::bf16 * Q, cho
   } // end parallel-by
 }
 
-void gdn_recurrence_varlen_bf16(const choreo::spanned_view<choreo::bf16, 3> & Q, const choreo::spanned_view<choreo::bf16, 3> & K, const choreo::spanned_view<choreo::bf16, 3> & V, const choreo::spanned_view<choreo::bf16, 2> & G, const choreo::spanned_view<choreo::bf16, 2> & Beta, const choreo::spanned_view<choreo::f32, 4> & State, const choreo::spanned_view<choreo::s64, 1> & Slots, const choreo::spanned_view<choreo::bf16, 3> & Out, const choreo::spanned_view<choreo::u32, 1> & CuSeqlens, choreo::stream_t _s) {
+void gdn_recurrence_varlen_bf16(const choreo::spanned_view<choreo::bf16, 3> & Q, const choreo::spanned_view<choreo::bf16, 3> & K, const choreo::spanned_view<choreo::bf16, 3> & V, const choreo::spanned_view<choreo::bf16, 2> & G, const choreo::spanned_view<choreo::bf16, 2> & Beta, const choreo::spanned_view<choreo::f32, 4> & State, const choreo::spanned_view<choreo::s64, 1> & Slots, const choreo::spanned_view<choreo::bf16, 3> & Out, const choreo::spanned_view<choreo::u32, 1> & CuSeqlens, float QScale, unsigned NORMALIZE_QK, choreo::stream_t _s) {
   auto &BATCH = Slots.shape()[0];
   auto &BATCH_P1 = CuSeqlens.shape()[0];
   auto &MAX_SLOTS = State.shape()[0];
@@ -225,7 +260,7 @@ void gdn_recurrence_varlen_bf16(const choreo::spanned_view<choreo::bf16, 3> & Q,
 
   dim3 __gdn_recurrence_varlen_bf16_gdims0(2, 1, 1);
   dim3 __gdn_recurrence_varlen_bf16_bdims0(12, 1, 1);
-  __choreo_device_gdn_recurrence_varlen_bf16<<<__gdn_recurrence_varlen_bf16_gdims0, __gdn_recurrence_varlen_bf16_bdims0, 0, _s>>>(Q.data(), K.data(), V.data(), G.data(), Beta.data(), State.data(), Slots.data(), Out.data(), CuSeqlens.data(), BATCH, BATCH_P1, MAX_SLOTS, NHQ, NHV, TOTAL_TOKENS);
+  __choreo_device_gdn_recurrence_varlen_bf16<<<__gdn_recurrence_varlen_bf16_gdims0, __gdn_recurrence_varlen_bf16_bdims0, 0, _s>>>(Q.data(), K.data(), V.data(), G.data(), Beta.data(), State.data(), Slots.data(), Out.data(), CuSeqlens.data(), BATCH, BATCH_P1, MAX_SLOTS, NHQ, NHV, TOTAL_TOKENS, QScale, NORMALIZE_QK);
 }
 // CPU reference for correctness verification (varlen layout)
 
@@ -235,7 +270,8 @@ extern "C" void gdn_recurrence_varlen_bf16_wrapper(
     void* g, void* beta,
     float* state, int64_t* slots, void* out, uint32_t* cu_seqlens,
     int total_tokens, int batch, int num_k_heads, int num_v_heads,
-    int max_slots, int k_dim, int v_dim, topsStream_t stream) {
+    int max_slots, int k_dim, int v_dim, float q_scale, bool normalize_qk,
+    topsStream_t stream) {
   auto q_sv = croq::make_spanview<3, croq::bf16>(
       (croq::bf16*)q, {(size_t)total_tokens, (size_t)num_k_heads, (size_t)k_dim});
   auto k_sv = croq::make_spanview<3, croq::bf16>(
@@ -255,5 +291,6 @@ extern "C" void gdn_recurrence_varlen_bf16_wrapper(
   auto cu_sv = croq::make_spanview<1, unsigned int>(
       cu_seqlens, {(size_t)(batch + 1)});
   gdn_recurrence_varlen_bf16(
-      q_sv, k_sv, v_sv, g_sv, beta_sv, state_sv, slots_sv, out_sv, cu_sv, stream);
+      q_sv, k_sv, v_sv, g_sv, beta_sv, state_sv, slots_sv, out_sv, cu_sv,
+      q_scale, normalize_qk ? 1u : 0u, stream);
 }

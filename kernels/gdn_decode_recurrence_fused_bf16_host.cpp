@@ -407,7 +407,6 @@ void gdn_decode_recurrence_fused_bf16(const choreo::spanned_view<choreo::bf16, 2
   dim3 __gdn_decode_recurrence_fused_bf16_gdims0(2, 1, 1);
   dim3 __gdn_decode_recurrence_fused_bf16_bdims0(12, 1, 1);
   __choreo_device_gdn_decode_recurrence_fused_bf16<<<__gdn_decode_recurrence_fused_bf16_gdims0, __gdn_decode_recurrence_fused_bf16_bdims0, 0, _s>>>(Q.data(), K.data(), V.data(), A.data(), B.data(), A_log.data(), Dt_bias.data(), Z.data(), State.data(), Slots.data(), NormWeight.data(), QScale, Out.data(), NKH_VAL, kv_group, BATCH, BH, BKH, MAX_SLOTS, NH, __co__local_chunk_offsets[0], __co__local_chunk_offsets[1], __co__local_chunk_offsets[2], __co__local_chunk_offsets[3], __co__local_chunk_offsets[4], __co__local_chunk_offsets[5], __co__local_chunk_offsets[6], __co__local_chunk_offsets[7], __co__local_chunk_offsets[8], __co__local_chunk_offsets[9], __co__local_chunk_offsets[10], __co__local_chunk_offsets[11], __co__local_chunk_offsets[12], __co__local_chunk_offsets[13], __co__local_chunk_offsets[14], __co__local_chunk_offsets[15], __co__local_chunk_offsets[16], __co__local_chunk_offsets[17], __co__local_chunk_offsets[18]);
-  choreo::abend_true(topsStreamSynchronize(_s));
 }
 
 

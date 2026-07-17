@@ -121,6 +121,15 @@ static topsatenTensor make_tensor_strided(void *data, int32_t ndim,
                           static_cast<topsatenDeviceMemHandle_t>(data));
 }
 
+static topsatenTensor make_tensor_broadcast_2d(void *data, int64_t d0,
+                                               int64_t d1,
+                                               int64_t stride1,
+                                               topsatenDataType_t dtype) {
+    const int64_t shape[2] = {d0, d1};
+    const int64_t strides[2] = {0, stride1};
+    return make_tensor_strided(data, 2, shape, strides, dtype);
+}
+
 static topsatenDataType_t dtype_from_code(int32_t code) {
     return static_cast<topsatenDataType_t>(code);
 }
@@ -140,6 +149,131 @@ int topsaten_cast(void *out_ptr, const void *in_ptr, int64_t numel,
     auto output = make_tensor_1d(out_ptr, numel,
                                  dtype_from_code(output_dtype_code));
     return static_cast<int>(topsaten::topsatenCopy(output, input, false, stream));
+}
+
+// Int8 KV-cache operators used by the GCU vLLM backend.  Keep these wrappers
+// in the shared Ubridge topsaten library so Candle can call the same kernels
+// without depending on libtorch or registering PyTorch custom operators.
+static topsatenScalar_t make_scalar_i64(int64_t v);
+static topsatenScalar_t make_scalar_f64(double v);
+
+int tops_reshape_and_cache_flash_int8kv(
+    void *key_cache_ptr, void *value_cache_ptr,
+    const void *key_ptr, const void *value_ptr, const void *slot_mapping_ptr,
+    const void *k_scale_ptr, const void *v_scale_ptr,
+    const void *k_zp_ptr, const void *v_zp_ptr,
+    int32_t num_tokens, int32_t num_heads, int32_t head_size,
+    int32_t num_blocks, int32_t block_size,
+    int32_t key_stride, int32_t value_stride, int32_t scale_len,
+    int32_t input_dtype_code, void *stream_) {
+    ensure_ops_init();
+    topsStream_t stream = reinterpret_cast<topsStream_t>(stream_);
+    const int64_t input_shape[3] = {num_tokens, num_heads, head_size};
+    const int64_t input_strides[3] = {
+        key_stride, head_size, 1,
+    };
+    const int64_t value_strides[3] = {
+        value_stride, head_size, 1,
+    };
+    auto t_key = make_tensor_strided(
+        const_cast<void *>(key_ptr), 3, input_shape, input_strides,
+        dtype_from_code(input_dtype_code));
+    auto t_value = make_tensor_strided(
+        const_cast<void *>(value_ptr), 3, input_shape, value_strides,
+        dtype_from_code(input_dtype_code));
+    auto t_key_cache = make_tensor_4d(
+        key_cache_ptr, num_blocks, block_size, num_heads, head_size,
+        TOPSATEN_DATA_I8);
+    auto t_value_cache = make_tensor_4d(
+        value_cache_ptr, num_blocks, block_size, num_heads, head_size,
+        TOPSATEN_DATA_I8);
+    auto t_slot_mapping = make_tensor_1d(
+        const_cast<void *>(slot_mapping_ptr), num_tokens, TOPSATEN_DATA_I32);
+
+    topsatenTensor t_k_scale;
+    topsatenTensor t_v_scale;
+    if (k_scale_ptr && v_scale_ptr) {
+        t_k_scale = make_tensor_1d(
+            const_cast<void *>(k_scale_ptr), scale_len, TOPSATEN_DATA_FP32);
+        t_v_scale = make_tensor_1d(
+            const_cast<void *>(v_scale_ptr), scale_len, TOPSATEN_DATA_FP32);
+    }
+    topsatenTensor t_k_zp;
+    topsatenTensor t_v_zp;
+    if (k_zp_ptr && v_zp_ptr) {
+        t_k_zp = make_tensor_1d(
+            const_cast<void *>(k_zp_ptr), scale_len, TOPSATEN_DATA_FP32);
+        t_v_zp = make_tensor_1d(
+            const_cast<void *>(v_zp_ptr), scale_len, TOPSATEN_DATA_FP32);
+    }
+
+    return static_cast<int>(topsvllm::topsvllmReshapeAndCacheFlashInt8KV(
+        t_key_cache, t_value_cache, t_key, t_value, t_slot_mapping, "int8",
+        t_k_scale, t_v_scale, t_k_zp, t_v_zp, stream));
+}
+
+int tops_flash_attn_varlen_int8kv(
+    void *out_ptr, void *softmax_lse_ptr, const void *q_ptr,
+    const void *key_cache_ptr, const void *value_cache_ptr,
+    const void *cu_seqlens_q_ptr, const void *seqused_k_ptr,
+    const void *block_table_ptr, const void *k_descale_ptr,
+    const void *v_descale_ptr, int32_t total_q, int32_t batch,
+    int32_t num_heads, int32_t num_heads_k, int32_t head_size,
+    int32_t max_seqlen_q, int32_t max_seqlen_k, int32_t num_blocks,
+    int32_t page_block_size, int32_t max_num_blocks_per_seq,
+    int32_t scale_len, int32_t dtype_code, float softmax_scale,
+    float softcap, int32_t is_causal, int32_t window_size_left,
+    int32_t window_size_right, int32_t num_splits, void *stream_) {
+    ensure_ops_init();
+    topsStream_t stream = reinterpret_cast<topsStream_t>(stream_);
+    const auto dtype = dtype_from_code(dtype_code);
+
+    auto t_q = make_tensor_3d(
+        const_cast<void *>(q_ptr), total_q, num_heads, head_size, dtype);
+    auto t_out = make_tensor_3d(out_ptr, total_q, num_heads, head_size, dtype);
+    auto t_lse = make_tensor_2d(
+        softmax_lse_ptr, num_heads, total_q, TOPSATEN_DATA_FP32);
+    auto t_k_cache = make_tensor_4d(
+        const_cast<void *>(key_cache_ptr), num_blocks, page_block_size,
+        num_heads_k, head_size, TOPSATEN_DATA_I8);
+    auto t_v_cache = make_tensor_4d(
+        const_cast<void *>(value_cache_ptr), num_blocks, page_block_size,
+        num_heads_k, head_size, TOPSATEN_DATA_I8);
+    auto t_cu_q = make_tensor_1d(
+        const_cast<void *>(cu_seqlens_q_ptr), batch + 1, TOPSATEN_DATA_I32);
+    auto t_seqused_k = make_tensor_1d(
+        const_cast<void *>(seqused_k_ptr), batch, TOPSATEN_DATA_I32);
+    auto t_block_table = make_tensor_2d(
+        const_cast<void *>(block_table_ptr), batch, max_num_blocks_per_seq,
+        TOPSATEN_DATA_I32);
+
+    // Candle keeps one reciprocal scale per KV head.  A zero stride in the
+    // batch dimension is intentional: the same per-head scale applies to
+    // every request in the batch without allocating a [batch, heads] view.
+    auto t_k_descale = make_tensor_broadcast_2d(
+        const_cast<void *>(k_descale_ptr), batch, num_heads_k,
+        scale_len == 1 ? 0 : 1, TOPSATEN_DATA_FP32);
+    auto t_v_descale = make_tensor_broadcast_2d(
+        const_cast<void *>(v_descale_ptr), batch, num_heads_k,
+        scale_len == 1 ? 0 : 1, TOPSATEN_DATA_FP32);
+
+    topsatenTensor empty;
+    std::vector<topsatenTensor> output = {t_out, t_lse, empty, empty};
+    auto max_q = make_scalar_i64(max_seqlen_q);
+    auto max_k = make_scalar_i64(max_seqlen_k);
+    auto scale = make_scalar_f64(static_cast<double>(softmax_scale));
+    auto window_left = make_scalar_i64(window_size_left);
+    auto window_right = make_scalar_i64(window_size_right);
+    auto softcap_scalar = make_scalar_f64(static_cast<double>(softcap));
+    auto splits = make_scalar_i64(num_splits);
+    auto sm_margin = make_scalar_i64(0);
+
+    return static_cast<int>(topsvllm::topsvllmFlashAttnFwdInt8KV(
+        output, t_q, t_k_cache, t_v_cache, empty, empty, empty, t_out, t_cu_q, empty,
+        empty, empty, t_seqused_k, max_q, max_k, t_block_table, empty, empty,
+        empty, empty, empty, empty, t_k_descale, t_v_descale, empty,
+        empty, scale, is_causal != 0, window_left, window_right,
+        softcap_scalar, true, empty, splits, false, sm_margin, empty, stream));
 }
 
 // =========================================================================

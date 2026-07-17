@@ -35,7 +35,8 @@ extern "C" void gdn_recurrence_varlen_bf16_wrapper(
     void* g, void* beta,
     float* state, int64_t* slots, void* out, uint32_t* cu_seqlens,
     int total_tokens, int batch, int num_k_heads, int num_v_heads,
-    int max_slots, int k_dim, int v_dim, void* stream);
+    int max_slots, int k_dim, int v_dim, float q_scale, bool normalize_qk,
+    void* stream);
 
 extern "C" void gdn_fused_gating_bf16_wrapper(
     void* a_log, void* a, void* b, void* dt_bias,
@@ -104,14 +105,15 @@ extern "C" void gdn_recurrence_varlen_bf16(
     __bf16* out, const uint32_t* cu_seqlens,
     int total_tokens, int batch, int num_heads, int k_dim, int v_dim,
     int max_slots,
-    unsigned int num_blocks, unsigned int dim_blocks, void* stream_) {
+    unsigned int num_blocks, unsigned int dim_blocks, float q_scale,
+    bool normalize_qk, void* stream_) {
     if (total_tokens == 0) return;
     gdn_recurrence_varlen_bf16_wrapper(
         (void*)q, (void*)k, (void*)v,
         (void*)g, (void*)beta,
         state, (int64_t*)slots_i64, (void*)out, (uint32_t*)cu_seqlens,
         total_tokens, batch, num_heads, num_heads,
-        max_slots, k_dim, v_dim, stream_);
+        max_slots, k_dim, v_dim, q_scale, normalize_qk, stream_);
 }
 
 extern "C" void gdn_recurrence_varlen_gqa_bf16(
@@ -121,14 +123,15 @@ extern "C" void gdn_recurrence_varlen_gqa_bf16(
     __bf16* out, const uint32_t* cu_seqlens,
     int total_tokens, int batch, int num_k_heads, int num_v_heads,
     int k_dim, int v_dim, int max_slots,
-    unsigned int num_blocks, unsigned int dim_blocks, void* stream_) {
+    unsigned int num_blocks, unsigned int dim_blocks, float q_scale,
+    void* stream_) {
     if (total_tokens == 0) return;
     gdn_recurrence_varlen_bf16_wrapper(
         (void*)q, (void*)k, (void*)v,
         (void*)g, (void*)beta,
         state, (int64_t*)slots_i64, (void*)out, (uint32_t*)cu_seqlens,
         total_tokens, batch, num_k_heads, num_v_heads,
-        max_slots, k_dim, v_dim, stream_);
+        max_slots, k_dim, v_dim, q_scale, true, stream_);
 }
 
 // ========================================================================

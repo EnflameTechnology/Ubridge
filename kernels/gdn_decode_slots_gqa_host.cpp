@@ -43,11 +43,10 @@ __co_device__ void gdn_decode_step_gqa(
     float* v_f32_buf,
     float* g_ptr,
     float* beta_ptr,
-    float* q_scale_ptr
+    float q_scale
 ) {
     float g_val = expf(g_ptr[0]);
     float beta_val = beta_ptr[0];
-    float q_scale = q_scale_ptr[0];
     __bf16* k_f16 = (__bf16*)k_raw;
     __bf16* q_f16 = (__bf16*)q_raw;
     __bf16* v_f16 = (__bf16*)v_raw;
@@ -89,7 +88,7 @@ __co_device__ void gdn_decode_step_gqa(
         BK_CONST, BV_CONST, 0, 1, 0, 1, 0);
 }
 
-__global__ void __choreo_device_gdn_decode_slots_gqa_bf16(choreo::bf16 * Q, choreo::bf16 * K, choreo::bf16 * V, float * G, float * Beta, float * State, int64_t * Slots, float * QScale, float * Out, int NKH_VAL, int kv_group, unsigned BATCH, unsigned BH, unsigned BKH, unsigned MAX_SLOTS, unsigned NH) {
+__global__ void __choreo_device_gdn_decode_slots_gqa_bf16(choreo::bf16 * Q, choreo::bf16 * K, choreo::bf16 * V, float * G, float * Beta, float * State, int64_t * Slots, float q_scale, float * Out, int NKH_VAL, int kv_group, unsigned BATCH, unsigned BH, unsigned BKH, unsigned MAX_SLOTS, unsigned NH) {
   choreo::choreo_sdte __choreo_dte_pool__[9];
   for (int __i = 0; __i < 9; ++__i) __choreo_dte_pool__[__i].init();
   {
@@ -163,21 +162,13 @@ __global__ void __choreo_device_gdn_decode_slots_gqa_bf16(choreo::bf16 * Q, chor
         float* kq_f32_l = (float*)(anon_0 + 131072);
         float* v_f32_l = (float*)(anon_0 + 132608);
         float* out_l = (float*)(anon_0 + 132096);
-        float* qs_f__buf__ = (float*)(anon_0 + 135680);
-        choreo::future qs_f(__choreo_dte_pool__[7], "qs_f", 161, 28, qs_f__buf__);
-        tops::mdspan __mds14_QScale(tops::Global, (float*)QScale, 1);
-        tops::mdspan __mds15_qs_f__buf__(tops::Private, (float*)qs_f__buf__, 1);
-        int __slice_offset7__QScale_2_qs_f__buf__[] = {0};
-        tops::event qs_f__event__ = tops::slice_async(*qs_f.get_ctx(), __mds15_qs_f__buf__, __mds14_QScale, __slice_offset7__QScale_2_qs_f__buf__);
-        qs_f.set_event(qs_f__event__);
         state_l.wait();
         k_l.wait();
         q_l.wait();
         v_l.wait();
         g_l.wait();
         beta_l.wait();
-        qs_f.wait();
-        gdn_decode_step_gqa((float*)state_l.data(), (choreo::bf16*)k_l.data(), (choreo::bf16*)q_l.data(), (choreo::bf16*)v_l.data(), (float*)out_l, (float*)kv_delta_l, (float*)update_l, (float*)kq_f32_l, (float*)v_f32_l, (float*)g_l.data(), (float*)beta_l.data(), (float*)qs_f.data());
+        gdn_decode_step_gqa((float*)state_l.data(), (choreo::bf16*)k_l.data(), (choreo::bf16*)q_l.data(), (choreo::bf16*)v_l.data(), (float*)out_l, (float*)kv_delta_l, (float*)update_l, (float*)kq_f32_l, (float*)v_f32_l, (float*)g_l.data(), (float*)beta_l.data(), q_scale);
         choreo::future __choreo_anon_fut__0(__choreo_dte_pool__[8], "", 172, 21);
         tops::mdspan __mds16_out_l(tops::Private, (float*)out_l, 1, 128);
         tops::mdspan __mds17_Out(tops::Global, (float*)Out, BH, 128);
@@ -196,7 +187,7 @@ __global__ void __choreo_device_gdn_decode_slots_gqa_bf16(choreo::bf16 * Q, chor
   }
 }
 
-void gdn_decode_slots_gqa_bf16(const choreo::spanned_view<choreo::bf16, 2> & Q, const choreo::spanned_view<choreo::bf16, 2> & K, const choreo::spanned_view<choreo::bf16, 2> & V, const choreo::spanned_view<choreo::f32, 1> & G, const choreo::spanned_view<choreo::f32, 1> & Beta, const choreo::spanned_view<choreo::f32, 4> & State, const choreo::spanned_view<choreo::s64, 1> & Slots, const choreo::spanned_view<choreo::f32, 1> & QScale, const choreo::spanned_view<choreo::f32, 2> & Out, choreo::stream_t _s) {
+void gdn_decode_slots_gqa_bf16(const choreo::spanned_view<choreo::bf16, 2> & Q, const choreo::spanned_view<choreo::bf16, 2> & K, const choreo::spanned_view<choreo::bf16, 2> & V, const choreo::spanned_view<choreo::f32, 1> & G, const choreo::spanned_view<choreo::f32, 1> & Beta, const choreo::spanned_view<choreo::f32, 4> & State, const choreo::spanned_view<choreo::s64, 1> & Slots, float q_scale, const choreo::spanned_view<choreo::f32, 2> & Out, choreo::stream_t _s) {
   auto &BATCH = Slots.shape()[0];
   auto &BH = V.shape()[0];
   auto &BKH = Q.shape()[0];
@@ -206,14 +197,14 @@ void gdn_decode_slots_gqa_bf16(const choreo::spanned_view<choreo::bf16, 2> & Q, 
   int kv_group = (int)(NH / NKH_VAL);
   dim3 __gdn_decode_slots_gqa_bf16_gdims0(2, 1, 1);
   dim3 __gdn_decode_slots_gqa_bf16_bdims0(12, 1, 1);
-  __choreo_device_gdn_decode_slots_gqa_bf16<<<__gdn_decode_slots_gqa_bf16_gdims0, __gdn_decode_slots_gqa_bf16_bdims0, 0, _s>>>(Q.data(), K.data(), V.data(), G.data(), Beta.data(), State.data(), Slots.data(), QScale.data(), Out.data(), NKH_VAL, kv_group, BATCH, BH, BKH, MAX_SLOTS, NH);
+  __choreo_device_gdn_decode_slots_gqa_bf16<<<__gdn_decode_slots_gqa_bf16_gdims0, __gdn_decode_slots_gqa_bf16_bdims0, 0, _s>>>(Q.data(), K.data(), V.data(), G.data(), Beta.data(), State.data(), Slots.data(), q_scale, Out.data(), NKH_VAL, kv_group, BATCH, BH, BKH, MAX_SLOTS, NH);
 }
 
 // === Wrapper: raw pointers → spanned_view ===
 extern "C" void gdn_decode_slots_gqa_bf16(
     void* q, void* k, void* v,
     float* g, float* beta,
-    float* state, int64_t* slots, float* qscale, float* out,
+    float* state, int64_t* slots, float q_scale, float* out,
     int batch, int num_v_heads, int num_k_heads, int k_dim, int v_dim,
     int max_slots, int num_blocks, int dim_blocks, topsStream_t stream) {
   int bkh = batch * num_k_heads;
@@ -230,9 +221,8 @@ extern "C" void gdn_decode_slots_gqa_bf16(
       state, {(size_t)max_slots, (size_t)num_v_heads, (size_t)k_dim, (size_t)v_dim});
   auto slots_sv = croq::make_spanview<1, int64_t>(
       slots, {(size_t)batch});
-  auto qscale_sv = croq::make_spanview<1, float>(qscale, {1UL});
   auto out_sv = croq::make_spanview<2, float>(
       out, {(size_t)bh, (size_t)v_dim});
   (void)num_blocks; (void)dim_blocks;
-  gdn_decode_slots_gqa_bf16(q_sv, k_sv, v_sv, g_sv, beta_sv, state_sv, slots_sv, qscale_sv, out_sv, stream);
+  gdn_decode_slots_gqa_bf16(q_sv, k_sv, v_sv, g_sv, beta_sv, state_sv, slots_sv, q_scale, out_sv, stream);
 }
